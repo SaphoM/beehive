@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -227,7 +228,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         </div>
         <div style={s.headerRight}>
           <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
-            💬
+            <MessageSquare size={18} />
           </button>
           <button style={s.leaveBtn} onClick={onLeave}>Leave</button>
         </div>
@@ -250,18 +251,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           {/* Controls Bar */}
           <div style={s.controls}>
             {/* Mic */}
-            <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon>
-              🎤
-            </TrackToggle>
+            <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
 
             {/* Cam */}
-            <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon>
-              📷
-            </TrackToggle>
+            <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
 
             {/* Reactions */}
             <div style={{ position: 'relative' }}>
-              <button style={s.controlBtn} onClick={() => sendReaction('👍')}>😊</button>
+              <button style={s.controlBtn} title="Reactions">
+                <Hand size={20} />
+              </button>
               <div style={s.reactionBar}>
                 {REACTIONS.map(e => (
                   <button key={e} style={s.emojiBtn} onClick={() => sendReaction(e)}>{e}</button>
@@ -271,13 +270,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
             {/* Invite Link */}
             <button style={s.controlBtn} onClick={copyInviteLink} title="Copy invite link">
-              {copied ? '✅' : '🔗'}
+              {copied ? <Link2Off size={20} /> : <Link size={20} />}
             </button>
 
             {/* Video Quality */}
             <div style={{ position: 'relative' }}>
               <button style={s.controlBtn} onClick={() => setShowQuality(v => !v)} title="Video quality">
-                📶
+                <Film size={20} />
+                <span style={s.hdBadge}>HD</span>
               </button>
               {showQuality && (
                 <div style={s.qualityMenu}>
@@ -295,8 +295,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             </div>
 
             {/* Leave */}
-            <button style={{ ...s.controlBtn, background: '#e53e3e' }} onClick={onLeave}>
-              📴
+            <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={onLeave} title="Leave">
+              <PhoneOff size={20} />
             </button>
           </div>
         </div>
@@ -379,7 +379,8 @@ const s: Record<string, React.CSSProperties> = {
   reactionFloat: { position: 'absolute', bottom: 100, right: 20, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', zIndex: 20 },
   floatingEmoji: { fontSize: 36, animation: 'floatUp 2.5s ease-out forwards' },
   controls: { position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 10, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', borderRadius: 40, padding: '10px 20px', zIndex: 10 },
-  controlBtn: { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 48, height: 48, fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
+  controlBtn: { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 48, height: 48, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', gap: 2 },
+  hdBadge: { position: 'absolute', bottom: 6, right: 6, fontSize: 8, fontWeight: 700, color: '#f5a623', lineHeight: 1 },
   reactionBar: { position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 6, background: '#1a1a1a', border: '1px solid #333', borderRadius: 30, padding: '8px 12px' },
   emojiBtn: { background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', padding: '2px 4px', borderRadius: 6 },
   qualityMenu: { position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 10, overflow: 'hidden', minWidth: 160 },

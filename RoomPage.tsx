@@ -17,6 +17,7 @@ import {
   useParticipants,
   useChat,
   useRecordings,
+  useRoomInfo,
 } from './livekit_react_hooks'
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
@@ -41,6 +42,7 @@ export default function RoomPage() {
 
   const { createRoom, loading: creating } = useCreateRoom()
   const { joinRoom, loading: joining } = useJoinRoom()
+  const { room: inviteRoom } = useRoomInfo(joinRoomId)
 
   // Check URL for invite link (?room=ROOM_ID)
   useEffect(() => {
@@ -53,23 +55,25 @@ export default function RoomPage() {
     if (!displayName.trim()) return alert('Enter your name first')
     const room = await createRoom(`Meeting ${new Date().toLocaleTimeString()}`, 'X Spark')
     if (!room) return alert('Failed to create room')
-    const tk = await joinRoom(room.id, displayName)
-    if (!tk) return alert('Failed to get access token')
+    const result = await joinRoom(room.id, displayName)
+    if (!result) return alert('Failed to get access token')
     window.history.pushState({}, '', `?room=${room.id}`)
     setActiveRoomId(room.id)
     setActiveRoomName(room.name)
-    setLivekitRoomName(room.livekit_room_name)
-    setToken(tk)
+    setLivekitRoomName(result.livekitRoomName)
+    setToken(result.token)
     setView('room')
   }
 
   const handleJoin = async () => {
     if (!displayName.trim()) return alert('Enter your name first')
     if (!joinRoomId) return
-    const tk = await joinRoom(joinRoomId, displayName)
-    if (!tk) return alert('Failed to join room — link may be invalid')
+    const result = await joinRoom(joinRoomId, displayName)
+    if (!result) return alert('Failed to join room — link may be invalid')
     setActiveRoomId(joinRoomId)
-    setToken(tk)
+    setActiveRoomName(result.roomName)
+    setLivekitRoomName(result.livekitRoomName)
+    setToken(result.token)
     setView('room')
   }
 
@@ -110,6 +114,7 @@ export default function RoomPage() {
       onJoinRoom={joinRoomId ? handleJoin : undefined}
       creating={creating || joining}
       hasInvite={!!joinRoomId}
+      inviteRoom={inviteRoom}
       subtext={subtext}
       onSubtextChange={setSubtext}
     />
@@ -120,7 +125,7 @@ export default function RoomPage() {
 // LOBBY
 // ============================================================
 function Lobby({
-  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, creating, hasInvite, subtext, onSubtextChange,
+  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
 }: {
   displayName: string
   onDisplayNameChange: (v: string) => void
@@ -128,24 +133,42 @@ function Lobby({
   onJoinRoom?: () => void
   creating: boolean
   hasInvite: boolean
+  inviteRoom?: { name: string; participantCount: number } | null
   subtext: Subtext
   onSubtextChange: (v: Subtext) => void
 }) {
   return (
     <div style={s.lobby}>
       <div style={s.lobbyCard}>
-        <h1 style={s.title}>{APP_NAME}</h1>
-        <div style={s.subtextRow}>
-          {SUBTEXTS.map(t => (
-            <button
-              key={t}
-              style={{ ...s.subtextBtn, ...(subtext === t ? s.subtextActive : {}) }}
-              onClick={() => onSubtextChange(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <h1 style={s.title}>
+          <span style={{ fontWeight: 400 }}>BEE</span>HIVE
+        </h1>
+
+        {hasInvite && inviteRoom ? (
+          /* ── Invite Preview ── */
+          <div style={s.invitePreview}>
+            <p style={s.inviteLabel}>You've been invited to</p>
+            <p style={s.inviteRoomName}>{inviteRoom.name}</p>
+            <p style={s.inviteMeta}>
+              {inviteRoom.participantCount > 0
+                ? `${inviteRoom.participantCount} participant${inviteRoom.participantCount !== 1 ? 's' : ''} in the room`
+                : 'Be the first to join'}
+            </p>
+          </div>
+        ) : !hasInvite ? (
+          <div style={s.subtextRow}>
+            {SUBTEXTS.map(t => (
+              <button
+                key={t}
+                style={{ ...s.subtextBtn, ...(subtext === t ? s.subtextActive : {}) }}
+                onClick={() => onSubtextChange(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <input
           style={s.input}
           placeholder="Your name"
@@ -154,13 +177,14 @@ function Lobby({
           onKeyDown={(e) => e.key === 'Enter' && (hasInvite ? onJoinRoom?.() : onCreateRoom())}
           autoFocus
         />
+
         {hasInvite ? (
           <>
             <button style={s.primaryBtn} onClick={onJoinRoom} disabled={creating}>
-              {creating ? 'Joining…' : `Join ${APP_NAME} ${subtext}`}
+              {creating ? 'Joining…' : 'Join Meeting'}
             </button>
             <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
-              Start New {subtext}
+              Start a new meeting instead
             </button>
           </>
         ) : (
@@ -360,6 +384,10 @@ const s: Record<string, React.CSSProperties> = {
   input: { background: '#222', border: '1px solid #333', borderRadius: 10, padding: '11px 14px', color: '#fff', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' },
   primaryBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
   secondaryBtn: { background: '#222', color: '#aaa', border: '1px solid #333', borderRadius: 10, padding: '11px 20px', fontSize: 14, cursor: 'pointer', width: '100%' },
+  invitePreview: { background: '#1e1e1e', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 },
+  inviteLabel: { color: '#666', fontSize: 11, fontWeight: 300, letterSpacing: 1, textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif" },
+  inviteRoomName: { color: '#fff', fontSize: 16, fontWeight: 300, letterSpacing: 2, fontFamily: "'Roboto', sans-serif" },
+  inviteMeta: { color: '#f5a623', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif" },
   subtextRow: { display: 'flex', gap: 8 },
   subtextBtn: { background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 20, padding: '5px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
   subtextActive: { background: '#2a2a2a', color: '#f5a623', border: '1px solid #f5a623' },

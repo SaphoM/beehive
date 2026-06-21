@@ -70,10 +70,33 @@ export function useCreateRoom() {
 }
 
 // ============================================================
+// ROOM INFO (for invite preview)
+// ============================================================
+export function useRoomInfo(roomId: string | null) {
+  const [room, setRoom] = useState<{ name: string; participantCount: number } | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!roomId) return
+    setLoading(true)
+    Promise.all([
+      supabase.from('rooms').select('name').eq('id', roomId).single(),
+      supabase.from('room_participants').select('id', { count: 'exact' }).eq('room_id', roomId).eq('is_active', true),
+    ]).then(([roomRes, participantsRes]) => {
+      if (roomRes.data) {
+        setRoom({ name: roomRes.data.name, participantCount: participantsRes.count ?? 0 })
+      }
+      setLoading(false)
+    })
+  }, [roomId])
+
+  return { room, loading }
+}
+
+// ============================================================
 // LIVEKIT TOKEN
 // ============================================================
 export function useJoinRoom() {
-  const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -81,10 +104,9 @@ export function useJoinRoom() {
     setLoading(true)
     setError(null)
 
-    // Get livekit_room_name from Supabase
     const { data: room, error: roomError } = await supabase
       .from('rooms')
-      .select('livekit_room_name')
+      .select('livekit_room_name, name')
       .eq('id', roomId)
       .single()
 
@@ -94,19 +116,16 @@ export function useJoinRoom() {
       return null
     }
 
-    // Add participant record
+    // Track participant (anon-safe: user_id is optional)
     const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      await supabase.from('room_participants').upsert({
-        room_id: roomId,
-        user_id: user.id,
-        display_name: displayName,
-        is_active: true,
-        joined_at: new Date().toISOString(),
-      })
-    }
+    await supabase.from('room_participants').upsert({
+      room_id: roomId,
+      user_id: user?.id ?? null,
+      display_name: displayName,
+      is_active: true,
+      joined_at: new Date().toISOString(),
+    }, { onConflict: user?.id ? 'room_id,user_id' : undefined })
 
-    // Get LiveKit token from Node.js backend
     const res = await fetch('/api/livekit/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -120,12 +139,11 @@ export function useJoinRoom() {
     }
 
     const { token } = await res.json()
-    setToken(token)
     setLoading(false)
-    return token
+    return { token, livekitRoomName: room.livekit_room_name, roomName: room.name }
   }, [])
 
-  return { joinRoom, token, loading, error }
+  return { joinRoom, loading, error }
 }
 
 // ============================================================

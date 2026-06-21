@@ -98,4 +98,4 @@ app.post('/api/livekit/webhook', async (req, res) => {
 app.get('/health', (_, res) => res.json({ status: 'ok' }))
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT, () => console.log(`LiveKit backend running on port ${PORT}`))
+app.listen(PORT, () => console.log(`BeeHive backend running on port ${PORT}`))

@@ -24,6 +24,10 @@ const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
 // ============================================================
 // MAIN PAGE
 // ============================================================
+const APP_NAME = 'BeeHive'
+const SUBTEXTS = ['Meet', 'Sting'] as const
+type Subtext = typeof SUBTEXTS[number]
+
 export default function RoomPage() {
   const [view, setView] = useState<'lobby' | 'room'>('lobby')
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
@@ -32,6 +36,7 @@ export default function RoomPage() {
   const [token, setToken] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState('')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(null)
+  const [subtext, setSubtext] = useState<Subtext>('Meet')
 
   const { createRoom, loading: creating } = useCreateRoom()
   const { joinRoom, loading: joining } = useJoinRoom()
@@ -104,6 +109,8 @@ export default function RoomPage() {
       onJoinRoom={joinRoomId ? handleJoin : undefined}
       creating={creating || joining}
       hasInvite={!!joinRoomId}
+      subtext={subtext}
+      onSubtextChange={setSubtext}
     />
   )
 }
@@ -112,7 +119,7 @@ export default function RoomPage() {
 // LOBBY
 // ============================================================
 function Lobby({
-  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, creating, hasInvite,
+  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, creating, hasInvite, subtext, onSubtextChange,
 }: {
   displayName: string
   onDisplayNameChange: (v: string) => void
@@ -120,13 +127,25 @@ function Lobby({
   onJoinRoom?: () => void
   creating: boolean
   hasInvite: boolean
+  subtext: Subtext
+  onSubtextChange: (v: Subtext) => void
 }) {
   return (
     <div style={s.lobby}>
       <div style={s.lobbyCard}>
-        <div style={s.logo}>🍯</div>
-        <h1 style={s.title}>Honey Com</h1>
-        <p style={s.subtitle}>X Spark Video Conferencing</p>
+        <div style={s.logo}>🐝</div>
+        <h1 style={s.title}>{APP_NAME}</h1>
+        <div style={s.subtextRow}>
+          {SUBTEXTS.map(t => (
+            <button
+              key={t}
+              style={{ ...s.subtextBtn, ...(subtext === t ? s.subtextActive : {}) }}
+              onClick={() => onSubtextChange(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
         <input
           style={s.input}
           placeholder="Your name"
@@ -138,20 +157,17 @@ function Lobby({
         {hasInvite ? (
           <>
             <button style={s.primaryBtn} onClick={onJoinRoom} disabled={creating}>
-              {creating ? 'Joining…' : 'Join Meeting'}
+              {creating ? 'Joining…' : `Join ${APP_NAME} ${subtext}`}
             </button>
             <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
-              Start New Meeting
+              Start New {subtext}
             </button>
           </>
         ) : (
           <button style={s.primaryBtn} onClick={onCreateRoom} disabled={creating}>
-            {creating ? 'Starting…' : 'Start Meeting'}
+            {creating ? 'Starting…' : `Start ${subtext}`}
           </button>
         )}
-        <a href={GITHUB_URL} target="_blank" rel="noreferrer" style={s.githubLink}>
-          <GithubIcon /> View on GitHub
-        </a>
       </div>
     </div>
   )
@@ -205,17 +221,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       {/* Header */}
       <div style={s.header}>
         <div style={s.headerLeft}>
-          <span style={s.logo2}>🍯</span>
-          <span style={s.roomTitle}>{roomName || 'Meeting'}</span>
+          <span style={s.logo2}>🐝</span>
+          <span style={s.roomTitle}>{APP_NAME}</span>
           <span style={s.pill}>{activeCount} {activeCount === 1 ? 'participant' : 'participants'}</span>
         </div>
         <div style={s.headerRight}>
           <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
             💬
           </button>
-          <a href={GITHUB_URL} target="_blank" rel="noreferrer" style={{ ...s.iconBtn, textDecoration: 'none' }} title="GitHub">
-            <GithubIcon />
-          </a>
           <button style={s.leaveBtn} onClick={onLeave}>Leave</button>
         </div>
       </div>
@@ -337,16 +350,6 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   )
 }
 
-// ============================================================
-// GITHUB ICON
-// ============================================================
-function GithubIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-    </svg>
-  )
-}
 
 // ============================================================
 // STYLES
@@ -361,7 +364,9 @@ const s: Record<string, React.CSSProperties> = {
   input: { background: '#222', border: '1px solid #333', borderRadius: 10, padding: '11px 14px', color: '#fff', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' },
   primaryBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
   secondaryBtn: { background: '#222', color: '#aaa', border: '1px solid #333', borderRadius: 10, padding: '11px 20px', fontSize: 14, cursor: 'pointer', width: '100%' },
-  githubLink: { display: 'flex', alignItems: 'center', gap: 6, color: '#666', fontSize: 13, textDecoration: 'none', justifyContent: 'center', marginTop: 4 },
+  subtextRow: { display: 'flex', gap: 8 },
+  subtextBtn: { background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 20, padding: '5px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
+  subtextActive: { background: '#2a2a2a', color: '#f5a623', border: '1px solid #f5a623' },
   roomWrapper: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#0a0a0a' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: '#111', borderBottom: '1px solid #222', zIndex: 10 },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },

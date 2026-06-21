@@ -2,6 +2,11 @@ import express from 'express'
 import { AccessToken } from 'livekit-server-sdk'
 import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+import { existsSync } from 'fs'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 dotenv.config()
 
@@ -156,6 +161,15 @@ app.get('/api/fathom/recordings/:id/transcript', async (req, res) => {
 // HEALTH CHECK
 // ============================================================
 app.get('/health', (_, res) => res.json({ status: 'ok' }))
+
+// ============================================================
+// SERVE FRONTEND (production — Render single-service deploy)
+// ============================================================
+const distPath = join(__dirname, 'dist')
+if (existsSync(distPath)) {
+  app.use(express.static(distPath))
+  app.get('*', (_, res) => res.sendFile(join(distPath, 'index.html')))
+}
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, () => console.log(`BeeHive backend running on port ${PORT}`))

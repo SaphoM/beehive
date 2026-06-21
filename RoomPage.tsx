@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -224,6 +224,10 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
 
+  // Auto cam state
+  const [autoCamMode, setAutoCamMode] = useState<'center' | 'split' | null>(null)
+  const [showAutoCamMenu, setShowAutoCamMenu] = useState(false)
+
   // Screen share state
   const [shareMenu, setShareMenu] = useState(false)
   const [isSharing, setIsSharing] = useState(false)
@@ -360,6 +364,15 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             />
           )}
 
+          {/* Auto Cam Window */}
+          {autoCamMode && (
+            <AutoCamWindow
+              mode={autoCamMode}
+              onModeChange={setAutoCamMode}
+              onClose={() => { setAutoCamMode(null); setShowAutoCamMenu(false) }}
+            />
+          )}
+
           {/* Speaking Indicator */}
           <SpeakingIndicator />
 
@@ -377,6 +390,34 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
             {/* Cam */}
             <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
+
+            {/* Auto Cam */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={{ ...s.controlBtn, ...(autoCamMode ? { background: '#1a2e4a', border: '1px solid #4299e1' } : {}) }}
+                onClick={() => {
+                  if (autoCamMode) { setAutoCamMode(null); setShowAutoCamMenu(false) }
+                  else setShowAutoCamMenu(v => !v)
+                }}
+                title="Auto cam"
+              >
+                <Aperture size={20} />
+              </button>
+              {showAutoCamMenu && !autoCamMode && (
+                <div style={s.autoCamMenu}>
+                  <div style={s.shareMenuHeader}>
+                    <span style={s.shareMenuTitle}>Auto Cam</span>
+                    <button style={s.shareMenuClose} onClick={() => setShowAutoCamMenu(false)}><X size={14} /></button>
+                  </div>
+                  <button style={s.shareMenuOption} onClick={() => { setAutoCamMode('center'); setShowAutoCamMenu(false) }}>
+                    <Crosshair size={15} color="#aaa" /><span>Auto Centre</span>
+                  </button>
+                  <button style={s.shareMenuOption} onClick={() => { setAutoCamMode('split'); setShowAutoCamMenu(false) }}>
+                    <Users size={15} color="#aaa" /><span>2 in 1</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Reactions */}
             <div style={{ position: 'relative' }}>
@@ -612,6 +653,113 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
         <button style={s.dockedBtn} onClick={onUndock} title="Undock">↙</button>
         <button style={s.dockedBtn} onClick={onClose} title="Close"><X size={12} /></button>
       </div>
+    </div>
+  )
+}
+
+// ============================================================
+// AUTO CAM WINDOW
+// ============================================================
+function AutoCamWindow({ mode, onModeChange, onClose }: {
+  mode: 'center' | 'split'
+  onModeChange: (m: 'center' | 'split') => void
+  onClose: () => void
+}) {
+  const participants = useLiveKitParticipants()
+  const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+  const { localParticipant } = useLocalParticipant()
+
+  // Track the active speaker with a debounce so the window doesn't flicker
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string>(localParticipant.identity)
+  const speakerLockRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const loudest = participants
+        .filter(p => p.isSpeaking && p.audioLevel > 0.02)
+        .sort((a, b) => b.audioLevel - a.audioLevel)[0]
+      if (loudest && loudest.identity !== activeSpeakerId) {
+        if (speakerLockRef.current) clearTimeout(speakerLockRef.current)
+        speakerLockRef.current = setTimeout(() => {
+          setActiveSpeakerId(loudest.identity)
+          speakerLockRef.current = null
+        }, 1500) // wait 1.5s before switching to prevent rapid churn
+      }
+    }, 200)
+    return () => {
+      clearInterval(tick)
+      if (speakerLockRef.current) clearTimeout(speakerLockRef.current)
+    }
+  }, [participants, activeSpeakerId])
+
+  const focusTrack = cameraTracks.find(t => t.participant.identity === activeSpeakerId)
+  const localTrack = cameraTracks.find(t => t.participant.identity === localParticipant.identity)
+  const focusName = participants.find(p => p.identity === activeSpeakerId)?.name?.split(' ')[0]
+    || activeSpeakerId.split(' ')[0]
+  const isLocalFocus = activeSpeakerId === localParticipant.identity
+
+  return (
+    <div style={{ ...s.autoCamWindow, width: mode === 'split' ? 360 : 240 }}>
+      {/* Header */}
+      <div style={s.autoCamHeader}>
+        <div style={s.autoCamTabs}>
+          <button
+            style={{ ...s.autoCamTab, ...(mode === 'center' ? s.autoCamTabActive : {}) }}
+            onClick={() => onModeChange('center')}
+          >
+            <Crosshair size={11} /> Centre
+          </button>
+          <button
+            style={{ ...s.autoCamTab, ...(mode === 'split' ? s.autoCamTabActive : {}) }}
+            onClick={() => onModeChange('split')}
+          >
+            <Users size={11} /> 2 in 1
+          </button>
+        </div>
+        <button style={s.autoCamClose} onClick={onClose}><X size={12} /></button>
+      </div>
+
+      {/* Auto Centre — single speaker, top-biased crop */}
+      {mode === 'center' && (
+        <div style={s.autoCamVideoWrap}>
+          {focusTrack ? (
+            <div style={s.autoCamCropFrame}>
+              <ParticipantTile trackRef={focusTrack} style={{ width: '100%', height: '100%' }} />
+            </div>
+          ) : (
+            <div style={s.autoCamNoVideo}><VideoOff size={22} color="#444" /></div>
+          )}
+          <div style={s.autoCamNameTag}>
+            <Crosshair size={10} color="#4299e1" />
+            {isLocalFocus ? 'You' : focusName}
+          </div>
+        </div>
+      )}
+
+      {/* 2 in 1 — local + active speaker side by side */}
+      {mode === 'split' && (
+        <div style={s.autoCamSplitRow}>
+          {/* Local */}
+          <div style={s.autoCamHalf}>
+            {localTrack ? (
+              <ParticipantTile trackRef={localTrack} style={{ width: '100%', height: '100%' }} />
+            ) : (
+              <div style={s.autoCamNoVideo}><VideoOff size={16} color="#444" /></div>
+            )}
+            <div style={s.autoCamSplitLabel}>You</div>
+          </div>
+          <div style={s.autoCamDivider} />
+          {/* Active speaker */}
+          <div style={s.autoCamHalf}>
+            {focusTrack && !isLocalFocus ? (
+              <ParticipantTile trackRef={focusTrack} style={{ width: '100%', height: '100%' }} />
+            ) : (
+              <div style={s.autoCamNoVideo}><VideoOff size={16} color="#444" /></div>
+            )}
+            <div style={s.autoCamSplitLabel}>{isLocalFocus ? 'Waiting…' : focusName}</div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -863,6 +1011,23 @@ const s: Record<string, React.CSSProperties> = {
   sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer' },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
+
+  // Auto cam window (bottom-right of video area)
+  autoCamMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 200, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  autoCamWindow: { position: 'absolute' as const, bottom: 20, right: 20, background: '#141414', border: '1px solid #1e3a5a', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.7)', zIndex: 15 },
+  autoCamHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', background: '#1a1a1a', borderBottom: '1px solid #222' },
+  autoCamTabs: { display: 'flex', gap: 4 },
+  autoCamTab: { display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid #333', borderRadius: 20, padding: '3px 10px', color: '#666', fontSize: 11, fontFamily: "'Roboto', sans-serif", cursor: 'pointer' },
+  autoCamTabActive: { background: '#1a2e4a', borderColor: '#4299e1', color: '#4299e1' },
+  autoCamClose: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 },
+  autoCamVideoWrap: { position: 'relative' as const, width: '100%', aspectRatio: '4/3', background: '#0d0d0d', overflow: 'hidden' },
+  autoCamCropFrame: { width: '100%', height: '100%', overflow: 'hidden' },
+  autoCamNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0d0d0d' },
+  autoCamNameTag: { position: 'absolute' as const, bottom: 8, left: 10, display: 'flex', alignItems: 'center', gap: 5, color: '#d0d0d0', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", background: 'rgba(0,0,0,0.6)', borderRadius: 10, padding: '3px 8px' },
+  autoCamSplitRow: { display: 'flex', height: 135, background: '#0d0d0d' },
+  autoCamHalf: { flex: 1, position: 'relative' as const, overflow: 'hidden' },
+  autoCamDivider: { width: 1, background: '#222', flexShrink: 0 },
+  autoCamSplitLabel: { position: 'absolute' as const, bottom: 5, left: 6, color: '#bbb', fontSize: 10, fontWeight: 300, fontFamily: "'Roboto', sans-serif", background: 'rgba(0,0,0,0.6)', borderRadius: 8, padding: '2px 6px' },
 
   // Speaking indicator + speaker window
   speakingWrap: { position: 'absolute' as const, bottom: 20, left: 20, display: 'flex', flexDirection: 'column' as const, gap: 6, zIndex: 15 },

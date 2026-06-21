@@ -48,6 +48,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 | Reactions | `Hand` | Hover to reveal emoji picker; floating animations |
 | Invite Link | `Link` / `Link2Off` | Copies `?room=ROOM_ID`; icon changes on copy |
 | Video Quality | `Film` + HD badge | Low 360p / Medium 720p / High 1080p dropdown |
+| Auto Cam | `Aperture` | Opens cam mode menu; blue when active |
 | Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active |
 | Leave | `PhoneOff` | Red; disconnects and returns to lobby |
 
@@ -56,6 +57,10 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - 👋 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥)
 - 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
+- 📸 Auto Cam — floating window (bottom-right), two modes switchable via header tabs:
+  - **Auto Centre** — shows the current active speaker's camera in a 4:3 crop; automatically follows whoever is loudest (1.5 s debounce to prevent rapid switching); name tag with crosshair icon
+  - **2 in 1** — splits the window into two equal halves: local participant (You) on the left, active speaker on the right; "Waiting…" placeholder when no remote speaker is detected
+  - `Aperture` button in controls bar turns blue when active; clicking again closes the window
 - 🖥️ Screen sharing:
   - Pre-share menu: **Clear screen before sharing** toggle (fades BeeHive out before picker opens so the app doesn't appear in the capture preview), **Entire Screen**, **Select Window**
   - Active share bar: source label, **Add Window** (captures a second source), **Switch** (live `replaceTrack` between two sources), **Stop Sharing**
@@ -94,6 +99,7 @@ beehive/
 │                                       #   Lobby
 │                                       #   MeetingRoom
 │                                       #   SpeakingIndicator
+│                                       #   AutoCamWindow
 │                                       #   ScreenShareMenu
 │                                       #   ScreenShareBar
 │                                       #   ParticipantsWindow (draggable, dockable)

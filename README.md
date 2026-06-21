@@ -197,7 +197,7 @@ git push origin hotfix/critical-fix
 
 ---
 
-## Planned: Admin Controls & Group Management
+## Planned: Host Controls & Group Management
 
 > Accessed from the Participants window. Only available to the room host / co-host (admin role).
 
@@ -205,7 +205,7 @@ git push origin hotfix/critical-fix
 
 | Action | Scope | Description |
 |--------|-------|-------------|
-| Mute one | Individual | Admin clicks a participant's mic icon to mute them |
+| Mute one | Individual | Host clicks a participant's mic icon to mute them |
 | Mute all | Room-wide | Single action to mute every participant at once |
 | Select + mute | Multi-select | Checkbox-select multiple attendees, then mute selection |
 
@@ -220,7 +220,7 @@ git push origin hotfix/critical-fix
 
 Participants can be organised into named groups within a room.
 
-**Labels:** Auto-assigned on join as `Group 1`, `Group 2`, `Group 3`, etc. Admin can rename any group.
+**Labels:** Auto-assigned on join as `Group 1`, `Group 2`, `Group 3`, etc. Host can rename any group.
 
 | Action | Description |
 |--------|-------------|
@@ -235,10 +235,10 @@ Participants can be organised into named groups within a room.
 
 A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from the main room audio/video.
 
-**Time option:** Admin sets a duration (5 / 10 / 15 / 30 min, or custom). A countdown timer is visible to all participants in the sub-room. When time expires, participants are automatically returned to the main room.
+**Time option:** Host sets a duration (5 / 10 / 15 / 30 min, or custom). A countdown timer is visible to all participants in the sub-room. When time expires, participants are automatically returned to the main room.
 
 **Flow:**
-1. Admin selects a group → **"Break Away"** button
+1. Host selects a group → **"Break Away"** button
 2. Modal: choose duration → confirm
 3. Sub-room created (`{livekit_room_name}-group-{n}`) — participants auto-join
 4. Countdown displayed in sub-room header
@@ -253,7 +253,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 ## Roadmap
 
 - [ ] Authentication (Supabase Auth email/password)
-- [ ] Admin role — host/co-host permissions
+- [ ] Host role — host/co-host permissions
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled (Group 1/2/3), renameable, group mute
 - [ ] Breakaway discussions — timed sub-rooms with auto-recall

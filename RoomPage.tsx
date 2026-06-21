@@ -540,6 +540,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const tracks = allTracks.filter(t =>
     !(t.participant.identity === localParticipant.identity && t.source === Track.Source.ScreenShare)
   )
+  // Remote screen share tracks — when present, take over the full main area
+  const remoteScreenTracks = allTracks.filter(t =>
+    t.source === Track.Source.ScreenShare &&
+    t.participant.identity !== localParticipant.identity
+  )
+  const hasRemoteScreenShare = remoteScreenTracks.length > 0
+  const cameraTracks = tracks.filter(t => t.source !== Track.Source.ScreenShare)
   const participants = useParticipants(roomId)
   const { messages, sendMessage } = useChat(roomId)
   const recordings = useRecordings(roomId)
@@ -699,6 +706,11 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     }
   }, [bgActive, localParticipant])
 
+  // Auto-open participants window when a remote screen share starts
+  useEffect(() => {
+    if (hasRemoteScreenShare) setShowParticipants(true)
+  }, [hasRemoteScreenShare])
+
   // Auto cam state
   const [autoCamMode, setAutoCamMode] = useState<'center' | 'split' | null>(null)
   const [showAutoCamMenu, setShowAutoCamMenu] = useState(false)
@@ -823,9 +835,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
         {/* Video Grid */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <GridLayout tracks={tracks} style={{ height: '100%' }}>
-            <ParticipantTile />
-          </GridLayout>
+          {hasRemoteScreenShare ? (
+            <ParticipantTile
+              trackRef={remoteScreenTracks[0]}
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            />
+          ) : (
+            <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
+              <ParticipantTile />
+            </GridLayout>
+          )}
 
           {/* Active Share Bar */}
           {isSharing && (

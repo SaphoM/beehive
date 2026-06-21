@@ -76,6 +76,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
   - Pre-share menu: **Clear screen before sharing** toggle (fades BeeHive out before picker opens so the app doesn't appear in the capture preview), **Entire Screen**, **Select Window**
   - Active share bar: source label, **Add Window** (captures a second source), **Switch** (live `replaceTrack` between two sources), **Stop Sharing**
   - Local screen share track is excluded from the local `GridLayout` — prevents the infinite mirror echo
+  - When a remote participant shares their screen, the share takes over the **full main area** — participant cameras leave the grid and are visible only in the Participants window (which auto-opens); screen ends → grid returns to normal
 - 🔊 Speaking indicator (bottom-left, only visible when audio is active):
   - Animated 5-bar equaliser chip shows the active speaker's first name
   - Floating **speaker video window** appears above the chip with the active speaker's live camera feed

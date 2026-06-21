@@ -19,6 +19,10 @@ import {
   useChat,
   useRecordings,
   useRoomInfo,
+  useFathomMeetings,
+  useFathomTranscript,
+  type FathomMeeting,
+  type FathomTranscriptLine,
 } from './livekit_react_hooks'
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
@@ -283,8 +287,10 @@ function Lobby({
   subtext: Subtext
   onSubtextChange: (v: Subtext) => void
 }) {
+  const [showFathom, setShowFathom] = useState(false)
+
   return (
-    <div style={s.lobby}>
+    <div style={{ ...s.lobby, flexDirection: 'column', gap: 16 }}>
       <div style={s.lobbyCard}>
         <h1 style={s.title}>
           <span style={{ fontWeight: 400 }}>BEE</span>HIVE
@@ -339,6 +345,176 @@ function Lobby({
           </button>
         )}
       </div>
+
+      {/* Fathom meetings toggle */}
+      <button style={s.fathomToggleBtn} onClick={() => setShowFathom(v => !v)}>
+        <span style={{ opacity: 0.5, fontSize: 11 }}>◆</span>
+        Recent meetings
+        <span style={{ marginLeft: 'auto', opacity: 0.5 }}>{showFathom ? '▲' : '▼'}</span>
+      </button>
+
+      {showFathom && <FathomPanel />}
+    </div>
+  )
+}
+
+// ============================================================
+// FATHOM PANEL
+// ============================================================
+function fmtDuration(start?: string, end?: string): string {
+  if (!start || !end) return ''
+  const min = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000)
+  if (min < 60) return `${min}m`
+  return `${Math.floor(min / 60)}h ${min % 60}m`
+}
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function getRecordingId(url: string): string | null {
+  return url?.match(/recordings\/([a-zA-Z0-9_-]+)/)?.[1] ?? null
+}
+
+function FathomMeetingRow({ meeting }: { meeting: FathomMeeting }) {
+  const [expanded, setExpanded] = useState(false)
+  const [showTranscript, setShowTranscript] = useState(false)
+  const recordingId = getRecordingId(meeting.url)
+  const { transcript, loading: tLoading, loadTranscript } = useFathomTranscript(recordingId)
+  const title = meeting.title || meeting.meeting_title || 'Untitled meeting'
+  const duration = fmtDuration(meeting.recording_start_time, meeting.recording_end_time)
+  const attendeeCount = meeting.calendar_invitees?.length ?? 0
+  const hasContent = !!(meeting.default_summary?.markdown_formatted || meeting.action_items?.length)
+
+  const handleTranscript = () => {
+    if (!showTranscript && !transcript) loadTranscript()
+    setShowTranscript(v => !v)
+  }
+
+  return (
+    <div style={s.fathomRow}>
+      {/* Meeting header */}
+      <button style={s.fathomRowHeader} onClick={() => hasContent && setExpanded(v => !v)}>
+        <div style={s.fathomRowMeta}>
+          <span style={s.fathomRowDate}>{fmtDate(meeting.created_at)}</span>
+          {duration && <span style={s.fathomRowDuration}>{duration}</span>}
+          {attendeeCount > 0 && <span style={s.fathomRowDuration}>{attendeeCount} people</span>}
+        </div>
+        <div style={s.fathomRowTitle}>{title}</div>
+        {meeting.recorded_by && (
+          <div style={s.fathomRowRecordedBy}>Recorded by {meeting.recorded_by.name}</div>
+        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+          {meeting.share_url && (
+            <a href={meeting.share_url} target="_blank" rel="noreferrer" style={s.fathomLink}
+               onClick={e => e.stopPropagation()}>
+              Open ↗
+            </a>
+          )}
+          {hasContent && (
+            <span style={{ ...s.fathomChip, marginLeft: 'auto' }}>{expanded ? '▲' : '▼'}</span>
+          )}
+        </div>
+      </button>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div style={s.fathomDetail}>
+          {/* AI Summary */}
+          {meeting.default_summary?.markdown_formatted && (
+            <div style={s.fathomSection}>
+              <div style={s.fathomSectionTitle}>Summary</div>
+              <div style={s.fathomSummaryText}>
+                {meeting.default_summary.markdown_formatted}
+              </div>
+            </div>
+          )}
+
+          {/* Action Items */}
+          {(meeting.action_items?.length ?? 0) > 0 && (
+            <div style={s.fathomSection}>
+              <div style={s.fathomSectionTitle}>Action Items</div>
+              {meeting.action_items!.map((item, i) => (
+                <div key={i} style={s.fathomActionItem}>
+                  <span style={{ color: item.completed ? '#48bb78' : '#555', flexShrink: 0, fontSize: 13 }}>
+                    {item.completed ? '✓' : '○'}
+                  </span>
+                  <span style={{
+                    color: item.completed ? '#555' : '#ccc',
+                    textDecoration: item.completed ? 'line-through' : 'none',
+                    flex: 1, fontSize: 13,
+                  }}>
+                    {item.description}
+                  </span>
+                  {item.assignee && (
+                    <span style={s.fathomAssignee}>→ {item.assignee.name.split(' ')[0]}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Transcript toggle */}
+          {recordingId && (
+            <button style={s.fathomTranscriptToggle} onClick={handleTranscript}>
+              {tLoading ? 'Loading…' : showTranscript ? '▲ Hide transcript' : '▼ View transcript'}
+            </button>
+          )}
+
+          {showTranscript && transcript && (
+            <div style={s.fathomTranscript}>
+              {transcript.map((line: FathomTranscriptLine, i: number) => (
+                <div key={i} style={s.fathomTranscriptLine}>
+                  <span style={s.fathomTranscriptTime}>{line.timestamp}</span>
+                  <span style={s.fathomTranscriptSpeaker}>{line.speaker.display_name}</span>
+                  <span style={s.fathomTranscriptText}>{line.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FathomPanel() {
+  const { meetings, loading, error, hasMore, loadMore } = useFathomMeetings(8)
+
+  return (
+    <div style={s.fathomPanel}>
+      <div style={s.fathomHeader}>
+        <span style={s.fathomHeaderTitle}>◆ FATHOM</span>
+        <a href="https://app.fathom.video" target="_blank" rel="noreferrer" style={s.fathomLink}>
+          Open Fathom ↗
+        </a>
+      </div>
+
+      {error && (
+        <div style={s.fathomEmpty}>
+          {error.includes('503') || error.includes('not configured')
+            ? 'Add FATHOM_API_KEY to .env to connect your Fathom account.'
+            : `Could not load meetings: ${error}`}
+        </div>
+      )}
+
+      {!error && loading && meetings.length === 0 && (
+        <div style={s.fathomEmpty}>Loading…</div>
+      )}
+
+      {!error && !loading && meetings.length === 0 && (
+        <div style={s.fathomEmpty}>No Fathom meetings found.</div>
+      )}
+
+      <div style={s.fathomList}>
+        {meetings.map((m, i) => <FathomMeetingRow key={m.url ?? i} meeting={m} />)}
+      </div>
+
+      {hasMore && (
+        <button style={s.fathomLoadMore} onClick={loadMore} disabled={loading}>
+          {loading ? 'Loading…' : 'Load more'}
+        </button>
+      )}
     </div>
   )
 }
@@ -1457,6 +1633,44 @@ const s: Record<string, React.CSSProperties> = {
   sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer' },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
+
+  // Fathom toggle button (lobby)
+  fathomToggleBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: '1px solid #222', borderRadius: 10, padding: '8px 16px', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', width: 360, letterSpacing: 0.5 },
+
+  // Fathom panel
+  fathomPanel: { width: 360, background: '#111', border: '1px solid #1e1e1e', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' as const },
+  fathomHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #1e1e1e' },
+  fathomHeaderTitle: { color: '#f5a623', fontSize: 10, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 2 },
+  fathomLink: { color: '#5b5ef4', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", textDecoration: 'none' },
+  fathomEmpty: { color: '#444', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '20px 16px', textAlign: 'center' as const },
+  fathomList: { display: 'flex', flexDirection: 'column' as const, maxHeight: 420, overflowY: 'auto' as const },
+  fathomLoadMore: { background: 'none', border: 'none', borderTop: '1px solid #1e1e1e', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '10px', cursor: 'pointer', width: '100%' },
+
+  // Fathom meeting row
+  fathomRow: { borderBottom: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column' as const },
+  fathomRowHeader: { background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px', textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 3 },
+  fathomRowMeta: { display: 'flex', alignItems: 'center', gap: 8 },
+  fathomRowDate: { color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+  fathomRowDuration: { color: '#3a3a3a', fontSize: 10, fontFamily: "'Roboto', sans-serif", fontWeight: 300, background: '#1e1e1e', borderRadius: 4, padding: '1px 5px' },
+  fathomRowTitle: { color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+  fathomRowRecordedBy: { color: '#3a3a3a', fontSize: 10, fontFamily: "'Roboto', sans-serif" },
+  fathomChip: { color: '#333', fontSize: 10 },
+
+  // Fathom expanded detail
+  fathomDetail: { padding: '0 16px 14px', display: 'flex', flexDirection: 'column' as const, gap: 12 },
+  fathomSection: { display: 'flex', flexDirection: 'column' as const, gap: 6 },
+  fathomSectionTitle: { color: '#444', fontSize: 9, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 1.5, textTransform: 'uppercase' as const },
+  fathomSummaryText: { color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, lineHeight: 1.6, whiteSpace: 'pre-wrap' as const, maxHeight: 160, overflowY: 'auto' as const },
+  fathomActionItem: { display: 'flex', alignItems: 'flex-start', gap: 8 },
+  fathomAssignee: { color: '#3a3a3a', fontSize: 11, fontFamily: "'Roboto', sans-serif", flexShrink: 0 },
+
+  // Transcript
+  fathomTranscriptToggle: { background: 'none', border: '1px solid #222', borderRadius: 6, color: '#444', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' as const },
+  fathomTranscript: { display: 'flex', flexDirection: 'column' as const, gap: 6, maxHeight: 240, overflowY: 'auto' as const, background: '#0d0d0d', borderRadius: 8, padding: '10px 12px' },
+  fathomTranscriptLine: { display: 'flex', gap: 8, alignItems: 'flex-start' },
+  fathomTranscriptTime: { color: '#333', fontSize: 10, fontFamily: 'monospace', flexShrink: 0, marginTop: 2 },
+  fathomTranscriptSpeaker: { color: '#5b5ef4', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 400, flexShrink: 0, minWidth: 80 },
+  fathomTranscriptText: { color: '#777', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, lineHeight: 1.5 },
 
   // Background effects menu
   bgMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', width: 280, display: 'flex', flexDirection: 'column' as const, gap: 8, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },

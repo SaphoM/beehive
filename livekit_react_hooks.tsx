@@ -234,6 +234,95 @@ export function useChat(roomId: string) {
 }
 
 // ============================================================
+// FATHOM — meeting intelligence
+// ============================================================
+export interface FathomAttendee {
+  name: string
+  email: string
+  is_external: boolean
+}
+
+export interface FathomActionItem {
+  description: string
+  completed: boolean
+  user_generated: boolean
+  recording_timestamp?: string
+  recording_playback_url?: string
+  assignee?: { name: string; email: string }
+}
+
+export interface FathomTranscriptLine {
+  speaker: { display_name: string; matched_calendar_invitee_email?: string }
+  text: string
+  timestamp: string
+}
+
+export interface FathomMeeting {
+  title: string
+  meeting_title?: string
+  url: string
+  share_url?: string
+  created_at: string
+  recording_start_time?: string
+  recording_end_time?: string
+  transcript_language?: string
+  calendar_invitees?: FathomAttendee[]
+  recorded_by?: { name: string; email: string; team?: string }
+  default_summary?: { template_name: string; markdown_formatted: string }
+  action_items?: FathomActionItem[]
+}
+
+export function useFathomMeetings(limit = 8) {
+  const [meetings, setMeetings] = useState<FathomMeeting[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+
+  const fetchPage = useCallback(async (cursor?: string) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: String(limit) })
+      if (cursor) params.set('cursor', cursor)
+      const resp = await fetch(`/api/fathom/meetings?${params}`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      if (data.error) throw new Error(data.error)
+      setMeetings(prev => cursor ? [...prev, ...(data.items ?? [])] : (data.items ?? []))
+      setNextCursor(data.next_cursor ?? null)
+      setError(null)
+    } catch (e: any) {
+      setError(e.message ?? 'Could not load Fathom meetings')
+    } finally {
+      setLoading(false)
+    }
+  }, [limit])
+
+  useEffect(() => { fetchPage() }, [fetchPage])
+
+  return { meetings, loading, error, hasMore: !!nextCursor, loadMore: () => fetchPage(nextCursor ?? undefined) }
+}
+
+export function useFathomTranscript(recordingId: string | null) {
+  const [transcript, setTranscript] = useState<FathomTranscriptLine[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadTranscript = useCallback(async () => {
+    if (!recordingId) return
+    setLoading(true)
+    try {
+      const resp = await fetch(`/api/fathom/recordings/${recordingId}/transcript`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setTranscript(Array.isArray(data) ? data : (data.transcript ?? null))
+      }
+    } catch {}
+    setLoading(false)
+  }, [recordingId])
+
+  return { transcript, loading, loadTranscript }
+}
+
+// ============================================================
 // RECORDINGS
 // ============================================================
 export function useRecordings(roomId: string) {

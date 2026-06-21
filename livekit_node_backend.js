@@ -93,6 +93,51 @@ app.post('/api/livekit/webhook', async (req, res) => {
 })
 
 // ============================================================
+// FATHOM — meeting intelligence proxy
+// GET  /api/fathom/meetings
+// GET  /api/fathom/recordings/:id/transcript
+// ============================================================
+const FATHOM_BASE = 'https://api.fathom.ai/external/v1'
+
+app.get('/api/fathom/meetings', async (req, res) => {
+  const key = process.env.FATHOM_API_KEY
+  if (!key) return res.status(503).json({ error: 'FATHOM_API_KEY not configured' })
+
+  const params = new URLSearchParams({
+    include_summary: 'true',
+    include_action_items: 'true',
+    limit: String(req.query.limit ?? 10),
+  })
+  if (req.query.cursor) params.set('cursor', String(req.query.cursor))
+  if (req.query.created_after) params.set('created_after', String(req.query.created_after))
+
+  try {
+    const resp = await fetch(`${FATHOM_BASE}/meetings?${params}`, {
+      headers: { 'X-Api-Key': key },
+    })
+    if (!resp.ok) return res.status(resp.status).json({ error: 'Fathom API error', status: resp.status })
+    res.json(await resp.json())
+  } catch {
+    res.status(502).json({ error: 'Failed to reach Fathom API' })
+  }
+})
+
+app.get('/api/fathom/recordings/:id/transcript', async (req, res) => {
+  const key = process.env.FATHOM_API_KEY
+  if (!key) return res.status(503).json({ error: 'FATHOM_API_KEY not configured' })
+
+  try {
+    const resp = await fetch(`${FATHOM_BASE}/recordings/${req.params.id}/transcript`, {
+      headers: { 'X-Api-Key': key },
+    })
+    if (!resp.ok) return res.status(resp.status).json({ error: 'Fathom API error' })
+    res.json(await resp.json())
+  } catch {
+    res.status(502).json({ error: 'Failed to reach Fathom API' })
+  }
+})
+
+// ============================================================
 // HEALTH CHECK
 // ============================================================
 app.get('/health', (_, res) => res.json({ status: 'ok' }))

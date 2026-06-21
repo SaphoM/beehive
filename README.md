@@ -28,6 +28,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 | Icons | Lucide React |
 | Fonts | Roboto (Google Fonts) — Thin (100) / Light (300) / Regular (400) |
 | Backend | Node.js + Express 5 |
+| Meeting Intelligence | Fathom API |
 
 ---
 
@@ -89,6 +90,28 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - Release to **dock as a horizontal strip** below the header
 - Each tile shows: live video (or camera-off placeholder), name, mic status (green/red), cam status (green/red)
 - Docked strip: scrollable thumbnails; **↙** undocks, **✕** closes
+
+### Fathom Integration
+
+BeeHive connects to [Fathom](https://fathom.video) to surface AI meeting intelligence from your recorded meetings.
+
+**Features (accessible from the Lobby via "Recent meetings"):**
+- Meeting list — title, date, duration, attendees
+- AI-generated summary (`default_summary.markdown_formatted`)
+- Action items with assignee names and completion status
+- On-demand transcript viewer — loads per-recording via `/api/fathom/recordings/:id/transcript`
+- "Open in Fathom ↗" deep-link to the original recording
+
+**API:** Base URL `https://api.fathom.ai/external/v1` — proxied through the Node.js backend so the API key never reaches the client.
+
+**Rate limits:** 30 req/min for `/meetings` with summaries; 5 req/min under elevated activity.
+
+**Required env var:**
+```env
+FATHOM_API_KEY=your_fathom_api_key   # from fathom.video/customize#api-access-header
+```
+
+---
 
 ### Security
 - Row Level Security (RLS) on all Supabase tables
@@ -173,6 +196,9 @@ React Frontend (Vite — default :5173, may vary)
 ## Environment Variables
 
 ```env
+# Fathom
+FATHOM_API_KEY=your_fathom_api_key
+
 # LiveKit
 LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=your_api_key
@@ -320,4 +346,5 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] DUT organisation SSO
 - [ ] Syspro integration (government contracts)
 - [ ] Mobile (React Native + LiveKit mobile SDK)
+- [x] Fathom integration — meeting summaries, action items, transcript viewer
 - [ ] Self-hosted LiveKit option (Africa-first / data sovereignty)

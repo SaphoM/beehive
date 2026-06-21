@@ -1,0 +1,29 @@
+{
+  "name": "honey-com",
+  "version": "1.0.0",
+  "description": "",
+  "main": "livekit_node_backend.js",
+  "scripts": {
+    "start": "node livekit_node_backend.js",
+    "dev:backend": "node --watch livekit_node_backend.js",
+    "dev:frontend": "vite",
+    "dev": "vite",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@livekit/components-react": "^2.9.21",
+    "@livekit/components-styles": "^1.2.0",
+    "@supabase/supabase-js": "^2.108.2",
+    "@vitejs/plugin-react": "^6.0.2",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "livekit-server-sdk": "^2.15.5",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "vite": "^8.0.16"
+  }
+}

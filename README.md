@@ -47,6 +47,10 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - 📴 Leave call with PhoneOff icon
 - 🔒 Row Level Security (RLS) on all Supabase tables
 - 👁️ Invite preview — guests see room name + participant count before joining
+- 👥 Participants window — click the participant count pill to open a video grid of all participants with mic/cam status indicators
+  - Draggable floating window (grab the title bar to reposition)
+  - Drag to the top of the screen to dock as a compact horizontal strip below the header
+  - Undock (↙) restores the floating window; close (✕) dismisses entirely
 
 ---
 

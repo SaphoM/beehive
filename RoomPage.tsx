@@ -211,6 +211,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [chatInput, setChatInput] = useState('')
   const [showChat, setShowChat] = useState(true)
   const [showParticipants, setShowParticipants] = useState(false)
+  const [participantsDocked, setParticipantsDocked] = useState(false)
   const [showQuality, setShowQuality] = useState(false)
   const [quality, setQuality] = useState('Medium (720p)')
   const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string }[]>([])
@@ -260,10 +261,21 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         </div>
       </div>
 
+      {/* Docked participants strip — sits between header and room body */}
+      {showParticipants && participantsDocked && (
+        <DockedParticipantsStrip
+          onUndock={() => setParticipantsDocked(false)}
+          onClose={() => { setShowParticipants(false); setParticipantsDocked(false) }}
+        />
+      )}
+
       <div style={s.roomBody}>
-        {/* Participants Window */}
-        {showParticipants && (
-          <ParticipantsWindow onClose={() => setShowParticipants(false)} />
+        {/* Floating participants window */}
+        {showParticipants && !participantsDocked && (
+          <ParticipantsWindow
+            onClose={() => setShowParticipants(false)}
+            onDock={() => setParticipantsDocked(true)}
+          />
         )}
 
         {/* Video Grid */}
@@ -383,45 +395,78 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
 
 // ============================================================
-// PARTICIPANTS WINDOW
+// PARTICIPANTS WINDOW (draggable, dockable)
 // ============================================================
-function ParticipantsWindow({ onClose }: { onClose: () => void }) {
+function ParticipantsWindow({ onClose, onDock }: { onClose: () => void; onDock: () => void }) {
   const lkParticipants = useLiveKitParticipants()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+  const [pos, setPos] = useState({ x: 24, y: 24 })
+  const [dragging, setDragging] = useState(false)
+  const [nearDock, setNearDock] = useState(false)
+  const dragStart = useRef({ mouseX: 0, mouseY: 0, winX: 0, winY: 0 })
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setDragging(true)
+    dragStart.current = { mouseX: e.clientX, mouseY: e.clientY, winX: pos.x, winY: pos.y }
+  }
+
+  useEffect(() => {
+    if (!dragging) return
+    const onMove = (e: MouseEvent) => {
+      const newX = dragStart.current.winX + e.clientX - dragStart.current.mouseX
+      const newY = dragStart.current.winY + e.clientY - dragStart.current.mouseY
+      setPos({ x: Math.max(0, newX), y: Math.max(0, newY) })
+      setNearDock(newY < 60)
+    }
+    const onUp = () => {
+      setDragging(false)
+      if (nearDock) onDock()
+      setNearDock(false)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [dragging, nearDock, onDock])
 
   return (
-    <div style={s.pwOverlay}>
-      <div style={s.pwWindow}>
-        <div style={s.pwHeader}>
-          <span style={s.pwTitle}>PARTICIPANTS <span style={s.pwCount}>{lkParticipants.length}</span></span>
-          <button style={s.pwClose} onClick={onClose}><X size={16} /></button>
+    <div style={{ position: 'absolute', left: pos.x, top: pos.y, zIndex: 30, width: 480 }}>
+      {nearDock && (
+        <div style={s.dockZone}>
+          ↑ Release to dock to header
         </div>
-
+      )}
+      <div style={{ ...s.pwWindow, boxShadow: dragging ? '0 32px 80px rgba(0,0,0,0.8)' : '0 20px 60px rgba(0,0,0,0.6)', transform: dragging ? 'scale(1.01)' : 'scale(1)', transition: dragging ? 'none' : 'transform 0.15s' }}>
+        <div style={{ ...s.pwHeader, cursor: 'grab', userSelect: 'none' }} onMouseDown={handleDragStart}>
+          <span style={s.pwTitle}>
+            ⠿ &nbsp;PARTICIPANTS <span style={s.pwCount}>{lkParticipants.length}</span>
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={s.dockHint}>drag to header to dock</span>
+            <button style={s.pwClose} onClick={onClose}><X size={16} /></button>
+          </div>
+        </div>
         <div style={s.pwGrid}>
           {lkParticipants.map(participant => {
             const camTrack = cameraTracks.find(t => t.participant.identity === participant.identity)
             const isMuted = !participant.isMicrophoneEnabled
             const isCamOff = !participant.isCameraEnabled
-
             return (
               <div key={participant.identity} style={s.pwCard}>
                 <div style={s.pwVideo}>
                   {camTrack && !isCamOff ? (
                     <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 8 }} />
                   ) : (
-                    <div style={s.pwNoVideo}>
-                      <VideoOff size={22} color="#444" />
-                    </div>
+                    <div style={s.pwNoVideo}><VideoOff size={22} color="#444" /></div>
                   )}
                   <div style={s.pwStatusBar}>
                     <span style={s.pwName}>{participant.name || participant.identity}</span>
                     <div style={s.pwIcons}>
-                      {isMuted
-                        ? <MicOff size={12} color="#e53e3e" />
-                        : <Mic size={12} color="#48bb78" />}
-                      {isCamOff
-                        ? <VideoOff size={12} color="#e53e3e" />
-                        : <Video size={12} color="#48bb78" />}
+                      {isMuted ? <MicOff size={12} color="#e53e3e" /> : <Mic size={12} color="#48bb78" />}
+                      {isCamOff ? <VideoOff size={12} color="#e53e3e" /> : <Video size={12} color="#48bb78" />}
                     </div>
                   </div>
                 </div>
@@ -429,6 +474,45 @@ function ParticipantsWindow({ onClose }: { onClose: () => void }) {
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// DOCKED PARTICIPANTS STRIP
+// ============================================================
+function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; onClose: () => void }) {
+  const lkParticipants = useLiveKitParticipants()
+  const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+
+  return (
+    <div style={s.dockedStrip}>
+      <div style={s.dockedInner}>
+        {lkParticipants.map(participant => {
+          const camTrack = cameraTracks.find(t => t.participant.identity === participant.identity)
+          const isMuted = !participant.isMicrophoneEnabled
+          const isCamOff = !participant.isCameraEnabled
+          return (
+            <div key={participant.identity} style={s.dockedTile}>
+              {camTrack && !isCamOff ? (
+                <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
+              ) : (
+                <div style={s.dockedNoVideo}><VideoOff size={14} color="#555" /></div>
+              )}
+              <div style={s.dockedTileBar}>
+                <span style={s.dockedName}>{(participant.name || participant.identity).split(' ')[0]}</span>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  {isMuted ? <MicOff size={9} color="#e53e3e" /> : <Mic size={9} color="#48bb78" />}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div style={s.dockedActions}>
+        <button style={s.dockedBtn} onClick={onUndock} title="Undock">↙</button>
+        <button style={s.dockedBtn} onClick={onClose} title="Close"><X size={12} /></button>
       </div>
     </div>
   )
@@ -458,9 +542,8 @@ const s: Record<string, React.CSSProperties> = {
   headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
   roomTitle: { color: '#fff', fontWeight: 300, fontSize: 16, letterSpacing: 3, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
   pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
-  pwOverlay: { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 30, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-start', padding: 24 },
-  pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' },
-  pwHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #222' },
+  pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
+  pwHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #222' },
   pwTitle: { color: '#fff', fontSize: 11, fontWeight: 300, letterSpacing: 2, fontFamily: "'Roboto', sans-serif" },
   pwCount: { color: '#f5a623', marginLeft: 6 },
   pwClose: { background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', alignItems: 'center' },
@@ -471,6 +554,16 @@ const s: Record<string, React.CSSProperties> = {
   pwStatusBar: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))' },
   pwName: { color: '#fff', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   pwIcons: { display: 'flex', gap: 4, alignItems: 'center' },
+  dockZone: { background: 'rgba(245,166,35,0.15)', border: '1px dashed #f5a623', borderRadius: 8, color: '#f5a623', fontSize: 11, fontWeight: 300, letterSpacing: 1, textAlign: 'center' as const, padding: '6px 0', marginBottom: 6, fontFamily: "'Roboto', sans-serif" },
+  dockHint: { color: '#444', fontSize: 10, fontWeight: 300, letterSpacing: 0.5, fontFamily: "'Roboto', sans-serif" },
+  dockedStrip: { display: 'flex', alignItems: 'center', background: '#111', borderBottom: '1px solid #1e1e1e', padding: '6px 12px', gap: 8, overflowX: 'auto' as const },
+  dockedInner: { display: 'flex', gap: 8, flex: 1, overflowX: 'auto' as const },
+  dockedTile: { position: 'relative' as const, width: 110, height: 70, borderRadius: 6, overflow: 'hidden', background: '#1a1a1a', border: '1px solid #2a2a2a', flexShrink: 0 },
+  dockedNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111' },
+  dockedTileBar: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 6px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))' },
+  dockedName: { color: '#fff', fontSize: 10, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  dockedActions: { display: 'flex', gap: 4, flexShrink: 0 },
+  dockedBtn: { background: '#222', border: '1px solid #333', borderRadius: 6, color: '#888', width: 26, height: 26, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 },
   iconBtn: { background: 'transparent', border: 'none', color: '#aaa', fontSize: 18, cursor: 'pointer', padding: '4px 6px', borderRadius: 6, display: 'flex', alignItems: 'center' },
   leaveBtn: { background: '#c53030', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
   roomBody: { display: 'flex', flex: 1, overflow: 'hidden' },

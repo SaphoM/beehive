@@ -134,7 +134,6 @@ function Lobby({
   return (
     <div style={s.lobby}>
       <div style={s.lobbyCard}>
-        <div style={s.logo}>🐝</div>
         <h1 style={s.title}>{APP_NAME}</h1>
         <div style={s.subtextRow}>
           {SUBTEXTS.map(t => (
@@ -222,7 +221,6 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       {/* Header */}
       <div style={s.header}>
         <div style={s.headerLeft}>
-          <span style={s.logo2}>🐝</span>
           <span style={s.roomTitle}>{APP_NAME}</span>
           <span style={s.pill}>{activeCount} {activeCount === 1 ? 'participant' : 'participants'}</span>
         </div>
@@ -356,11 +354,9 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 // ============================================================
 const s: Record<string, React.CSSProperties> = {
   lobby: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#0a0a0a' },
-  lobbyCard: { background: '#161616', borderRadius: 20, padding: '40px 44px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 360, boxShadow: '0 0 40px rgba(0,0,0,0.6)' },
-  logo: { fontSize: 36 },
-  logo2: { fontSize: 20 },
-  title: { color: '#fff', margin: 0, fontSize: 28, fontWeight: 700 },
-  subtitle: { color: '#666', margin: 0, fontSize: 13 },
+  lobbyCard: { background: '#161616', borderRadius: 20, padding: '40px 44px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 360, boxShadow: '0 0 40px rgba(0,0,0,0.6)', fontFamily: "'Roboto', sans-serif" },
+  title: { color: '#fff', margin: 0, fontSize: 32, fontWeight: 100, letterSpacing: 4, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
+  subtitle: { color: '#555', margin: 0, fontSize: 11, fontWeight: 300, letterSpacing: 2, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
   input: { background: '#222', border: '1px solid #333', borderRadius: 10, padding: '11px 14px', color: '#fff', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' },
   primaryBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
   secondaryBtn: { background: '#222', color: '#aaa', border: '1px solid #333', borderRadius: 10, padding: '11px 20px', fontSize: 14, cursor: 'pointer', width: '100%' },
@@ -371,7 +367,7 @@ const s: Record<string, React.CSSProperties> = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: '#111', borderBottom: '1px solid #222', zIndex: 10 },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
   headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
-  roomTitle: { color: '#fff', fontWeight: 600, fontSize: 15 },
+  roomTitle: { color: '#fff', fontWeight: 300, fontSize: 16, letterSpacing: 3, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
   pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12 },
   iconBtn: { background: 'transparent', border: 'none', color: '#aaa', fontSize: 18, cursor: 'pointer', padding: '4px 6px', borderRadius: 6, display: 'flex', alignItems: 'center' },
   leaveBtn: { background: '#c53030', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },

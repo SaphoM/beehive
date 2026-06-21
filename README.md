@@ -39,14 +39,33 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - Invite preview — guests visiting a link see the room name and live participant count before joining
 
 ### In Meeting
+
+#### Controls Bar (left → right)
+| Control | Icon | Notes |
+|---------|------|-------|
+| Mic | `TrackToggle` | LiveKit-managed; mute/unmute |
+| Camera | `TrackToggle` | LiveKit-managed; on/off |
+| Reactions | `Hand` | Hover to reveal emoji picker; floating animations |
+| Invite Link | `Link` / `Link2Off` | Copies `?room=ROOM_ID`; icon changes on copy |
+| Video Quality | `Film` + HD badge | Low 360p / Medium 720p / High 1080p dropdown |
+| Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active |
+| Leave | `PhoneOff` | Red; disconnects and returns to lobby |
+
+#### In-meeting Features
 - 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)
-- 🎤 Mic toggle (LiveKit `TrackToggle`)
-- 📷 Camera toggle (LiveKit `TrackToggle`)
 - 👋 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥)
-- 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard; icon switches to `Link2Off` on copy
-- 📽️ Video quality selector (Low 360p / Medium 720p / High 1080p)
-- 🖥️ Screen sharing — pre-share menu with "Clear screen before sharing" toggle, Entire Screen, Select Window; active bar with Switch Window (swap between two sources) and Stop
-- 🔊 Speaking indicator — animated 5-bar equalizer chip (bottom-left) appears only when audio is active; floats a live video window of the current speaker above the bar with **Minimise** (collapses to bar only) and **Close** (dismisses for that speaker, reappears when a new speaker takes over); shows `+N` badge when multiple participants speak simultaneously
+- 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard
+- 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
+- 🖥️ Screen sharing:
+  - Pre-share menu: **Clear screen before sharing** toggle (fades BeeHive out before picker opens so the app doesn't appear in the capture preview), **Entire Screen**, **Select Window**
+  - Active share bar: source label, **Add Window** (captures a second source), **Switch** (live `replaceTrack` between two sources), **Stop Sharing**
+  - Local screen share track is excluded from the local `GridLayout` — prevents the infinite mirror echo
+- 🔊 Speaking indicator (bottom-left, only visible when audio is active):
+  - Animated 5-bar equaliser chip shows the active speaker's first name
+  - Floating **speaker video window** appears above the chip with the active speaker's live camera feed
+  - **Minimise (—)** collapses the video; a restore button appears in the chip
+  - **Close (✕)** dismisses the window for that speaker identity; reappears automatically when a different speaker becomes active
+  - `+N` badge on the chip when multiple participants speak simultaneously
 - 💬 Real-time chat sidebar powered by Supabase Realtime
 - 📴 Leave call (`PhoneOff` icon, red)
 
@@ -70,8 +89,15 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 beehive/
 ├── src/
 │   └── main.tsx                        # React entry point
-├── RoomPage.tsx                        # All UI: Lobby, MeetingRoom,
-│                                       #   ParticipantsWindow, DockedParticipantsStrip
+├── RoomPage.tsx                        # All UI components:
+│                                       #   RoomPage (router)
+│                                       #   Lobby
+│                                       #   MeetingRoom
+│                                       #   SpeakingIndicator
+│                                       #   ScreenShareMenu
+│                                       #   ScreenShareBar
+│                                       #   ParticipantsWindow (draggable, dockable)
+│                                       #   DockedParticipantsStrip
 ├── livekit_react_hooks.tsx             # Hooks: useCreateRoom, useJoinRoom,
 │                                       #   useRoomInfo, useParticipants,
 │                                       #   useChat, useRecordings
@@ -274,6 +300,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Group system — auto-labelled (Group 1/2/3), renameable, group mute
 - [ ] Breakaway discussions — timed sub-rooms with auto-recall
 - [x] Screen sharing (Entire Screen / Select Window / Switch source / Clear screen mode)
+- [x] Speaking indicator + floating speaker video window (Minimise / Close)
 - [ ] Recording playback UI
 - [ ] DUT organisation SSO
 - [ ] Syspro integration (government contracts)

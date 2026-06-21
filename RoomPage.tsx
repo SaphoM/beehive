@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -8,6 +8,7 @@ import {
   useTracks,
   useLocalParticipant,
   TrackToggle,
+  useParticipants as useLiveKitParticipants,
 } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import '@livekit/components-styles'
@@ -209,6 +210,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const recordings = useRecordings(roomId)
   const [chatInput, setChatInput] = useState('')
   const [showChat, setShowChat] = useState(true)
+  const [showParticipants, setShowParticipants] = useState(false)
   const [showQuality, setShowQuality] = useState(false)
   const [quality, setQuality] = useState('Medium (720p)')
   const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string }[]>([])
@@ -246,7 +248,9 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       <div style={s.header}>
         <div style={s.headerLeft}>
           <span style={s.roomTitle}>{APP_NAME}</span>
-          <span style={s.pill}>{activeCount} {activeCount === 1 ? 'participant' : 'participants'}</span>
+          <button style={s.pill} onClick={() => setShowParticipants(v => !v)}>
+            {activeCount} {activeCount === 1 ? 'participant' : 'participants'}
+          </button>
         </div>
         <div style={s.headerRight}>
           <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
@@ -257,6 +261,11 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       </div>
 
       <div style={s.roomBody}>
+        {/* Participants Window */}
+        {showParticipants && (
+          <ParticipantsWindow onClose={() => setShowParticipants(false)} />
+        )}
+
         {/* Video Grid */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <GridLayout tracks={tracks} style={{ height: '100%' }}>
@@ -374,6 +383,58 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
 
 // ============================================================
+// PARTICIPANTS WINDOW
+// ============================================================
+function ParticipantsWindow({ onClose }: { onClose: () => void }) {
+  const lkParticipants = useLiveKitParticipants()
+  const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+
+  return (
+    <div style={s.pwOverlay}>
+      <div style={s.pwWindow}>
+        <div style={s.pwHeader}>
+          <span style={s.pwTitle}>PARTICIPANTS <span style={s.pwCount}>{lkParticipants.length}</span></span>
+          <button style={s.pwClose} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div style={s.pwGrid}>
+          {lkParticipants.map(participant => {
+            const camTrack = cameraTracks.find(t => t.participant.identity === participant.identity)
+            const isMuted = !participant.isMicrophoneEnabled
+            const isCamOff = !participant.isCameraEnabled
+
+            return (
+              <div key={participant.identity} style={s.pwCard}>
+                <div style={s.pwVideo}>
+                  {camTrack && !isCamOff ? (
+                    <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 8 }} />
+                  ) : (
+                    <div style={s.pwNoVideo}>
+                      <VideoOff size={22} color="#444" />
+                    </div>
+                  )}
+                  <div style={s.pwStatusBar}>
+                    <span style={s.pwName}>{participant.name || participant.identity}</span>
+                    <div style={s.pwIcons}>
+                      {isMuted
+                        ? <MicOff size={12} color="#e53e3e" />
+                        : <Mic size={12} color="#48bb78" />}
+                      {isCamOff
+                        ? <VideoOff size={12} color="#e53e3e" />
+                        : <Video size={12} color="#48bb78" />}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
 // STYLES
 // ============================================================
 const s: Record<string, React.CSSProperties> = {
@@ -396,7 +457,20 @@ const s: Record<string, React.CSSProperties> = {
   headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
   headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
   roomTitle: { color: '#fff', fontWeight: 300, fontSize: 16, letterSpacing: 3, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
-  pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12 },
+  pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
+  pwOverlay: { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 30, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-start', padding: 24 },
+  pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' },
+  pwHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #222' },
+  pwTitle: { color: '#fff', fontSize: 11, fontWeight: 300, letterSpacing: 2, fontFamily: "'Roboto', sans-serif" },
+  pwCount: { color: '#f5a623', marginLeft: 6 },
+  pwClose: { background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', alignItems: 'center' },
+  pwGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, padding: 16, overflowY: 'auto' as const },
+  pwCard: { borderRadius: 10, overflow: 'hidden', background: '#1a1a1a', border: '1px solid #2a2a2a' },
+  pwVideo: { position: 'relative' as const, aspectRatio: '16/9', background: '#111' },
+  pwNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111' },
+  pwStatusBar: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))' },
+  pwName: { color: '#fff', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  pwIcons: { display: 'flex', gap: 4, alignItems: 'center' },
   iconBtn: { background: 'transparent', border: 'none', color: '#aaa', fontSize: 18, cursor: 'pointer', padding: '4px 6px', borderRadius: 6, display: 'flex', alignItems: 'center' },
   leaveBtn: { background: '#c53030', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
   roomBody: { display: 'flex', flex: 1, overflow: 'hidden' },

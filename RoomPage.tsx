@@ -360,6 +360,9 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             />
           )}
 
+          {/* Speaking Indicator */}
+          <SpeakingIndicator />
+
           {/* Floating Reactions */}
           <div style={s.reactionFloat}>
             {floatingReactions.map(r => (
@@ -614,6 +617,63 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
 }
 
 // ============================================================
+// SPEAKING INDICATOR
+// ============================================================
+function SpeakingIndicator() {
+  const participants = useLiveKitParticipants()
+  const [speakers, setSpeakers] = useState<Array<{ name: string; level: number }>>([])
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const active = participants
+        .filter(p => p.isSpeaking && p.audioLevel > 0.015)
+        .map(p => ({ name: (p.name || p.identity).split(' ')[0], level: Math.min(p.audioLevel * 2.5, 1) }))
+
+      if (active.length > 0) {
+        if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
+        setSpeakers(active)
+      } else if (!hideTimerRef.current) {
+        hideTimerRef.current = setTimeout(() => {
+          setSpeakers([])
+          hideTimerRef.current = null
+        }, 600)
+      }
+    }, 80)
+
+    return () => {
+      clearInterval(tick)
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    }
+  }, [participants])
+
+  if (speakers.length === 0) return null
+
+  const BAR_SHAPE = [0.35, 0.65, 1.0, 0.65, 0.35]
+
+  return (
+    <div style={s.speakingWrap}>
+      {speakers.map((sp, i) => (
+        <div key={i} style={s.speakingChip}>
+          <div style={s.soundBars}>
+            {BAR_SHAPE.map((mult, j) => (
+              <div
+                key={j}
+                style={{
+                  ...s.soundBar,
+                  transform: `scaleY(${Math.max(0.15, sp.level * mult)})`,
+                }}
+              />
+            ))}
+          </div>
+          <span style={s.speakingName}>{sp.name}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ============================================================
 // SCREEN SHARE MENU
 // ============================================================
 function ScreenShareMenu({ clearBeforeShare, onToggleClear, onShare, onClose }: {
@@ -761,6 +821,13 @@ const s: Record<string, React.CSSProperties> = {
   sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer' },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
+
+  // Speaking indicator
+  speakingWrap: { position: 'absolute' as const, bottom: 20, left: 20, display: 'flex', flexDirection: 'column' as const, gap: 6, zIndex: 15, pointerEvents: 'none' as const },
+  speakingChip: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(10px)', borderRadius: 20, padding: '6px 14px 6px 10px', border: '1px solid rgba(72,187,120,0.2)' },
+  soundBars: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 18 },
+  soundBar: { width: 3, height: 18, borderRadius: 2, background: '#48bb78', transformOrigin: '50% 100%', transition: 'transform 0.08s ease' },
+  speakingName: { color: '#d0d0d0', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.3 },
 
   // Screen share menu (popup above Monitor button)
   shareMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 220, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },

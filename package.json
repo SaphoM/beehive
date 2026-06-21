@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node livekit_node_backend.js",
     "dev:backend": "node --watch livekit_node_backend.js",
+    "build": "vite build",
     "dev:frontend": "vite",
     "dev": "vite",
     "test": "echo \"Error: no test specified\" && exit 1"

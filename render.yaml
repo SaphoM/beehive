@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: beehive
+    runtime: node
+    branch: staging
+    buildCommand: npm install && npm run build
+    startCommand: node livekit_node_backend.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FATHOM_API_KEY
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_LIVEKIT_URL
+        sync: false

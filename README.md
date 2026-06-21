@@ -29,6 +29,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 | Fonts | Roboto (Google Fonts) — Thin (100) / Light (300) / Regular (400) |
 | Backend | Node.js + Express 5 |
 | Meeting Intelligence | Fathom API |
+| Background AI | MediaPipe Selfie Segmentation |
 
 ---
 
@@ -38,6 +39,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - **BEE**HIVE wordmark — `BEE` in Roboto Regular (400), `HIVE` in Roboto Thin (100)
 - Meet / Sting mode toggle (amber highlight on active)
 - Invite preview — guests visiting a link see the room name and live participant count before joining
+- **Recent meetings** — expandable Fathom panel showing AI-summarised past meetings
 
 ### In Meeting
 
@@ -101,8 +103,13 @@ BeeHive connects to [Fathom](https://fathom.video) to surface AI meeting intelli
 - Action items with assignee names and completion status
 - On-demand transcript viewer — loads per-recording via `/api/fathom/recordings/:id/transcript`
 - "Open in Fathom ↗" deep-link to the original recording
+- Paginated — "Load more" cursor-based pagination
 
 **API:** Base URL `https://api.fathom.ai/external/v1` — proxied through the Node.js backend so the API key never reaches the client.
+
+**Backend proxy headers:** `X-Api-Key`, `Accept: application/json`, `User-Agent: BeeHive/1.0` — all three required for reliable Fathom API responses.
+
+**Timeouts:** 10-second `AbortController` on every Fathom proxy request to prevent the backend from hanging.
 
 **Rate limits:** 30 req/min for `/meetings` with summaries; 5 req/min under elevated activity.
 
@@ -116,6 +123,19 @@ FATHOM_API_KEY=your_fathom_api_key   # from fathom.video/customize#api-access-he
 ### Security
 - Row Level Security (RLS) on all Supabase tables
 - Anon-safe participant tracking (no login required to join via invite link)
+- Fathom API key proxied through backend — never exposed to the browser
+
+---
+
+## Backend API Reference
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/livekit/token` | Generate LiveKit JWT; body: `{ roomName, displayName }` |
+| `POST` | `/api/livekit/webhook` | LiveKit webhook receiver (`egress_ended`, `participant_left`) |
+| `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
+| `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
+| `GET` | `/health` | Health check — `{ status: 'ok' }` |
 
 ---
 
@@ -127,7 +147,7 @@ beehive/
 │   └── main.tsx                        # React entry point
 ├── RoomPage.tsx                        # All UI components:
 │                                       #   RoomPage (router)
-│                                       #   Lobby
+│                                       #   Lobby (+ Fathom panel)
 │                                       #   MeetingRoom
 │                                       #   SpeakingIndicator
 │                                       #   BackgroundMenu
@@ -136,10 +156,14 @@ beehive/
 │                                       #   ScreenShareBar
 │                                       #   ParticipantsWindow (draggable, dockable)
 │                                       #   DockedParticipantsStrip
+│                                       #   FathomPanel
+│                                       #   FathomMeetingRow
 ├── livekit_react_hooks.tsx             # Hooks: useCreateRoom, useJoinRoom,
 │                                       #   useRoomInfo, useParticipants,
-│                                       #   useChat, useRecordings
-├── livekit_node_backend.js             # Express API: token generation + webhooks
+│                                       #   useChat, useRecordings,
+│                                       #   useFathomMeetings, useFathomTranscript
+├── livekit_node_backend.js             # Express API: token generation, webhooks,
+│                                       #   Fathom proxy routes
 ├── livekit_supabase_schema.sql         # Full database schema (applied to Supabase)
 ├── livekit_database_recommendation.md  # Architecture decision record (Supabase vs Firebase)
 ├── index.html                          # App shell + Roboto font import
@@ -175,8 +199,9 @@ React Frontend (Vite — default :5173, may vary)
         │         └── PostgreSQL — rooms, participants, chat, recordings
         │
         └── /api/* → Node.js Backend (:3001)
-                        └── LiveKit Server SDK — token generation
-                                └── LiveKit Cloud — media (WebRTC)
+                        ├── LiveKit Server SDK — token generation
+                        │         └── LiveKit Cloud — media (WebRTC)
+                        └── Fathom API proxy — meeting intelligence
 ```
 
 **Join flow:**
@@ -190,6 +215,14 @@ React Frontend (Vite — default :5173, may vary)
 1. Host clicks 🔗 → `?room=ROOM_ID` copied to clipboard
 2. Guest opens link → lobby fetches room name + participant count (`useRoomInfo`)
 3. Guest enters name → joins with own LiveKit token
+
+**Background effects flow:**
+1. `bgActive` state triggers `useEffect` in `MeetingRoom`
+2. MediaPipe Selfie Segmentation loaded from CDN (once per session)
+3. Video frames sent to segmentation model at 30 fps via RAF loop
+4. Segmentation mask composited onto canvas (blur / image / virtual scene)
+5. `replaceTrack` swaps the published LiveKit video track with `canvas.captureStream(30)`
+6. Remote participants see the processed background; `bgActive = false` restores original track
 
 ---
 
@@ -347,4 +380,5 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Syspro integration (government contracts)
 - [ ] Mobile (React Native + LiveKit mobile SDK)
 - [x] Fathom integration — meeting summaries, action items, transcript viewer
+- [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation)
 - [ ] Self-hosted LiveKit option (Africa-first / data sovereignty)

@@ -481,6 +481,14 @@ function FathomMeetingRow({ meeting }: { meeting: FathomMeeting }) {
 function FathomPanel() {
   const { meetings, loading, error, hasMore, loadMore } = useFathomMeetings(8)
 
+  const errorMsg = error
+    ? (error.includes('not configured') || error.includes('503'))
+      ? 'Add FATHOM_API_KEY to .env to connect.'
+      : (error.includes('timed out') || error.includes('502'))
+        ? 'Fathom is temporarily unavailable — try again shortly.'
+        : `Could not load meetings: ${error}`
+    : null
+
   return (
     <div style={s.fathomPanel}>
       <div style={s.fathomHeader}>
@@ -490,25 +498,26 @@ function FathomPanel() {
         </a>
       </div>
 
-      {error && (
-        <div style={s.fathomEmpty}>
-          {error.includes('503') || error.includes('not configured')
-            ? 'Add FATHOM_API_KEY to .env to connect your Fathom account.'
-            : `Could not load meetings: ${error}`}
+      {errorMsg && (
+        <div style={{ ...s.fathomEmpty, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+          <span>{errorMsg}</span>
+          <button style={s.fathomRetryBtn} onClick={loadMore}>Retry</button>
         </div>
       )}
 
-      {!error && loading && meetings.length === 0 && (
+      {!errorMsg && loading && meetings.length === 0 && (
         <div style={s.fathomEmpty}>Loading…</div>
       )}
 
-      {!error && !loading && meetings.length === 0 && (
+      {!errorMsg && !loading && meetings.length === 0 && (
         <div style={s.fathomEmpty}>No Fathom meetings found.</div>
       )}
 
-      <div style={s.fathomList}>
-        {meetings.map((m, i) => <FathomMeetingRow key={m.url ?? i} meeting={m} />)}
-      </div>
+      {!errorMsg && (
+        <div style={s.fathomList}>
+          {meetings.map((m, i) => <FathomMeetingRow key={m.url ?? i} meeting={m} />)}
+        </div>
+      )}
 
       {hasMore && (
         <button style={s.fathomLoadMore} onClick={loadMore} disabled={loading}>
@@ -1645,6 +1654,7 @@ const s: Record<string, React.CSSProperties> = {
   fathomEmpty: { color: '#444', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '20px 16px', textAlign: 'center' as const },
   fathomList: { display: 'flex', flexDirection: 'column' as const, maxHeight: 420, overflowY: 'auto' as const },
   fathomLoadMore: { background: 'none', border: 'none', borderTop: '1px solid #1e1e1e', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '10px', cursor: 'pointer', width: '100%' },
+  fathomRetryBtn: { background: 'none', border: '1px solid #333', borderRadius: 8, color: '#666', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '5px 16px', cursor: 'pointer' },
 
   // Fathom meeting row
   fathomRow: { borderBottom: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column' as const },

@@ -115,7 +115,7 @@ app.get('/api/fathom/meetings', async (req, res) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10000)
     const resp = await fetch(`${FATHOM_BASE}/meetings?${params}`, {
-      headers: { 'X-Api-Key': key },
+      headers: { 'X-Api-Key': key, 'Accept': 'application/json', 'User-Agent': 'BeeHive/1.0' },
       signal: ctrl.signal,
     })
     clearTimeout(timer)
@@ -140,7 +140,7 @@ app.get('/api/fathom/recordings/:id/transcript', async (req, res) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10000)
     const resp = await fetch(`${FATHOM_BASE}/recordings/${req.params.id}/transcript`, {
-      headers: { 'X-Api-Key': key },
+      headers: { 'X-Api-Key': key, 'Accept': 'application/json', 'User-Agent': 'BeeHive/1.0' },
       signal: ctrl.signal,
     })
     clearTimeout(timer)

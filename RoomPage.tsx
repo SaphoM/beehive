@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -23,6 +23,41 @@ import {
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
 const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
+
+// Background effect presets
+type BgPreset = { id: string; label: string; colors: string[] }
+const BG_IMAGE_PRESETS: BgPreset[] = [
+  { id: 'studio',  label: 'Studio',  colors: ['#0f0c29', '#302b63'] },
+  { id: 'nature',  label: 'Nature',  colors: ['#134e5e', '#71b280'] },
+  { id: 'space',   label: 'Space',   colors: ['#000428', '#004e92'] },
+  { id: 'sunset',  label: 'Sunset',  colors: ['#f093fb', '#f5576c'] },
+  { id: 'ocean',   label: 'Ocean',   colors: ['#667eea', '#764ba2'] },
+  { id: 'forest',  label: 'Forest',  colors: ['#1a472a', '#52b788'] },
+  { id: 'dawn',    label: 'Dawn',    colors: ['#f12711', '#f5af19'] },
+  { id: 'office',  label: 'Office',  colors: ['#c9d6ff', '#e2e2e2'] },
+]
+const BG_VIRTUAL_PRESETS: BgPreset[] = [
+  { id: 'v-black',  label: 'Black',  colors: ['#0a0a0a'] },
+  { id: 'v-white',  label: 'White',  colors: ['#f0f0f0'] },
+  { id: 'v-navy',   label: 'Navy',   colors: ['#1a237e'] },
+  { id: 'v-teal',   label: 'Teal',   colors: ['#004d40'] },
+  { id: 'v-purple', label: 'Purple', colors: ['#4a148c'] },
+  { id: 'v-green',  label: 'Green',  colors: ['#1b5e20'] },
+  { id: 'v-gray',   label: 'Gray',   colors: ['#424242'] },
+  { id: 'v-warm',   label: 'Warm',   colors: ['#5d4037'] },
+]
+const ALL_BG_PRESETS = [...BG_IMAGE_PRESETS, ...BG_VIRTUAL_PRESETS]
+
+function drawBgPreset(ctx: CanvasRenderingContext2D, preset: BgPreset, w: number, h: number) {
+  if (preset.colors.length === 1) {
+    ctx.fillStyle = preset.colors[0]
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, w, h)
+    preset.colors.forEach((c, i) => grad.addColorStop(i / (preset.colors.length - 1), c))
+    ctx.fillStyle = grad
+  }
+  ctx.fillRect(0, 0, w, h)
+}
 
 // ============================================================
 // MAIN PAGE
@@ -224,6 +259,86 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
 
+  // Background effects state
+  const [bgMenuOpen, setBgMenuOpen] = useState(false)
+  const [bgEffect, setBgEffect] = useState<'none' | 'blur' | 'image' | 'virtual'>('none')
+  const [bgFlip, setBgFlip] = useState(false)
+  const [blurLevel, setBlurLevel] = useState(8)
+  const [bgPresetId, setBgPresetId] = useState('studio')
+  const bgOrigTrackRef = useRef<MediaStreamTrack | null>(null)
+  const bgRafRef = useRef<number>(0)
+  // bgStateRef lets the render loop read latest settings without restarting the pipeline
+  const bgStateRef = useRef({ effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId })
+  bgStateRef.current = { effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId }
+
+  const bgActive = bgEffect !== 'none' || bgFlip
+
+  useEffect(() => {
+    const pub = localParticipant.getTrackPublication(Track.Source.Camera)
+    const lkTrack = pub?.track
+    if (!lkTrack) return
+
+    if (!bgActive) {
+      if (bgOrigTrackRef.current) {
+        ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current).catch(() => {})
+        bgOrigTrackRef.current = null
+      }
+      return
+    }
+
+    const raw = (lkTrack as any).mediaStreamTrack as MediaStreamTrack | undefined
+    if (!raw) return
+    if (!bgOrigTrackRef.current) bgOrigTrackRef.current = raw
+
+    const video = document.createElement('video')
+    video.srcObject = new MediaStream([bgOrigTrackRef.current])
+    video.playsInline = true
+    video.muted = true
+
+    const canvas = document.createElement('canvas')
+    canvas.width = 640; canvas.height = 480
+
+    const render = () => {
+      if (!video.videoWidth) { bgRafRef.current = requestAnimationFrame(render); return }
+      const ctx = canvas.getContext('2d')!
+      const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
+      const [W, H] = [640, 480]
+      ctx.save()
+      ctx.clearRect(0, 0, W, H)
+      if (flip) { ctx.translate(W, 0); ctx.scale(-1, 1) }
+      if (effect === 'blur') {
+        ctx.filter = `blur(${bl}px)`
+        ctx.drawImage(video, 0, 0, W, H)
+      } else if (effect === 'image' || effect === 'virtual') {
+        const preset = ALL_BG_PRESETS.find(p => p.id === presetId) ?? ALL_BG_PRESETS[0]
+        drawBgPreset(ctx, preset, W, H)
+        ctx.globalAlpha = 0.82
+        ctx.drawImage(video, 0, 0, W, H)
+        ctx.globalAlpha = 1
+      } else {
+        ctx.drawImage(video, 0, 0, W, H) // flip-only pass
+      }
+      ctx.restore()
+      bgRafRef.current = requestAnimationFrame(render)
+    }
+
+    video.addEventListener('loadedmetadata', async () => {
+      await video.play().catch(() => {})
+      bgRafRef.current = requestAnimationFrame(render)
+      const [canvasTrack] = canvas.captureStream(30).getVideoTracks()
+      ;(lkTrack as any).replaceTrack(canvasTrack).catch(() => {})
+    })
+    video.load()
+
+    return () => {
+      cancelAnimationFrame(bgRafRef.current)
+      video.srcObject = null
+      if (bgOrigTrackRef.current) {
+        ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current).catch(() => {})
+      }
+    }
+  }, [bgActive, localParticipant])
+
   // Auto cam state
   const [autoCamMode, setAutoCamMode] = useState<'center' | 'split' | null>(null)
   const [showAutoCamMenu, setShowAutoCamMenu] = useState(false)
@@ -390,6 +505,30 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
             {/* Cam */}
             <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
+
+            {/* Background Effects */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={{ ...s.controlBtn, ...(bgActive ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                onClick={() => setBgMenuOpen(v => !v)}
+                title="Background effects"
+              >
+                <Layers size={20} />
+              </button>
+              {bgMenuOpen && (
+                <BackgroundMenu
+                  effect={bgEffect}
+                  presetId={bgPresetId}
+                  flip={bgFlip}
+                  blurLevel={blurLevel}
+                  onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
+                  onPreset={setBgPresetId}
+                  onFlip={() => setBgFlip(v => !v)}
+                  onBlur={setBlurLevel}
+                  onClose={() => setBgMenuOpen(false)}
+                />
+              )}
+            </div>
 
             {/* Auto Cam */}
             <div style={{ position: 'relative' }}>
@@ -653,6 +792,103 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
         <button style={s.dockedBtn} onClick={onUndock} title="Undock">↙</button>
         <button style={s.dockedBtn} onClick={onClose} title="Close"><X size={12} /></button>
       </div>
+    </div>
+  )
+}
+
+// ============================================================
+// BACKGROUND EFFECTS MENU
+// ============================================================
+function BackgroundMenu({ effect, presetId, flip, blurLevel, onEffect, onPreset, onFlip, onBlur, onClose }: {
+  effect: 'none' | 'blur' | 'image' | 'virtual'
+  presetId: string
+  flip: boolean
+  blurLevel: number
+  onEffect: (e: 'none' | 'blur' | 'image' | 'virtual') => void
+  onPreset: (id: string) => void
+  onFlip: () => void
+  onBlur: (v: number) => void
+  onClose: () => void
+}) {
+  const tabs = [
+    { key: 'none',    label: 'None' },
+    { key: 'blur',    label: 'Blur' },
+    { key: 'image',   label: 'Image' },
+    { key: 'virtual', label: 'Virtual' },
+  ] as const
+
+  const presets = effect === 'virtual' ? BG_VIRTUAL_PRESETS : BG_IMAGE_PRESETS
+
+  return (
+    <div style={s.bgMenu}>
+      <div style={s.shareMenuHeader}>
+        <span style={s.shareMenuTitle}>Background</span>
+        <button style={s.shareMenuClose} onClick={onClose}><X size={14} /></button>
+      </div>
+
+      {/* Mode tabs */}
+      <div style={s.bgTabs}>
+        {tabs.map(t => (
+          <button
+            key={t.key}
+            style={{ ...s.bgTab, ...(effect === t.key ? s.bgTabActive : {}) }}
+            onClick={() => onEffect(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Blur controls */}
+      {effect === 'blur' && (
+        <div style={s.bgSection}>
+          <div style={s.bgRow}>
+            <span style={s.bgLabel}>Intensity</span>
+            <input
+              type="range" min={2} max={20} value={blurLevel}
+              onChange={e => onBlur(Number(e.target.value))}
+              style={s.bgSlider}
+            />
+            <span style={{ ...s.bgLabel, minWidth: 20, textAlign: 'right' as const }}>{blurLevel}</span>
+          </div>
+          <div style={s.bgRow}>
+            <FlipHorizontal size={13} color="#888" />
+            <span style={s.bgLabel}>Flip</span>
+            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
+              {flip ? 'On' : 'Off'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Image / Virtual preset grid */}
+      {(effect === 'image' || effect === 'virtual') && (
+        <div style={s.bgSection}>
+          <div style={s.bgPresetGrid}>
+            {presets.map(p => (
+              <button
+                key={p.id}
+                title={p.label}
+                style={{
+                  ...s.bgPresetBtn,
+                  background: p.colors.length === 1
+                    ? p.colors[0]
+                    : `linear-gradient(135deg, ${p.colors.join(', ')})`,
+                  ...(presetId === p.id ? s.bgPresetActive : {}),
+                }}
+                onClick={() => onPreset(p.id)}
+              />
+            ))}
+          </div>
+          <div style={s.bgRow}>
+            <FlipHorizontal size={13} color="#888" />
+            <span style={s.bgLabel}>Flip image</span>
+            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
+              {flip ? 'On' : 'Off'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1011,6 +1247,21 @@ const s: Record<string, React.CSSProperties> = {
   sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer' },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
+
+  // Background effects menu
+  bgMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', width: 280, display: 'flex', flexDirection: 'column' as const, gap: 8, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  bgTabs: { display: 'flex', gap: 4 },
+  bgTab: { flex: 1, background: 'none', border: '1px solid #2a2a2a', borderRadius: 8, padding: '5px 0', color: '#666', fontSize: 11, fontFamily: "'Roboto', sans-serif", cursor: 'pointer' },
+  bgTabActive: { background: '#2a2010', borderColor: '#f5a623', color: '#f5a623' },
+  bgSection: { display: 'flex', flexDirection: 'column' as const, gap: 10 },
+  bgRow: { display: 'flex', alignItems: 'center', gap: 8 },
+  bgLabel: { color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, flex: 1 },
+  bgSlider: { flex: 1, accentColor: '#f5a623', cursor: 'pointer' },
+  bgToggle: { background: '#222', border: '1px solid #333', borderRadius: 20, padding: '3px 12px', color: '#666', fontSize: 11, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
+  bgToggleOn: { background: '#2a2010', borderColor: '#f5a623', color: '#f5a623' },
+  bgPresetGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 },
+  bgPresetBtn: { height: 40, borderRadius: 8, border: '2px solid transparent', cursor: 'pointer' },
+  bgPresetActive: { border: '2px solid #f5a623', boxShadow: '0 0 0 1px rgba(245,166,35,0.4)' },
 
   // Auto cam window (bottom-right of video area)
   autoCamMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 200, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },

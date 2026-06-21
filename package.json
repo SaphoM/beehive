@@ -5,6 +5,7 @@
   "main": "livekit_node_backend.js",
   "scripts": {
     "start": "node livekit_node_backend.js",
+    "postinstall": "npm run build",
     "dev:backend": "node --watch livekit_node_backend.js",
     "build": "vite build",
     "dev:frontend": "vite",

@@ -58,8 +58,8 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
 - 📸 Auto Cam — floating window (bottom-right), two modes switchable via header tabs:
-  - **Auto Centre** — processes the local camera through a canvas pipeline using the browser's `FaceDetector` API; detects all faces in frame every 250 ms, calculates their union bounding box (with padding), then smoothly pans/zooms the crop to keep all attendees centred (LERP glide ~1–2 s). Works for one person or two people sharing the same machine and camera. Falls back to a top-biased full-frame crop on browsers without `FaceDetector` (Firefox, Safari)
-  - **2 in 1** — left half shows the same face-tracked local camera; right half shows the active remote speaker (auto-switches with 1.5 s debounce); "Waiting…" placeholder when no remote is on the call
+  - **Auto Centre** — shows the current active speaker's camera in a 4:3 crop; automatically follows whoever is loudest (1.5 s debounce to prevent rapid switching); name tag with crosshair icon
+  - **2 in 1** — splits the window into two equal halves: local participant (You) on the left, active speaker on the right; "Waiting…" placeholder when no remote speaker is detected
   - `Aperture` button in controls bar turns blue when active; clicking again closes the window
 - 🖥️ Screen sharing:
   - Pre-share menu: **Clear screen before sharing** toggle (fades BeeHive out before picker opens so the app doesn't appear in the capture preview), **Entire Screen**, **Select Window**
@@ -99,7 +99,6 @@ beehive/
 │                                       #   Lobby
 │                                       #   MeetingRoom
 │                                       #   SpeakingIndicator
-│                                       #   FaceTrackCanvas
 │                                       #   AutoCamWindow
 │                                       #   ScreenShareMenu
 │                                       #   ScreenShareBar

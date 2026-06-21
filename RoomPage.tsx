@@ -658,111 +658,6 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
 }
 
 // ============================================================
-// FACE-TRACKING CANVAS
-// Reads the local camera track, detects all faces via FaceDetector
-// API, calculates a union bounding box covering every face in frame,
-// then smoothly pans/zooms a canvas crop to keep all attendees
-// centred. Falls back to a full-frame top-bias crop on unsupported
-// browsers (Firefox, Safari).
-// ============================================================
-function FaceTrackCanvas({ localParticipant }: { localParticipant: ReturnType<typeof useLocalParticipant>['localParticipant'] }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const rafRef = useRef<number>(0)
-  // Normalised crop region (0–1 relative to video dimensions)
-  const targetRef = useRef({ x: 0, y: 0.05, w: 1, h: 0.9 })
-  const currentRef = useRef({ x: 0, y: 0.05, w: 1, h: 0.9 })
-  const detectorRef = useRef<any>(null)
-
-  useEffect(() => {
-    const pub = localParticipant.getTrackPublication(Track.Source.Camera)
-    const msTrack = (pub?.track as any)?.mediaStreamTrack as MediaStreamTrack | undefined
-    const video = videoRef.current
-    if (!msTrack || !video) return
-
-    video.srcObject = new MediaStream([msTrack])
-    video.play().catch(() => {})
-
-    // Instantiate FaceDetector once (Chrome only; others get the fallback)
-    if ('FaceDetector' in window) {
-      try { detectorRef.current = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 10 }) }
-      catch { /* unavailable */ }
-    }
-
-    // Detection loop — runs at ~4fps to stay cheap
-    const runDetect = async () => {
-      if (!detectorRef.current || !video.videoWidth) return
-      try {
-        const faces = await detectorRef.current.detect(video)
-        const vw = video.videoWidth, vh = video.videoHeight
-        if (faces.length > 0) {
-          // Union box across all detected faces
-          const minX = Math.min(...faces.map((f: any) => f.boundingBox.x))
-          const minY = Math.min(...faces.map((f: any) => f.boundingBox.y))
-          const maxX = Math.max(...faces.map((f: any) => f.boundingBox.x + f.boundingBox.width))
-          const maxY = Math.max(...faces.map((f: any) => f.boundingBox.y + f.boundingBox.height))
-          const fw = maxX - minX, fh = maxY - minY
-          // Generous padding so heads aren't clipped
-          const padX = fw * 0.7, padY = fh * 1.0
-          const rawX = Math.max(0, minX - padX)
-          const rawY = Math.max(0, minY - padY)
-          const rawW = Math.min(vw - rawX, fw + padX * 2)
-          const rawH = Math.min(vh - rawY, fh + padY * 2)
-          // Keep 4:3 aspect ratio for the crop window
-          const aspect = 4 / 3
-          const adjW = rawH * aspect > rawW ? rawH * aspect : rawW
-          const adjH = adjW / aspect
-          const cx = rawX + rawW / 2, cy = rawY + rawH / 2
-          const finalX = Math.max(0, Math.min(vw - adjW, cx - adjW / 2))
-          const finalY = Math.max(0, Math.min(vh - adjH, cy - adjH / 2))
-          targetRef.current = {
-            x: finalX / vw,
-            y: finalY / vh,
-            w: Math.min(1, adjW / vw),
-            h: Math.min(1, adjH / vh),
-          }
-        } else {
-          // No faces — show slightly top-biased full frame
-          targetRef.current = { x: 0, y: 0.05, w: 1, h: 0.9 }
-        }
-      } catch { /* detection error — keep last crop */ }
-    }
-    const detectInterval = setInterval(runDetect, 250)
-
-    // Render loop — smooth pan via lerp (LERP=0.04 ≈ cinematic 1–2s glide)
-    const LERP = 0.04
-    const render = () => {
-      const canvas = canvasRef.current
-      if (!canvas || !video.videoWidth) { rafRef.current = requestAnimationFrame(render); return }
-      const vw = video.videoWidth, vh = video.videoHeight
-      const t = targetRef.current, c = currentRef.current
-      c.x += (t.x - c.x) * LERP
-      c.y += (t.y - c.y) * LERP
-      c.w += (t.w - c.w) * LERP
-      c.h += (t.h - c.h) * LERP
-      canvas.width = 640; canvas.height = 480
-      const ctx = canvas.getContext('2d')
-      if (ctx) ctx.drawImage(video, c.x * vw, c.y * vh, c.w * vw, c.h * vh, 0, 0, 640, 480)
-      rafRef.current = requestAnimationFrame(render)
-    }
-    video.addEventListener('loadedmetadata', () => { rafRef.current = requestAnimationFrame(render) })
-
-    return () => {
-      clearInterval(detectInterval)
-      cancelAnimationFrame(rafRef.current)
-      video.srcObject = null
-    }
-  }, [localParticipant])
-
-  return (
-    <>
-      <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
-      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
-    </>
-  )
-}
-
-// ============================================================
 // AUTO CAM WINDOW
 // ============================================================
 function AutoCamWindow({ mode, onModeChange, onClose }: {
@@ -774,74 +669,94 @@ function AutoCamWindow({ mode, onModeChange, onClose }: {
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
   const { localParticipant } = useLocalParticipant()
 
-  // Track active REMOTE speaker for the split right-hand pane
-  const [remoteSpeakerId, setRemoteSpeakerId] = useState<string | null>(null)
+  // Track the active speaker with a debounce so the window doesn't flicker
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string>(localParticipant.identity)
   const speakerLockRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const tick = setInterval(() => {
       const loudest = participants
-        .filter(p => p.isSpeaking && p.audioLevel > 0.02 && p.identity !== localParticipant.identity)
+        .filter(p => p.isSpeaking && p.audioLevel > 0.02)
         .sort((a, b) => b.audioLevel - a.audioLevel)[0]
-      if (loudest && loudest.identity !== remoteSpeakerId) {
+      if (loudest && loudest.identity !== activeSpeakerId) {
         if (speakerLockRef.current) clearTimeout(speakerLockRef.current)
         speakerLockRef.current = setTimeout(() => {
-          setRemoteSpeakerId(loudest.identity)
+          setActiveSpeakerId(loudest.identity)
           speakerLockRef.current = null
-        }, 1500)
+        }, 1500) // wait 1.5s before switching to prevent rapid churn
       }
     }, 200)
     return () => {
       clearInterval(tick)
       if (speakerLockRef.current) clearTimeout(speakerLockRef.current)
     }
-  }, [participants, remoteSpeakerId, localParticipant.identity])
+  }, [participants, activeSpeakerId])
 
-  // Remote pane: loudest remote speaker, or first remote participant found
-  const remotePerson = remoteSpeakerId
-    ? participants.find(p => p.identity === remoteSpeakerId)
-    : participants.find(p => p.identity !== localParticipant.identity)
-  const remoteTrack = cameraTracks.find(t => t.participant.identity === remotePerson?.identity)
-  const remoteName = remotePerson?.name?.split(' ')[0] || 'Remote'
+  const focusTrack = cameraTracks.find(t => t.participant.identity === activeSpeakerId)
+  const localTrack = cameraTracks.find(t => t.participant.identity === localParticipant.identity)
+  const focusName = participants.find(p => p.identity === activeSpeakerId)?.name?.split(' ')[0]
+    || activeSpeakerId.split(' ')[0]
+  const isLocalFocus = activeSpeakerId === localParticipant.identity
 
   return (
     <div style={{ ...s.autoCamWindow, width: mode === 'split' ? 360 : 240 }}>
       {/* Header */}
       <div style={s.autoCamHeader}>
         <div style={s.autoCamTabs}>
-          <button style={{ ...s.autoCamTab, ...(mode === 'center' ? s.autoCamTabActive : {}) }} onClick={() => onModeChange('center')}>
+          <button
+            style={{ ...s.autoCamTab, ...(mode === 'center' ? s.autoCamTabActive : {}) }}
+            onClick={() => onModeChange('center')}
+          >
             <Crosshair size={11} /> Centre
           </button>
-          <button style={{ ...s.autoCamTab, ...(mode === 'split' ? s.autoCamTabActive : {}) }} onClick={() => onModeChange('split')}>
+          <button
+            style={{ ...s.autoCamTab, ...(mode === 'split' ? s.autoCamTabActive : {}) }}
+            onClick={() => onModeChange('split')}
+          >
             <Users size={11} /> 2 in 1
           </button>
         </div>
         <button style={s.autoCamClose} onClick={onClose}><X size={12} /></button>
       </div>
 
-      {/* Auto Centre — local camera processed through FaceTrackCanvas */}
+      {/* Auto Centre — single speaker, top-biased crop */}
       {mode === 'center' && (
         <div style={s.autoCamVideoWrap}>
-          <FaceTrackCanvas localParticipant={localParticipant} />
+          {focusTrack ? (
+            <div style={s.autoCamCropFrame}>
+              <ParticipantTile trackRef={focusTrack} style={{ width: '100%', height: '100%' }} />
+            </div>
+          ) : (
+            <div style={s.autoCamNoVideo}><VideoOff size={22} color="#444" /></div>
+          )}
           <div style={s.autoCamNameTag}>
-            <Crosshair size={10} color="#4299e1" /> Auto Centre
+            <Crosshair size={10} color="#4299e1" />
+            {isLocalFocus ? 'You' : focusName}
           </div>
         </div>
       )}
 
-      {/* 2 in 1 — face-tracked local camera (left) + remote speaker (right) */}
+      {/* 2 in 1 — local + active speaker side by side */}
       {mode === 'split' && (
         <div style={s.autoCamSplitRow}>
+          {/* Local */}
           <div style={s.autoCamHalf}>
-            <FaceTrackCanvas localParticipant={localParticipant} />
+            {localTrack ? (
+              <ParticipantTile trackRef={localTrack} style={{ width: '100%', height: '100%' }} />
+            ) : (
+              <div style={s.autoCamNoVideo}><VideoOff size={16} color="#444" /></div>
+            )}
             <div style={s.autoCamSplitLabel}>You</div>
           </div>
           <div style={s.autoCamDivider} />
+          {/* Active speaker */}
           <div style={s.autoCamHalf}>
-            {remoteTrack
-              ? <ParticipantTile trackRef={remoteTrack} style={{ width: '100%', height: '100%' }} />
-              : <div style={s.autoCamNoVideo}><VideoOff size={16} color="#444" /></div>}
-            <div style={s.autoCamSplitLabel}>{remotePerson ? remoteName : 'Waiting…'}</div>
+            {focusTrack && !isLocalFocus ? (
+              <ParticipantTile trackRef={focusTrack} style={{ width: '100%', height: '100%' }} />
+            ) : (
+              <div style={s.autoCamNoVideo}><VideoOff size={16} color="#444" /></div>
+            )}
+            <div style={s.autoCamSplitLabel}>{isLocalFocus ? 'Waiting…' : focusName}</div>
           </div>
         </div>
       )}

@@ -617,18 +617,21 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
 }
 
 // ============================================================
-// SPEAKING INDICATOR
+// SPEAKING INDICATOR + SPEAKER VIDEO WINDOW
 // ============================================================
 function SpeakingIndicator() {
   const participants = useLiveKitParticipants()
-  const [speakers, setSpeakers] = useState<Array<{ name: string; level: number }>>([])
+  const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+  const [speakers, setSpeakers] = useState<Array<{ identity: string; name: string; level: number }>>([])
+  const [minimized, setMinimized] = useState(false)
+  const [dismissedId, setDismissedId] = useState<string | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const tick = setInterval(() => {
       const active = participants
         .filter(p => p.isSpeaking && p.audioLevel > 0.015)
-        .map(p => ({ name: (p.name || p.identity).split(' ')[0], level: Math.min(p.audioLevel * 2.5, 1) }))
+        .map(p => ({ identity: p.identity, name: (p.name || p.identity).split(' ')[0], level: Math.min(p.audioLevel * 2.5, 1) }))
 
       if (active.length > 0) {
         if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
@@ -647,28 +650,67 @@ function SpeakingIndicator() {
     }
   }, [participants])
 
+  // When the primary speaker changes to a different person, reset dismissed state
+  useEffect(() => {
+    if (speakers.length > 0 && dismissedId && speakers[0].identity !== dismissedId) {
+      setDismissedId(null)
+    }
+  }, [speakers, dismissedId])
+
   if (speakers.length === 0) return null
 
+  const activeSpeaker = speakers[0]
+  const camTrack = cameraTracks.find(t => t.participant.identity === activeSpeaker.identity)
+  const showWindow = !minimized && dismissedId !== activeSpeaker.identity
   const BAR_SHAPE = [0.35, 0.65, 1.0, 0.65, 0.35]
 
   return (
     <div style={s.speakingWrap}>
-      {speakers.map((sp, i) => (
-        <div key={i} style={s.speakingChip}>
-          <div style={s.soundBars}>
-            {BAR_SHAPE.map((mult, j) => (
-              <div
-                key={j}
-                style={{
-                  ...s.soundBar,
-                  transform: `scaleY(${Math.max(0.15, sp.level * mult)})`,
-                }}
-              />
-            ))}
+      {/* Floating speaker video window */}
+      {showWindow && (
+        <div style={s.speakerWindow}>
+          <div style={s.speakerWindowHeader}>
+            <span style={s.speakerWindowName}>{activeSpeaker.name}</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button style={s.speakerWindowBtn} title="Minimise" onClick={() => setMinimized(true)}>—</button>
+              <button style={s.speakerWindowBtn} title="Close" onClick={() => setDismissedId(activeSpeaker.identity)}>
+                <X size={11} />
+              </button>
+            </div>
           </div>
-          <span style={s.speakingName}>{sp.name}</span>
+          <div style={s.speakerVideoArea}>
+            {camTrack ? (
+              <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: '0 0 10px 10px' }} />
+            ) : (
+              <div style={s.speakerNoVideo}><VideoOff size={20} color="#444" /></div>
+            )}
+          </div>
         </div>
-      ))}
+      )}
+
+      {/* Sound bar chip — always visible while speaking */}
+      <div style={s.speakingChip}>
+        {minimized && (
+          <button style={s.speakerRestoreBtn} title="Show video" onClick={() => setMinimized(false)}>
+            <Video size={11} />
+          </button>
+        )}
+        <div style={s.soundBars}>
+          {BAR_SHAPE.map((mult, j) => (
+            <div
+              key={j}
+              style={{
+                ...s.soundBar,
+                transform: `scaleY(${Math.max(0.15, activeSpeaker.level * mult)})`,
+              }}
+            />
+          ))}
+        </div>
+        <span style={s.speakingName}>{activeSpeaker.name}</span>
+        {speakers.length > 1 && (
+          <span style={s.speakingExtra}>+{speakers.length - 1}</span>
+        )}
+      </div>
     </div>
   )
 }
@@ -822,12 +864,20 @@ const s: Record<string, React.CSSProperties> = {
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
 
-  // Speaking indicator
-  speakingWrap: { position: 'absolute' as const, bottom: 20, left: 20, display: 'flex', flexDirection: 'column' as const, gap: 6, zIndex: 15, pointerEvents: 'none' as const },
-  speakingChip: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(10px)', borderRadius: 20, padding: '6px 14px 6px 10px', border: '1px solid rgba(72,187,120,0.2)' },
+  // Speaking indicator + speaker window
+  speakingWrap: { position: 'absolute' as const, bottom: 20, left: 20, display: 'flex', flexDirection: 'column' as const, gap: 6, zIndex: 15 },
+  speakerWindow: { width: 220, background: '#141414', border: '1px solid rgba(72,187,120,0.25)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  speakerWindowHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 8px 7px 12px', background: '#1a1a1a', borderBottom: '1px solid #222' },
+  speakerWindowName: { color: '#d0d0d0', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  speakerWindowBtn: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 4, fontSize: 13, lineHeight: 1 },
+  speakerVideoArea: { width: '100%', aspectRatio: '16/9', background: '#0d0d0d', position: 'relative' as const },
+  speakerNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  speakingChip: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(10px)', borderRadius: 20, padding: '6px 14px 6px 10px', border: '1px solid rgba(72,187,120,0.2)', pointerEvents: 'auto' as const },
+  speakerRestoreBtn: { background: 'none', border: 'none', color: '#48bb78', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px' },
   soundBars: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 18 },
   soundBar: { width: 3, height: 18, borderRadius: 2, background: '#48bb78', transformOrigin: '50% 100%', transition: 'transform 0.08s ease' },
   speakingName: { color: '#d0d0d0', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.3 },
+  speakingExtra: { color: '#666', fontSize: 11, fontFamily: "'Roboto', sans-serif" },
 
   // Screen share menu (popup above Monitor button)
   shareMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 220, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },

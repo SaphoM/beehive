@@ -46,6 +46,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard; icon switches to `Link2Off` on copy
 - 📽️ Video quality selector (Low 360p / Medium 720p / High 1080p)
 - 🖥️ Screen sharing — pre-share menu with "Clear screen before sharing" toggle, Entire Screen, Select Window; active bar with Switch Window (swap between two sources) and Stop
+- 🔊 Speaking indicator — animated 5-bar equalizer chip (bottom-left) appears only when audio is active; floats a live video window of the current speaker above the bar with **Minimise** (collapses to bar only) and **Close** (dismisses for that speaker, reappears when a new speaker takes over); shows `+N` badge when multiple participants speak simultaneously
 - 💬 Real-time chat sidebar powered by Supabase Realtime
 - 📴 Leave call (`PhoneOff` icon, red)
 

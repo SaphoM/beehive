@@ -1,5 +1,5 @@
 {
-  "name": "honey-com",
+  "name": "beehive",
   "version": "1.0.0",
   "description": "",
   "main": "livekit_node_backend.js",
@@ -22,6 +22,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "livekit-server-sdk": "^2.15.5",
+    "lucide-react": "^1.21.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "vite": "^8.0.16"

@@ -70,10 +70,33 @@ export function useCreateRoom() {
 }
 
 // ============================================================
+// ROOM INFO (for invite preview)
+// ============================================================
+export function useRoomInfo(roomId: string | null) {
+  const [room, setRoom] = useState<{ name: string; participantCount: number } | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!roomId) return
+    setLoading(true)
+    Promise.all([
+      supabase.from('rooms').select('name').eq('id', roomId).single(),
+      supabase.from('room_participants').select('id', { count: 'exact' }).eq('room_id', roomId).eq('is_active', true),
+    ]).then(([roomRes, participantsRes]) => {
+      if (roomRes.data) {
+        setRoom({ name: roomRes.data.name, participantCount: participantsRes.count ?? 0 })
+      }
+      setLoading(false)
+    })
+  }, [roomId])
+
+  return { room, loading }
+}
+
+// ============================================================
 // LIVEKIT TOKEN
 // ============================================================
 export function useJoinRoom() {
-  const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -81,10 +104,9 @@ export function useJoinRoom() {
     setLoading(true)
     setError(null)
 
-    // Get livekit_room_name from Supabase
     const { data: room, error: roomError } = await supabase
       .from('rooms')
-      .select('livekit_room_name')
+      .select('livekit_room_name, name')
       .eq('id', roomId)
       .single()
 
@@ -94,19 +116,16 @@ export function useJoinRoom() {
       return null
     }
 
-    // Add participant record
+    // Track participant (anon-safe: user_id is optional)
     const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      await supabase.from('room_participants').upsert({
-        room_id: roomId,
-        user_id: user.id,
-        display_name: displayName,
-        is_active: true,
-        joined_at: new Date().toISOString(),
-      })
-    }
+    await supabase.from('room_participants').upsert({
+      room_id: roomId,
+      user_id: user?.id ?? null,
+      display_name: displayName,
+      is_active: true,
+      joined_at: new Date().toISOString(),
+    }, { onConflict: user?.id ? 'room_id,user_id' : undefined })
 
-    // Get LiveKit token from Node.js backend
     const res = await fetch('/api/livekit/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -120,12 +139,11 @@ export function useJoinRoom() {
     }
 
     const { token } = await res.json()
-    setToken(token)
     setLoading(false)
-    return token
+    return { token, livekitRoomName: room.livekit_room_name, roomName: room.name }
   }, [])
 
-  return { joinRoom, token, loading, error }
+  return { joinRoom, loading, error }
 }
 
 // ============================================================
@@ -213,6 +231,95 @@ export function useChat(roomId: string) {
   }, [roomId])
 
   return { messages, sendMessage, loading }
+}
+
+// ============================================================
+// FATHOM — meeting intelligence
+// ============================================================
+export interface FathomAttendee {
+  name: string
+  email: string
+  is_external: boolean
+}
+
+export interface FathomActionItem {
+  description: string
+  completed: boolean
+  user_generated: boolean
+  recording_timestamp?: string
+  recording_playback_url?: string
+  assignee?: { name: string; email: string }
+}
+
+export interface FathomTranscriptLine {
+  speaker: { display_name: string; matched_calendar_invitee_email?: string }
+  text: string
+  timestamp: string
+}
+
+export interface FathomMeeting {
+  title: string
+  meeting_title?: string
+  url: string
+  share_url?: string
+  created_at: string
+  recording_start_time?: string
+  recording_end_time?: string
+  transcript_language?: string
+  calendar_invitees?: FathomAttendee[]
+  recorded_by?: { name: string; email: string; team?: string }
+  default_summary?: { template_name: string; markdown_formatted: string }
+  action_items?: FathomActionItem[]
+}
+
+export function useFathomMeetings(limit = 8) {
+  const [meetings, setMeetings] = useState<FathomMeeting[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+
+  const fetchPage = useCallback(async (cursor?: string) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: String(limit) })
+      if (cursor) params.set('cursor', cursor)
+      const resp = await fetch(`/api/fathom/meetings?${params}`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      if (data.error) throw new Error(data.error)
+      setMeetings(prev => cursor ? [...prev, ...(data.items ?? [])] : (data.items ?? []))
+      setNextCursor(data.next_cursor ?? null)
+      setError(null)
+    } catch (e: any) {
+      setError(e.message ?? 'Could not load Fathom meetings')
+    } finally {
+      setLoading(false)
+    }
+  }, [limit])
+
+  useEffect(() => { fetchPage() }, [fetchPage])
+
+  return { meetings, loading, error, hasMore: !!nextCursor, loadMore: () => fetchPage(nextCursor ?? undefined) }
+}
+
+export function useFathomTranscript(recordingId: string | null) {
+  const [transcript, setTranscript] = useState<FathomTranscriptLine[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadTranscript = useCallback(async () => {
+    if (!recordingId) return
+    setLoading(true)
+    try {
+      const resp = await fetch(`/api/fathom/recordings/${recordingId}/transcript`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setTranscript(Array.isArray(data) ? data : (data.transcript ?? null))
+      }
+    } catch {}
+    setLoading(false)
+  }, [recordingId])
+
+  return { transcript, loading, loadTranscript }
 }
 
 // ============================================================

@@ -204,7 +204,12 @@ function Lobby({
 function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   roomId: string; roomName: string; displayName: string; onLeave: () => void
 }) {
-  const tracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
+  const allTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
+  const { localParticipant } = useLocalParticipant()
+  // Exclude local screen share from the grid — prevents the infinite mirror echo
+  const tracks = allTracks.filter(t =>
+    !(t.participant.identity === localParticipant.identity && t.source === Track.Source.ScreenShare)
+  )
   const participants = useParticipants(roomId)
   const { messages, sendMessage } = useChat(roomId)
   const recordings = useRecordings(roomId)
@@ -219,8 +224,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
 
-  // Screen share
-  const { localParticipant } = useLocalParticipant()
+  // Screen share state
   const [shareMenu, setShareMenu] = useState(false)
   const [isSharing, setIsSharing] = useState(false)
   const [clearBeforeShare, setClearBeforeShare] = useState(false)

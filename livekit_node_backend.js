@@ -112,13 +112,23 @@ app.get('/api/fathom/meetings', async (req, res) => {
   if (req.query.created_after) params.set('created_after', String(req.query.created_after))
 
   try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 10000)
     const resp = await fetch(`${FATHOM_BASE}/meetings?${params}`, {
       headers: { 'X-Api-Key': key },
+      signal: ctrl.signal,
     })
-    if (!resp.ok) return res.status(resp.status).json({ error: 'Fathom API error', status: resp.status })
+    clearTimeout(timer)
+    if (!resp.ok) {
+      const body = await resp.text()
+      console.error('[Fathom]', resp.status, body.slice(0, 200))
+      return res.status(resp.status).json({ error: 'Fathom API error', status: resp.status })
+    }
     res.json(await resp.json())
-  } catch {
-    res.status(502).json({ error: 'Failed to reach Fathom API' })
+  } catch (e) {
+    const msg = e?.name === 'AbortError' ? 'Fathom API timed out' : 'Failed to reach Fathom API'
+    console.error('[Fathom]', msg, e?.message)
+    res.status(502).json({ error: msg })
   }
 })
 
@@ -127,13 +137,18 @@ app.get('/api/fathom/recordings/:id/transcript', async (req, res) => {
   if (!key) return res.status(503).json({ error: 'FATHOM_API_KEY not configured' })
 
   try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 10000)
     const resp = await fetch(`${FATHOM_BASE}/recordings/${req.params.id}/transcript`, {
       headers: { 'X-Api-Key': key },
+      signal: ctrl.signal,
     })
+    clearTimeout(timer)
     if (!resp.ok) return res.status(resp.status).json({ error: 'Fathom API error' })
     res.json(await resp.json())
-  } catch {
-    res.status(502).json({ error: 'Failed to reach Fathom API' })
+  } catch (e) {
+    const msg = e?.name === 'AbortError' ? 'Fathom API timed out' : 'Failed to reach Fathom API'
+    res.status(502).json({ error: msg })
   }
 })
 

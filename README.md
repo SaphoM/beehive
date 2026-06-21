@@ -197,9 +197,66 @@ git push origin hotfix/critical-fix
 
 ---
 
+## Planned: Admin Controls & Group Management
+
+> Accessed from the Participants window. Only available to the room host / co-host (admin role).
+
+### Mute Controls
+
+| Action | Scope | Description |
+|--------|-------|-------------|
+| Mute one | Individual | Admin clicks a participant's mic icon to mute them |
+| Mute all | Room-wide | Single action to mute every participant at once |
+| Select + mute | Multi-select | Checkbox-select multiple attendees, then mute selection |
+
+**UX flow:**
+1. Open Participants window → hover a tile → mute icon appears
+2. Or use the **"Mute All"** button in the window header
+3. Or tick checkboxes on multiple tiles → **"Mute Selected"** action bar appears at the bottom
+
+---
+
+### Group System
+
+Participants can be organised into named groups within a room.
+
+**Labels:** Auto-assigned on join as `Group 1`, `Group 2`, `Group 3`, etc. Admin can rename any group.
+
+| Action | Description |
+|--------|-------------|
+| Assign to group | Drag participant tile onto a group, or use dropdown |
+| Rename group | Click group label to edit inline |
+| Mute group | Mutes all participants in that group |
+| Break away discussion | Sends a group into a temporary sub-room for side discussion |
+
+---
+
+### Breakaway Discussions
+
+A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from the main room audio/video.
+
+**Time option:** Admin sets a duration (5 / 10 / 15 / 30 min, or custom). A countdown timer is visible to all participants in the sub-room. When time expires, participants are automatically returned to the main room.
+
+**Flow:**
+1. Admin selects a group → **"Break Away"** button
+2. Modal: choose duration → confirm
+3. Sub-room created (`{livekit_room_name}-group-{n}`) — participants auto-join
+4. Countdown displayed in sub-room header
+5. On expiry (or manual recall): participants rejoin main room
+
+**Database impact:**
+- New `breakaway_sessions` table: `room_id`, `group_id`, `livekit_sub_room`, `duration_minutes`, `started_at`, `ends_at`
+- Supabase Realtime fires recall event when `ends_at` is reached (via Edge Function cron)
+
+---
+
 ## Roadmap
 
 - [ ] Authentication (Supabase Auth email/password)
+- [ ] Admin role — host/co-host permissions
+- [ ] Mute controls — individual, mute all, multi-select mute
+- [ ] Group system — auto-labelled (Group 1/2/3), renameable, group mute
+- [ ] Breakaway discussions — timed sub-rooms with auto-recall
 - [ ] Screen sharing
 - [ ] Recording playback UI
 - [ ] DUT organisation SSO

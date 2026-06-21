@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -24,39 +24,149 @@ import {
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
 const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
 
-// Background effect presets
-type BgPreset = { id: string; label: string; colors: string[] }
-const BG_IMAGE_PRESETS: BgPreset[] = [
-  { id: 'studio',  label: 'Studio',  colors: ['#0f0c29', '#302b63'] },
-  { id: 'nature',  label: 'Nature',  colors: ['#134e5e', '#71b280'] },
-  { id: 'space',   label: 'Space',   colors: ['#000428', '#004e92'] },
-  { id: 'sunset',  label: 'Sunset',  colors: ['#f093fb', '#f5576c'] },
-  { id: 'ocean',   label: 'Ocean',   colors: ['#667eea', '#764ba2'] },
-  { id: 'forest',  label: 'Forest',  colors: ['#1a472a', '#52b788'] },
-  { id: 'dawn',    label: 'Dawn',    colors: ['#f12711', '#f5af19'] },
-  { id: 'office',  label: 'Office',  colors: ['#c9d6ff', '#e2e2e2'] },
-]
-const BG_VIRTUAL_PRESETS: BgPreset[] = [
-  { id: 'v-black',  label: 'Black',  colors: ['#0a0a0a'] },
-  { id: 'v-white',  label: 'White',  colors: ['#f0f0f0'] },
-  { id: 'v-navy',   label: 'Navy',   colors: ['#1a237e'] },
-  { id: 'v-teal',   label: 'Teal',   colors: ['#004d40'] },
-  { id: 'v-purple', label: 'Purple', colors: ['#4a148c'] },
-  { id: 'v-green',  label: 'Green',  colors: ['#1b5e20'] },
-  { id: 'v-gray',   label: 'Gray',   colors: ['#424242'] },
-  { id: 'v-warm',   label: 'Warm',   colors: ['#5d4037'] },
-]
-const ALL_BG_PRESETS = [...BG_IMAGE_PRESETS, ...BG_VIRTUAL_PRESETS]
-
-function drawBgPreset(ctx: CanvasRenderingContext2D, preset: BgPreset, w: number, h: number) {
-  if (preset.colors.length === 1) {
-    ctx.fillStyle = preset.colors[0]
-  } else {
-    const grad = ctx.createLinearGradient(0, 0, w, h)
-    preset.colors.forEach((c, i) => grad.addColorStop(i / (preset.colors.length - 1), c))
-    ctx.fillStyle = grad
+// Load MediaPipe Selfie Segmentation from CDN (injected once, polled until ready)
+async function ensureMediaPipe(): Promise<void> {
+  if ((window as any).SelfieSegmentation) return
+  if (!document.querySelector('script[data-mp-ss]')) {
+    const s = document.createElement('script')
+    s.setAttribute('data-mp-ss', '1')
+    s.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js'
+    s.crossOrigin = 'anonymous'
+    document.head.appendChild(s)
   }
-  ctx.fillRect(0, 0, w, h)
+  await new Promise<void>((resolve, reject) => {
+    if ((window as any).SelfieSegmentation) { resolve(); return }
+    const check = setInterval(() => {
+      if ((window as any).SelfieSegmentation) { clearInterval(check); resolve() }
+    }, 100)
+    setTimeout(() => { clearInterval(check); reject(new Error('MediaPipe load timeout')) }, 20000)
+  })
+}
+
+// Virtual background scene presets — drawn procedurally on canvas each frame
+type VirtualPreset = { id: string; label: string; preview: string[] }
+const VIRTUAL_PRESETS: VirtualPreset[] = [
+  { id: 'office',    label: 'Office',    preview: ['#d6d3d1', '#a8a29e'] },
+  { id: 'beach',     label: 'Beach',     preview: ['#0284c7', '#fbbf24'] },
+  { id: 'city',      label: 'City',      preview: ['#0f172a', '#334155'] },
+  { id: 'forest',    label: 'Forest',    preview: ['#14532d', '#15803d'] },
+  { id: 'mountains', label: 'Mountains', preview: ['#312e81', '#4f46e5'] },
+  { id: 'space',     label: 'Space',     preview: ['#030712', '#1e1b4b'] },
+  { id: 'sunset',    label: 'Sunset',    preview: ['#7c3aed', '#f97316'] },
+  { id: 'studio',    label: 'Studio',    preview: ['#27272a', '#18181b'] },
+]
+
+function drawVirtualScene(ctx: CanvasRenderingContext2D, id: string, W: number, H: number) {
+  switch (id) {
+    case 'office': {
+      const g = ctx.createLinearGradient(0, 0, 0, H)
+      g.addColorStop(0, '#e7e5e4'); g.addColorStop(1, '#a8a29e')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#78350f'; ctx.fillRect(0, H * 0.75, W, H * 0.25)
+      ctx.fillStyle = '#6b2800'; ctx.fillRect(0, H * 0.74, W, 5)
+      break
+    }
+    case 'beach': {
+      const sky = ctx.createLinearGradient(0, 0, 0, H * 0.62)
+      sky.addColorStop(0, '#0369a1'); sky.addColorStop(1, '#38bdf8')
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H * 0.62)
+      ctx.fillStyle = '#0284c7'; ctx.fillRect(0, H * 0.57, W, H * 0.1)
+      const sand = ctx.createLinearGradient(0, H * 0.65, 0, H)
+      sand.addColorStop(0, '#fde68a'); sand.addColorStop(1, '#b45309')
+      ctx.fillStyle = sand; ctx.fillRect(0, H * 0.65, W, H * 0.35)
+      break
+    }
+    case 'city': {
+      const sky = ctx.createLinearGradient(0, 0, 0, H)
+      sky.addColorStop(0, '#0f172a'); sky.addColorStop(1, '#1e293b')
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H)
+      const buildings = [
+        { x: 0, w: 80, h: H * 0.55 }, { x: 70, w: 50, h: H * 0.4 },
+        { x: 110, w: 90, h: H * 0.65 }, { x: 190, w: 60, h: H * 0.45 },
+        { x: 240, w: 100, h: H * 0.7 }, { x: 330, w: 70, h: H * 0.5 },
+        { x: 390, w: 120, h: H * 0.6 }, { x: 500, w: 80, h: H * 0.42 },
+        { x: 570, w: 70, h: H * 0.68 },
+      ]
+      ctx.fillStyle = '#334155'
+      buildings.forEach(b => ctx.fillRect(b.x, H - b.h, b.w, b.h))
+      ctx.fillStyle = 'rgba(253,230,138,0.75)'
+      buildings.forEach(b => {
+        const cols = Math.floor(b.w / 14)
+        const rows = Math.min(8, Math.floor(b.h / 18))
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            if (((row * 7 + col * 3) % 5) !== 0)
+              ctx.fillRect(b.x + col * 14 + 3, H - b.h + row * 18 + 8, 6, 8)
+          }
+        }
+      })
+      break
+    }
+    case 'forest': {
+      const g = ctx.createLinearGradient(0, 0, 0, H)
+      g.addColorStop(0, '#14532d'); g.addColorStop(1, '#052e16')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#713f12'
+      for (let i = 0; i < 8; i++) ctx.fillRect(i * 85 + 30, H * 0.35, 12, H * 0.65)
+      ctx.fillStyle = '#166534'
+      for (let i = 0; i < 8; i++) {
+        ctx.beginPath(); ctx.arc(i * 85 + 36, H * 0.35, 44, 0, Math.PI * 2); ctx.fill()
+      }
+      break
+    }
+    case 'mountains': {
+      const sky = ctx.createLinearGradient(0, 0, 0, H)
+      sky.addColorStop(0, '#1e1b4b'); sky.addColorStop(1, '#4f46e5')
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#4338ca'
+      ctx.beginPath()
+      ctx.moveTo(0, H); ctx.lineTo(0, H * 0.5); ctx.lineTo(120, H * 0.2)
+      ctx.lineTo(200, H * 0.45); ctx.lineTo(320, H * 0.1); ctx.lineTo(440, H * 0.4)
+      ctx.lineTo(560, H * 0.15); ctx.lineTo(W, H * 0.5); ctx.lineTo(W, H)
+      ctx.closePath(); ctx.fill()
+      ctx.fillStyle = '#e0e7ff'
+      ctx.beginPath(); ctx.moveTo(120, H * 0.2); ctx.lineTo(100, H * 0.32); ctx.lineTo(140, H * 0.32); ctx.closePath(); ctx.fill()
+      ctx.beginPath(); ctx.moveTo(320, H * 0.1); ctx.lineTo(298, H * 0.25); ctx.lineTo(342, H * 0.25); ctx.closePath(); ctx.fill()
+      ctx.beginPath(); ctx.moveTo(560, H * 0.15); ctx.lineTo(540, H * 0.27); ctx.lineTo(580, H * 0.27); ctx.closePath(); ctx.fill()
+      break
+    }
+    case 'space': {
+      ctx.fillStyle = '#030712'; ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#fff'
+      let sx = 42, sy = 17
+      for (let i = 0; i < 90; i++) {
+        sx = (sx * 1664525 + 1013904223) & 0xffff
+        sy = (sy * 22695477 + 1) & 0xffff
+        const px = (sx / 0xffff) * W
+        const py = (sy / 0xffff) * H
+        const r = (((sx ^ sy) & 0xf) / 0xf) * 1.4 + 0.3
+        ctx.globalAlpha = 0.6 + (((sx + sy) & 0xff) / 0xff) * 0.4
+        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill()
+      }
+      ctx.globalAlpha = 1
+      break
+    }
+    case 'sunset': {
+      const g = ctx.createLinearGradient(0, 0, 0, H)
+      g.addColorStop(0, '#581c87'); g.addColorStop(0.3, '#db2777')
+      g.addColorStop(0.6, '#ea580c'); g.addColorStop(1, '#f97316')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+      const sun = ctx.createRadialGradient(W / 2, H * 0.55, 0, W / 2, H * 0.55, 55)
+      sun.addColorStop(0, '#fef9c3'); sun.addColorStop(0.4, '#fef08a'); sun.addColorStop(1, 'rgba(249,115,22,0)')
+      ctx.fillStyle = sun; ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#431407'; ctx.fillRect(0, H * 0.73, W, H * 0.27)
+      break
+    }
+    case 'studio':
+    default: {
+      const g = ctx.createLinearGradient(0, 0, 0, H)
+      g.addColorStop(0, '#27272a'); g.addColorStop(1, '#09090b')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+      const spot = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, W * 0.8)
+      spot.addColorStop(0, 'rgba(255,255,255,0.07)'); spot.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = spot; ctx.fillRect(0, 0, W, H)
+    }
+  }
 }
 
 // ============================================================
@@ -266,12 +376,22 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [blurLevel, setBlurLevel] = useState(8)
   const [bgPresetId, setBgPresetId] = useState('studio')
   const bgOrigTrackRef = useRef<MediaStreamTrack | null>(null)
-  const bgRafRef = useRef<number>(0)
+  const bgUploadedImageRef = useRef<HTMLImageElement | null>(null)
+  const [bgUploadedImageName, setBgUploadedImageName] = useState('')
   // bgStateRef lets the render loop read latest settings without restarting the pipeline
   const bgStateRef = useRef({ effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId })
   bgStateRef.current = { effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId }
 
   const bgActive = bgEffect !== 'none' || bgFlip
+
+  const handleImageUpload = useCallback((file: File) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => { bgUploadedImageRef.current = img; URL.revokeObjectURL(url) }
+    img.src = url
+    setBgUploadedImageName(file.name)
+    setBgEffect('image')
+  }, [])
 
   useEffect(() => {
     const pub = localParticipant.getTrackPublication(Track.Source.Camera)
@@ -290,49 +410,104 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     if (!raw) return
     if (!bgOrigTrackRef.current) bgOrigTrackRef.current = raw
 
+    const W = 640, H = 480
+    let running = true
+    let seg: any = null
+
     const video = document.createElement('video')
     video.srcObject = new MediaStream([bgOrigTrackRef.current])
-    video.playsInline = true
-    video.muted = true
+    video.playsInline = true; video.muted = true
 
     const canvas = document.createElement('canvas')
-    canvas.width = 640; canvas.height = 480
+    canvas.width = W; canvas.height = H
+    const ctx = canvas.getContext('2d')!
 
-    const render = () => {
-      if (!video.videoWidth) { bgRafRef.current = requestAnimationFrame(render); return }
-      const ctx = canvas.getContext('2d')!
+    // Offscreen canvas — holds the person cutout before compositing
+    const offCanvas = document.createElement('canvas')
+    offCanvas.width = W; offCanvas.height = H
+    const offCtx = offCanvas.getContext('2d')!
+
+    let trackReplaced = false
+
+    const onResults = (results: any) => {
+      if (!running) return
       const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
-      const [W, H] = [640, 480]
+
       ctx.save()
       ctx.clearRect(0, 0, W, H)
       if (flip) { ctx.translate(W, 0); ctx.scale(-1, 1) }
+
       if (effect === 'blur') {
         ctx.filter = `blur(${bl}px)`
         ctx.drawImage(video, 0, 0, W, H)
-      } else if (effect === 'image' || effect === 'virtual') {
-        const preset = ALL_BG_PRESETS.find(p => p.id === presetId) ?? ALL_BG_PRESETS[0]
-        drawBgPreset(ctx, preset, W, H)
-        ctx.globalAlpha = 0.82
-        ctx.drawImage(video, 0, 0, W, H)
-        ctx.globalAlpha = 1
+        ctx.filter = 'none'
+      } else if (effect === 'image') {
+        const img = bgUploadedImageRef.current
+        if (img) {
+          // Cover-fit: crop to fill canvas
+          const ia = img.width / img.height, ca = W / H
+          let sx = 0, sy = 0, sw = img.width, sh = img.height
+          if (ia > ca) { sw = img.height * ca; sx = (img.width - sw) / 2 }
+          else { sh = img.width / ca; sy = (img.height - sh) / 2 }
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H)
+        } else {
+          ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, W, H)
+        }
+      } else if (effect === 'virtual') {
+        drawVirtualScene(ctx, presetId, W, H)
       } else {
-        ctx.drawImage(video, 0, 0, W, H) // flip-only pass
+        // flip-only: no background replacement, draw video normally
+        ctx.drawImage(video, 0, 0, W, H)
       }
+
+      // Cut person out of video using segmentation mask, composite over background
+      if (effect !== 'none') {
+        offCtx.clearRect(0, 0, W, H)
+        offCtx.drawImage(video, 0, 0, W, H)
+        offCtx.globalCompositeOperation = 'destination-in'
+        offCtx.drawImage(results.segmentationMask, 0, 0, W, H)
+        offCtx.globalCompositeOperation = 'source-over'
+        ctx.drawImage(offCanvas, 0, 0)
+      }
+
       ctx.restore()
-      bgRafRef.current = requestAnimationFrame(render)
+
+      if (!trackReplaced) {
+        trackReplaced = true
+        const [canvasTrack] = canvas.captureStream(30).getVideoTracks()
+        ;(lkTrack as any).replaceTrack(canvasTrack).catch(() => {})
+      }
     }
 
-    video.addEventListener('loadedmetadata', async () => {
+    const init = async () => {
+      try { await ensureMediaPipe() } catch { return }
+      if (!running) return
+
+      seg = new (window as any).SelfieSegmentation({
+        locateFile: (f: string) =>
+          `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`,
+      })
+      seg.setOptions({ modelSelection: 1 })
+      seg.onResults(onResults)
+
       await video.play().catch(() => {})
-      bgRafRef.current = requestAnimationFrame(render)
-      const [canvasTrack] = canvas.captureStream(30).getVideoTracks()
-      ;(lkTrack as any).replaceTrack(canvasTrack).catch(() => {})
-    })
-    video.load()
+
+      const sendFrame = async () => {
+        if (!running) return
+        if (video.readyState >= 2) {
+          try { await seg.send({ image: video }) } catch {}
+        }
+        if (running) requestAnimationFrame(sendFrame)
+      }
+      sendFrame()
+    }
+
+    init()
 
     return () => {
-      cancelAnimationFrame(bgRafRef.current)
+      running = false
       video.srcObject = null
+      try { seg?.close() } catch {}
       if (bgOrigTrackRef.current) {
         ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current).catch(() => {})
       }
@@ -521,10 +696,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                   presetId={bgPresetId}
                   flip={bgFlip}
                   blurLevel={blurLevel}
+                  uploadedImageName={bgUploadedImageName}
                   onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
                   onPreset={setBgPresetId}
                   onFlip={() => setBgFlip(v => !v)}
                   onBlur={setBlurLevel}
+                  onImageUpload={handleImageUpload}
                   onClose={() => setBgMenuOpen(false)}
                 />
               )}
@@ -799,15 +976,17 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
 // ============================================================
 // BACKGROUND EFFECTS MENU
 // ============================================================
-function BackgroundMenu({ effect, presetId, flip, blurLevel, onEffect, onPreset, onFlip, onBlur, onClose }: {
+function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImageName, onEffect, onPreset, onFlip, onBlur, onImageUpload, onClose }: {
   effect: 'none' | 'blur' | 'image' | 'virtual'
   presetId: string
   flip: boolean
   blurLevel: number
+  uploadedImageName: string
   onEffect: (e: 'none' | 'blur' | 'image' | 'virtual') => void
   onPreset: (id: string) => void
   onFlip: () => void
   onBlur: (v: number) => void
+  onImageUpload: (file: File) => void
   onClose: () => void
 }) {
   const tabs = [
@@ -816,8 +995,6 @@ function BackgroundMenu({ effect, presetId, flip, blurLevel, onEffect, onPreset,
     { key: 'image',   label: 'Image' },
     { key: 'virtual', label: 'Virtual' },
   ] as const
-
-  const presets = effect === 'virtual' ? BG_VIRTUAL_PRESETS : BG_IMAGE_PRESETS
 
   return (
     <div style={s.bgMenu}>
@@ -839,9 +1016,10 @@ function BackgroundMenu({ effect, presetId, flip, blurLevel, onEffect, onPreset,
         ))}
       </div>
 
-      {/* Blur controls */}
+      {/* Blur — background only, person stays sharp */}
       {effect === 'blur' && (
         <div style={s.bgSection}>
+          <p style={s.bgHint}>Blurs the background behind you.</p>
           <div style={s.bgRow}>
             <span style={s.bgLabel}>Intensity</span>
             <input
@@ -861,28 +1039,60 @@ function BackgroundMenu({ effect, presetId, flip, blurLevel, onEffect, onPreset,
         </div>
       )}
 
-      {/* Image / Virtual preset grid */}
-      {(effect === 'image' || effect === 'virtual') && (
+      {/* Image — upload a photo as background */}
+      {effect === 'image' && (
+        <div style={s.bgSection}>
+          <label style={{ cursor: 'pointer' }}>
+            <input
+              type="file" accept="image/*"
+              style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) onImageUpload(f) }}
+            />
+            <div style={s.bgUploadBtn}>
+              <Upload size={14} color="#aaa" />
+              <span style={{ color: '#aaa', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300 }}>
+                {uploadedImageName ? 'Change image' : 'Upload image'}
+              </span>
+            </div>
+          </label>
+          {uploadedImageName && (
+            <div style={s.bgUploadedName}>{uploadedImageName}</div>
+          )}
+          {!uploadedImageName && (
+            <p style={s.bgHint}>Your photo replaces the background behind you.</p>
+          )}
+          <div style={s.bgRow}>
+            <FlipHorizontal size={13} color="#888" />
+            <span style={s.bgLabel}>Flip</span>
+            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
+              {flip ? 'On' : 'Off'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Virtual — preset scenes */}
+      {effect === 'virtual' && (
         <div style={s.bgSection}>
           <div style={s.bgPresetGrid}>
-            {presets.map(p => (
+            {VIRTUAL_PRESETS.map(p => (
               <button
                 key={p.id}
                 title={p.label}
                 style={{
                   ...s.bgPresetBtn,
-                  background: p.colors.length === 1
-                    ? p.colors[0]
-                    : `linear-gradient(135deg, ${p.colors.join(', ')})`,
+                  background: `linear-gradient(135deg, ${p.preview.join(', ')})`,
                   ...(presetId === p.id ? s.bgPresetActive : {}),
                 }}
                 onClick={() => onPreset(p.id)}
-              />
+              >
+                <span style={s.bgPresetLabel}>{p.label}</span>
+              </button>
             ))}
           </div>
           <div style={s.bgRow}>
             <FlipHorizontal size={13} color="#888" />
-            <span style={s.bgLabel}>Flip image</span>
+            <span style={s.bgLabel}>Flip</span>
             <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
               {flip ? 'On' : 'Off'}
             </button>
@@ -1259,9 +1469,13 @@ const s: Record<string, React.CSSProperties> = {
   bgSlider: { flex: 1, accentColor: '#f5a623', cursor: 'pointer' },
   bgToggle: { background: '#222', border: '1px solid #333', borderRadius: 20, padding: '3px 12px', color: '#666', fontSize: 11, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
   bgToggleOn: { background: '#2a2010', borderColor: '#f5a623', color: '#f5a623' },
+  bgHint: { color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0 },
   bgPresetGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 },
-  bgPresetBtn: { height: 40, borderRadius: 8, border: '2px solid transparent', cursor: 'pointer' },
+  bgPresetBtn: { height: 52, borderRadius: 8, border: '2px solid transparent', cursor: 'pointer', position: 'relative' as const, overflow: 'hidden', padding: 0 },
   bgPresetActive: { border: '2px solid #f5a623', boxShadow: '0 0 0 1px rgba(245,166,35,0.4)' },
+  bgPresetLabel: { position: 'absolute' as const, bottom: 3, left: 0, right: 0, textAlign: 'center' as const, color: 'rgba(255,255,255,0.9)', fontSize: 9, fontFamily: "'Roboto', sans-serif", fontWeight: 400, textShadow: '0 1px 3px rgba(0,0,0,0.8)', letterSpacing: 0.3 },
+  bgUploadBtn: { display: 'flex', alignItems: 'center', gap: 8, background: '#222', border: '1px dashed #444', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', transition: 'border-color 0.15s' },
+  bgUploadedName: { color: '#48bb78', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
 
   // Auto cam window (bottom-right of video area)
   autoCamMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 200, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },

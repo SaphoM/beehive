@@ -58,13 +58,13 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - 👋 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥)
 - 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
-- 🎨 Background Effects (`Layers` button, amber when active) — canvas pipeline replaces the published camera track with a processed stream; four modes via popup menu:
-  - **None** — clears all effects and restores the original track
-  - **Blur** — whole-frame blur applied to the camera output; intensity slider (2–20 px); Flip toggle
-  - **Image** — 8 gradient presets (Studio, Nature, Space, Sunset, Ocean, Forest, Dawn, Office) composited behind the video at 82% video opacity; Flip toggle mirrors the entire composited frame
-  - **Virtual** — 8 solid-colour presets (Black, White, Navy, Teal, Purple, Green, Gray, Warm) with same compositing; Flip toggle
-  - Flip is available in all modes; reverses the image horizontally so on-screen text or slides appear correctly from the presenter's view
-  - Pipeline: grabs raw `MediaStreamTrack`, renders to `640×480` canvas via `requestAnimationFrame`, publishes canvas stream via LiveKit `replaceTrack` — remote participants see the processed video
+- 🎨 Background Effects (`Layers` button, amber when active) — uses **MediaPipe Selfie Segmentation** to cut the person out of the frame and composite them over a processed background; four modes via popup menu:
+  - **None** — clears all effects and restores the original camera track
+  - **Blur** — background behind the person is blurred; person stays sharp; intensity slider (2–20 px); Flip toggle
+  - **Image** — upload any photo from disk; the photo becomes the background (cover-fitted); Flip toggle mirrors the output horizontally
+  - **Virtual** — 8 procedurally drawn scene presets (Office, Beach, City, Forest, Mountains, Space, Sunset, Studio) replace the background; Flip toggle
+  - Pipeline: MediaPipe loaded once from CDN; `replaceTrack` swaps the published LiveKit track with a `640×480 canvas.captureStream(30)` — remote participants see the processed video
+  - Person is composited using `destination-in` mask from the segmentation result
 - 📸 Auto Cam — floating window (bottom-right), two modes switchable via header tabs:
   - **Auto Centre** — shows the current active speaker's camera in a 4:3 crop; automatically follows whoever is loudest (1.5 s debounce to prevent rapid switching); name tag with crosshair icon
   - **2 in 1** — splits the window into two equal halves: local participant (You) on the left, active speaker on the right; "Waiting…" placeholder when no remote speaker is detected

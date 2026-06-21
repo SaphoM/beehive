@@ -45,6 +45,7 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
 - 👋 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥)
 - 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard; icon switches to `Link2Off` on copy
 - 📽️ Video quality selector (Low 360p / Medium 720p / High 1080p)
+- 🖥️ Screen sharing — pre-share menu with "Clear screen before sharing" toggle, Entire Screen, Select Window; active bar with Switch Window (swap between two sources) and Stop
 - 💬 Real-time chat sidebar powered by Supabase Realtime
 - 📴 Leave call (`PhoneOff` icon, red)
 
@@ -271,7 +272,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled (Group 1/2/3), renameable, group mute
 - [ ] Breakaway discussions — timed sub-rooms with auto-recall
-- [ ] Screen sharing
+- [x] Screen sharing (Entire Screen / Select Window / Switch source / Clear screen mode)
 - [ ] Recording playback UI
 - [ ] DUT organisation SSO
 - [ ] Syspro integration (government contracts)

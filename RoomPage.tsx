@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -219,6 +219,66 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
 
+  // Screen share
+  const { localParticipant } = useLocalParticipant()
+  const [shareMenu, setShareMenu] = useState(false)
+  const [isSharing, setIsSharing] = useState(false)
+  const [clearBeforeShare, setClearBeforeShare] = useState(false)
+  const [shareLabel, setShareLabel] = useState('')
+  const [secondaryStream, setSecondaryStream] = useState<MediaStream | null>(null)
+  const [activeSlot, setActiveSlot] = useState<'primary' | 'secondary'>('primary')
+  const [roomHidden, setRoomHidden] = useState(false)
+  const stopShareRef = useRef<() => void>()
+
+  const stopShare = useCallback(async () => {
+    try { await localParticipant.setScreenShareEnabled(false) } catch {}
+    secondaryStream?.getTracks().forEach(t => t.stop())
+    setSecondaryStream(null)
+    setIsSharing(false)
+    setShareLabel('')
+    setActiveSlot('primary')
+  }, [localParticipant, secondaryStream])
+
+  useEffect(() => { stopShareRef.current = stopShare }, [stopShare])
+
+  const startShare = useCallback(async () => {
+    if (clearBeforeShare) {
+      setRoomHidden(true)
+      await new Promise(r => setTimeout(r, 400))
+    }
+    try {
+      await localParticipant.setScreenShareEnabled(true)
+      if (clearBeforeShare) setRoomHidden(false)
+      const pub = localParticipant.getTrackPublication(Track.Source.ScreenShare)
+      const label = (pub?.track as any)?.mediaStreamTrack?.label || 'Your screen'
+      setShareLabel(label)
+      setIsSharing(true)
+      setShareMenu(false)
+      ;(pub?.track as any)?.mediaStreamTrack?.addEventListener('ended', () => stopShareRef.current?.())
+    } catch {
+      if (clearBeforeShare) setRoomHidden(false)
+    }
+  }, [clearBeforeShare, localParticipant])
+
+  const addWindow = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+      setSecondaryStream(stream)
+    } catch { /* cancelled */ }
+  }, [])
+
+  const switchSource = useCallback(async () => {
+    if (!secondaryStream) return
+    const pub = localParticipant.getTrackPublication(Track.Source.ScreenShare)
+    if (!pub?.track) return
+    const [newTrack] = secondaryStream.getVideoTracks()
+    try {
+      await (pub.track as any).replaceTrack(newTrack)
+      setShareLabel(newTrack.label || 'Window')
+      setActiveSlot(s => s === 'primary' ? 'secondary' : 'primary')
+    } catch { /* track replacement failed */ }
+  }, [secondaryStream, localParticipant])
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -244,7 +304,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const activeCount = participants.filter(p => p.is_active).length
 
   return (
-    <div style={s.roomWrapper}>
+    <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>
       {/* Header */}
       <div style={s.header}>
         <div style={s.headerLeft}>
@@ -283,6 +343,18 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           <GridLayout tracks={tracks} style={{ height: '100%' }}>
             <ParticipantTile />
           </GridLayout>
+
+          {/* Active Share Bar */}
+          {isSharing && (
+            <ScreenShareBar
+              label={shareLabel}
+              hasSecondary={!!secondaryStream}
+              activeSlot={activeSlot}
+              onAddWindow={addWindow}
+              onSwitch={switchSource}
+              onStop={stopShare}
+            />
+          )}
 
           {/* Floating Reactions */}
           <div style={s.reactionFloat}>
@@ -334,6 +406,25 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                     </button>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Screen Share */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={{ ...s.controlBtn, ...(isSharing ? { background: '#276127', border: '1px solid #48bb78' } : {}) }}
+                onClick={() => isSharing ? stopShare() : setShareMenu(v => !v)}
+                title={isSharing ? 'Stop sharing' : 'Share screen'}
+              >
+                {isSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
+              </button>
+              {shareMenu && !isSharing && (
+                <ScreenShareMenu
+                  clearBeforeShare={clearBeforeShare}
+                  onToggleClear={() => setClearBeforeShare(v => !v)}
+                  onShare={startShare}
+                  onClose={() => setShareMenu(false)}
+                />
               )}
             </div>
 
@@ -519,6 +610,84 @@ function DockedParticipantsStrip({ onUndock, onClose }: { onUndock: () => void; 
 }
 
 // ============================================================
+// SCREEN SHARE MENU
+// ============================================================
+function ScreenShareMenu({ clearBeforeShare, onToggleClear, onShare, onClose }: {
+  clearBeforeShare: boolean
+  onToggleClear: () => void
+  onShare: () => void
+  onClose: () => void
+}) {
+  return (
+    <div style={s.shareMenu}>
+      <div style={s.shareMenuHeader}>
+        <span style={s.shareMenuTitle}>Share Screen</span>
+        <button style={s.shareMenuClose} onClick={onClose}><X size={14} /></button>
+      </div>
+
+      <button style={s.shareMenuRow} onClick={onToggleClear}>
+        {clearBeforeShare
+          ? <CheckSquare size={14} color="#f5a623" />
+          : <Square size={14} color="#555" />}
+        <span style={{ ...s.shareMenuText, color: clearBeforeShare ? '#f5a623' : '#888' }}>
+          Clear screen before sharing
+        </span>
+      </button>
+
+      <div style={s.shareMenuDivider} />
+
+      <button style={s.shareMenuOption} onClick={onShare}>
+        <Monitor size={15} color="#aaa" />
+        <span>Entire Screen</span>
+      </button>
+
+      <button style={s.shareMenuOption} onClick={onShare}>
+        <ArrowLeftRight size={15} color="#aaa" />
+        <span>Select Window</span>
+      </button>
+    </div>
+  )
+}
+
+// ============================================================
+// SCREEN SHARE ACTIVE BAR
+// ============================================================
+function ScreenShareBar({ label, hasSecondary, activeSlot, onAddWindow, onSwitch, onStop }: {
+  label: string
+  hasSecondary: boolean
+  activeSlot: 'primary' | 'secondary'
+  onAddWindow: () => void
+  onSwitch: () => void
+  onStop: () => void
+}) {
+  return (
+    <div style={s.shareBar}>
+      <div style={s.shareBarLabel}>
+        <Monitor size={13} color="#48bb78" />
+        <span>{label || 'Sharing screen'}</span>
+        {hasSecondary && (
+          <span style={s.shareBarSlot}>{activeSlot === 'primary' ? 'Source 1' : 'Source 2'}</span>
+        )}
+      </div>
+      <div style={s.shareBarActions}>
+        {!hasSecondary ? (
+          <button style={s.shareBarBtn} onClick={onAddWindow}>
+            <Monitor size={12} /> Add Window
+          </button>
+        ) : (
+          <button style={{ ...s.shareBarBtn, borderColor: '#5b5ef4' }} onClick={onSwitch}>
+            <ArrowLeftRight size={12} /> Switch
+          </button>
+        )}
+        <button style={{ ...s.shareBarBtn, background: '#3d1a1a', borderColor: '#c53030', color: '#e57373' }} onClick={onStop}>
+          <MonitorX size={12} /> Stop Sharing
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
 // STYLES
 // ============================================================
 const s: Record<string, React.CSSProperties> = {
@@ -588,4 +757,21 @@ const s: Record<string, React.CSSProperties> = {
   sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer' },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
+
+  // Screen share menu (popup above Monitor button)
+  shareMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 220, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  shareMenuHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px 8px', borderBottom: '1px solid #2a2a2a', marginBottom: 2 },
+  shareMenuTitle: { color: '#888', fontSize: 10, fontWeight: 300, letterSpacing: 1.5, textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif" },
+  shareMenuClose: { background: 'none', border: 'none', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 },
+  shareMenuRow: { display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: '7px 8px', borderRadius: 8, width: '100%', textAlign: 'left' as const },
+  shareMenuText: { fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+  shareMenuDivider: { height: 1, background: '#242424', margin: '4px 0' },
+  shareMenuOption: { display: 'flex', alignItems: 'center', gap: 9, background: 'none', border: 'none', color: '#ccc', cursor: 'pointer', padding: '10px 10px', borderRadius: 8, fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, width: '100%', textAlign: 'left' as const },
+
+  // Screen share active bar (floats above controls)
+  shareBar: { position: 'absolute' as const, bottom: 88, left: '50%', transform: 'translateX(-50%)', background: 'rgba(10,20,10,0.9)', backdropFilter: 'blur(12px)', border: '1px solid #276127', borderRadius: 30, padding: '7px 16px', display: 'flex', alignItems: 'center', gap: 16, zIndex: 15, whiteSpace: 'nowrap' as const },
+  shareBarLabel: { color: '#48bb78', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", display: 'flex', alignItems: 'center', gap: 6 },
+  shareBarSlot: { background: '#1a3a1a', color: '#48bb78', fontSize: 10, fontWeight: 500, letterSpacing: 1, padding: '2px 7px', borderRadius: 10 },
+  shareBarActions: { display: 'flex', gap: 6 },
+  shareBarBtn: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 20, padding: '4px 12px', color: '#ccc', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
 }

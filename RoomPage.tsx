@@ -1,4 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+
+// Electron context bridge — only present when running inside the desktop app
+declare global {
+  interface Window {
+    electronAPI?: {
+      isElectron: true
+      openFile: (filePath: string) => Promise<string | null>
+      getDesktopSources: (opts?: { types?: string[]; thumbnailSize?: { width: number; height: number } }) => Promise<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>
+    }
+  }
+}
+// Electron adds a .path property to File objects from drag-and-drop / file input
+declare global { interface File { path?: string } }
 import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText } from 'lucide-react'
 import {
   LiveKitRoom,
@@ -603,6 +616,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [fileRecipients, setFileRecipients] = useState<'all' | string[]>('all')
   const [fileUploading, setFileUploading] = useState(false)
   const [presentStep, setPresentStep] = useState<'idle' | 'opening' | 'pick'>('idle')
+  const [desktopSources, setDesktopSources] = useState<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>([])
+  const [showWindowPicker, setShowWindowPicker] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Window-level drag listeners — child <video> elements swallow React div-level events
@@ -866,14 +881,64 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   const openAndShare = useCallback(async () => {
     if (!pendingFile) return
-    setPresentStep('opening')
-    setPendingFile(null)
-    // Small delay so the modal closes before the OS picker appears
-    await new Promise(r => setTimeout(r, 150))
-    setPresentStep('idle')
-    // Open getDisplayMedia window picker — user selects the PowerPoint/Keynote window
-    await startShare()
+
+    if (window.electronAPI) {
+      // ── Electron path: native open + custom window picker ──────────────
+      setPresentStep('opening')
+      const filePath = pendingFile.path // Electron adds .path to File objects
+      if (filePath) {
+        const err = await window.electronAPI.openFile(filePath)
+        if (err) console.warn('[electron] openFile error:', err)
+      }
+      // Give the app ~2 s to open and render its window
+      await new Promise(r => setTimeout(r, 2000))
+      const sources = await window.electronAPI.getDesktopSources()
+      setPendingFile(null)
+      setPresentStep('idle')
+      setDesktopSources(sources)
+      setShowWindowPicker(true)
+    } else {
+      // ── Browser path: OS picker (user picks the window themselves) ──────
+      setPresentStep('opening')
+      setPendingFile(null)
+      await new Promise(r => setTimeout(r, 150))
+      setPresentStep('idle')
+      await startShare()
+    }
   }, [pendingFile, startShare])
+
+  const shareDesktopSource = useCallback(async (sourceId: string) => {
+    setShowWindowPicker(false)
+    try {
+      // Electron-specific getUserMedia with a pre-selected source ID
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          // @ts-ignore — Electron-specific mandatory constraints
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: sourceId,
+            minWidth: 1280,
+            maxWidth: 1920,
+            minHeight: 720,
+            maxHeight: 1080,
+          },
+        },
+      })
+      // Publish to LiveKit by replacing the screen share track
+      await localParticipant.setScreenShareEnabled(true)
+      const pub = localParticipant.getTrackPublication(Track.Source.ScreenShare)
+      if (pub?.track) {
+        const [videoTrack] = stream.getVideoTracks()
+        await (pub.track as any).replaceTrack(videoTrack)
+        setShareLabel(videoTrack.label)
+        setIsSharing(true)
+        videoTrack.addEventListener('ended', () => stopShareRef.current?.())
+      }
+    } catch (e) {
+      console.error('[electron] shareDesktopSource error:', e)
+    }
+  }, [localParticipant])
 
   const handleFileShare = async () => {
     if (!pendingFile) return
@@ -1242,9 +1307,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               /* ── PRESENT mode ── */
               <>
                 <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-                  <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
-                    Open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)} on your Mac, then click <strong style={{ color: '#fff' }}>Share Window</strong> below — the OS window picker will open and you select the {presentationApp(pendingFile.name)} window to share with attendees.
-                  </p>
+                  {window.electronAPI ? (
+                    <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
+                      Click <strong style={{ color: '#f5a623' }}>Open & Share</strong> — BeeHive will open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)}, then show a window thumbnail picker so you can select it to share with attendees.
+                    </p>
+                  ) : (
+                    <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
+                      Open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)}, then click <strong style={{ color: '#fff' }}>Share Window</strong> — the OS window picker will open for you to select it.
+                      <span style={{ display: 'block', marginTop: 8, color: '#555', fontSize: 11 }}>Tip: install the BeeHive desktop app for one-click window sharing.</span>
+                    </p>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button
@@ -1252,7 +1324,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                     disabled={presentStep === 'opening'}
                     onClick={openAndShare}
                   >
-                    Share Window
+                    {presentStep === 'opening' ? 'Opening…' : window.electronAPI ? 'Open & Share' : 'Share Window'}
                   </button>
                   <button
                     style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
@@ -1312,6 +1384,52 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Electron window picker — shown after openFile() so user can click a thumbnail */}
+      {showWindowPicker && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: 680, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 20, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Select Window to Share</span>
+              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => setShowWindowPicker(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <p style={{ color: '#666', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0 }}>
+              Click a window to share it live with all attendees — no OS dialog needed.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, overflowY: 'auto', paddingRight: 4 }}>
+              {desktopSources.map(src => (
+                <button
+                  key={src.id}
+                  onClick={() => shareDesktopSource(src.id)}
+                  style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'border-color 0.15s' }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#f5a623')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
+                >
+                  <img src={src.thumbnail} alt={src.name} style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', display: 'block', background: '#111' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
+                    {src.appIcon && <img src={src.appIcon} alt="" style={{ width: 16, height: 16, borderRadius: 3, flexShrink: 0 }} />}
+                    <span style={{ color: '#ccc', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{src.name}</span>
+                  </div>
+                </button>
+              ))}
+              {desktopSources.length === 0 && (
+                <div style={{ gridColumn: '1/-1', color: '#555', fontSize: 13, textAlign: 'center', padding: 32 }}>No windows found. Make sure your presentation is open.</div>
+              )}
+            </div>
+            <button
+              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 10, color: '#666', padding: '9px 0', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+              onClick={async () => {
+                const sources = await window.electronAPI!.getDesktopSources()
+                setDesktopSources(sources)
+              }}
+            >
+              Refresh
+            </button>
           </div>
         </div>
       )}

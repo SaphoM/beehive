@@ -24,7 +24,7 @@ import {
   TrackToggle,
   useParticipants as useLiveKitParticipants,
 } from '@livekit/components-react'
-import { Track } from 'livekit-client'
+import { Track, LocalVideoTrack } from 'livekit-client'
 import '@livekit/components-styles'
 import {
   useCreateRoom,
@@ -799,14 +799,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [showWindowPicker, setShowWindowPicker] = useState(false)
   const [pendingSource, setPendingSource] = useState<{ id: string; name: string; thumbnail: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Presentation overlay — floats over the screen share / remote presentation
-  const [overlayMode, setOverlayMode] = useState<'visible' | 'minimized' | 'hidden'>('visible')
-  const isPresenting = isSharing || hasRemoteScreenShare
-
-  useEffect(() => {
-    if (!isPresenting) setOverlayMode('visible')
-  }, [isPresenting])
+  const [presentQueue, setPresentQueue] = useState<File[]>([])
+  const queueInputRef = useRef<HTMLInputElement>(null)
 
   // Window-level drag listeners — child <video> elements swallow React div-level events
   useEffect(() => {
@@ -1002,6 +996,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   // Screen share state
   const [shareMenu, setShareMenu] = useState(false)
   const [isSharing, setIsSharing] = useState(false)
+  const [localShareStream, setLocalShareStream] = useState<MediaStream | null>(null)
   const [clearBeforeShare, setClearBeforeShare] = useState(false)
   const [shareLabel, setShareLabel] = useState('')
   const [secondaryStream, setSecondaryStream] = useState<MediaStream | null>(null)
@@ -1009,14 +1004,24 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [roomHidden, setRoomHidden] = useState(false)
   const stopShareRef = useRef<() => void>()
 
+  // Presentation overlay — must be after isSharing and hasRemoteScreenShare are declared
+  const [overlayMode, setOverlayMode] = useState<'visible' | 'minimized' | 'hidden'>('visible')
+  const isPresenting = isSharing || hasRemoteScreenShare
+
+  useEffect(() => {
+    if (!isPresenting) setOverlayMode('visible')
+  }, [isPresenting])
+
   const stopShare = useCallback(async () => {
     try { await localParticipant.setScreenShareEnabled(false) } catch {}
     secondaryStream?.getTracks().forEach(t => t.stop())
+    localShareStream?.getTracks().forEach(t => t.stop())
     setSecondaryStream(null)
+    setLocalShareStream(null)
     setIsSharing(false)
     setShareLabel('')
     setActiveSlot('primary')
-  }, [localParticipant, secondaryStream])
+  }, [localParticipant, secondaryStream, localShareStream])
 
   useEffect(() => { stopShareRef.current = stopShare }, [stopShare])
 
@@ -1029,11 +1034,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       await localParticipant.setScreenShareEnabled(true)
       if (clearBeforeShare) setRoomHidden(false)
       const pub = localParticipant.getTrackPublication(Track.Source.ScreenShare)
-      const label = (pub?.track as any)?.mediaStreamTrack?.label || 'Your screen'
+      const mediaTrack = (pub?.track as any)?.mediaStreamTrack as MediaStreamTrack | undefined
+      const label = mediaTrack?.label || 'Your screen'
+      if (mediaTrack) {
+        const stream = new MediaStream([mediaTrack])
+        setLocalShareStream(stream)
+        mediaTrack.addEventListener('ended', () => stopShareRef.current?.())
+      }
       setShareLabel(label)
       setIsSharing(true)
       setShareMenu(false)
-      ;(pub?.track as any)?.mediaStreamTrack?.addEventListener('ended', () => stopShareRef.current?.())
     } catch {
       if (clearBeforeShare) setRoomHidden(false)
     }
@@ -1099,7 +1109,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const shareDesktopSource = useCallback(async (sourceId: string) => {
     setShowWindowPicker(false)
     try {
-      // Electron-specific getUserMedia with a pre-selected source ID
+      // Electron: capture the specific window without the OS picker
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
@@ -1114,16 +1124,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           },
         },
       })
-      // Publish to LiveKit by replacing the screen share track
-      await localParticipant.setScreenShareEnabled(true)
-      const pub = localParticipant.getTrackPublication(Track.Source.ScreenShare)
-      if (pub?.track) {
-        const [videoTrack] = stream.getVideoTracks()
-        await (pub.track as any).replaceTrack(videoTrack)
-        setShareLabel(videoTrack.label)
-        setIsSharing(true)
-        videoTrack.addEventListener('ended', () => stopShareRef.current?.())
-      }
+      const [rawTrack] = stream.getVideoTracks()
+      if (!rawTrack) return
+
+      // Publish directly — do NOT call setScreenShareEnabled (that opens the OS picker)
+      const livekitTrack = new LocalVideoTrack(rawTrack, undefined, false)
+      await localParticipant.publishTrack(livekitTrack, { source: Track.Source.ScreenShare })
+
+      setLocalShareStream(stream)
+      setShareLabel(rawTrack.label || 'Presentation')
+      setIsSharing(true)
+      rawTrack.addEventListener('ended', () => stopShareRef.current?.())
     } catch (e) {
       console.error('[electron] shareDesktopSource error:', e)
     }
@@ -1158,6 +1169,27 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setPendingSource(null)
     await shareDesktopSource(id)
   }, [pendingSource, shareDesktopSource])
+
+  // Open a queued file in its native app then detect + preview the window
+  const openQueuedFile = useCallback(async (file: File) => {
+    if (!window.electronAPI) return
+    const filePath = window.electronAPI.getFilePath(file)
+    if (filePath) {
+      const err = await window.electronAPI.openFile(filePath)
+      if (err) console.warn('[electron] openFile error:', err)
+    }
+    await new Promise(r => setTimeout(r, 1200))
+    // Reuse sharePresentationWindow flow — it will set pendingSource for preview
+    const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+    const keywords = ['keynote', 'powerpoint', 'impress', 'slides']
+    const match = sources.find(s => keywords.some(kw => s.name.toLowerCase().includes(kw)))
+    if (match) {
+      setPendingSource({ id: match.id, name: match.name, thumbnail: match.thumbnail })
+    } else {
+      setDesktopSources(sources)
+      setShowWindowPicker(true)
+    }
+  }, [])
 
   const handleFileShare = async () => {
     if (!pendingFile) return
@@ -1195,7 +1227,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   return (
     <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>
       {/* Header */}
-      <div style={s.header}>
+      <div style={{ ...s.header, paddingLeft: window.electronAPI ? 88 : 18 }}>
         <div style={s.headerLeft}>
           <span style={s.roomTitle}>{APP_NAME}</span>
           <button style={s.pill} onClick={() => setShowParticipants(v => !v)}>
@@ -1203,6 +1235,15 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           </button>
         </div>
         <div style={s.headerRight}>
+          {isSharing && (
+            <button
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#276127', border: '1px solid #48bb78', borderRadius: 8, color: '#48bb78', padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+              onClick={stopShare}
+              title="Stop sharing"
+            >
+              <MonitorOff size={14} /> Stop Sharing
+            </button>
+          )}
           <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
             <MessageSquare size={18} />
           </button>
@@ -1244,13 +1285,27 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
           ) : isSharing ? (
-            /* Local share — full-view "Broadcasting" panel */
-            <div style={{ width: '100%', height: '100%', background: '#060606', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#0d2d0d', border: '1px solid #2d6a2d', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Monitor size={26} color="#48bb78" />
+            /* Local share — live preview of what attendees see */
+            <div style={{ width: '100%', height: '100%', position: 'relative', background: '#060606' }}>
+              {localShareStream ? (
+                <video
+                  ref={el => { if (el && el.srcObject !== localShareStream) { el.srcObject = localShareStream; el.play().catch(() => {}) } }}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  muted
+                  playsInline
+                  autoPlay
+                />
+              ) : (
+                <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+                  <Monitor size={26} color="#48bb78" />
+                  <p style={{ color: '#48bb78', fontSize: 14, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>Broadcasting…</p>
+                </div>
+              )}
+              {/* Live badge */}
+              <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)', border: '1px solid #48bb78', borderRadius: 20, padding: '4px 10px' }}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48bb78', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                <span style={{ color: '#48bb78', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>LIVE</span>
               </div>
-              <p style={{ color: '#48bb78', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5, margin: 0 }}>Broadcasting to attendees</p>
-              <p style={{ color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>{shareLabel}</p>
             </div>
           ) : (
             <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
@@ -1431,6 +1486,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               )}
             </div>
 
+            {/* Stop Sharing pill — visible on both web and desktop when actively sharing */}
+            {isSharing && (
+              <button
+                style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#c53030', border: 'none', borderRadius: 24, color: '#fff', padding: '0 16px', height: 48, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'Roboto', sans-serif", whiteSpace: 'nowrap' }}
+                onClick={stopShare}
+                title="Stop sharing"
+              >
+                <MonitorOff size={16} /> Stop Sharing
+              </button>
+            )}
+
             {/* Leave */}
             <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={onLeave} title="Leave">
               <PhoneOff size={20} />
@@ -1554,7 +1620,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>
                 {fileMode === 'present' ? 'Present File' : 'Share File'}
               </span>
-              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => { setPendingFile(null); setPresentStep('idle') }}>
+              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => { setPendingFile(null); setPresentStep('idle'); setPresentQueue([]) }}>
                 <X size={18} />
               </button>
             </div>
@@ -1603,28 +1669,71 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                     ) : (
                       /* ── Waiting for user to enter slideshow mode ── */
                       <>
-                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-                          <p style={{ color: '#f5a623', fontSize: 13, fontWeight: 600, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
-                            {presentAppName} is opening…
-                          </p>
-                          <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.7 }}>
-                            Enter <strong style={{ color: '#fff' }}>Presentation / Slideshow mode</strong> in {presentAppName}, then click <strong style={{ color: '#f5a623' }}>Share Presentation</strong> — BeeHive will detect the window and show you a preview before sharing.
-                          </p>
-                        </div>
-                        <div style={{ display: 'flex', gap: 10 }}>
+                        <p style={{ color: '#f5a623', fontSize: 13, fontWeight: 600, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
+                          {presentAppName} is opening…
+                        </p>
+                        <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: '0 0 4px', lineHeight: 1.7 }}>
+                          Enter <strong style={{ color: '#fff' }}>Presentation / Slideshow mode</strong> in {presentAppName}, then click <strong style={{ color: '#f5a623' }}>Share</strong> next to it.
+                        </p>
+
+                        {/* File queue — current + added files */}
+                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+                          {/* Primary file */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '8px 10px' }}>
+                            <span style={{ fontSize: 16, flexShrink: 0 }}>📄</span>
+                            <span style={{ flex: 1, color: '#ddd', fontSize: 12, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{pendingFile.name}</span>
+                            <button
+                              style={{ background: '#f5a623', border: 'none', borderRadius: 7, color: '#000', padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                              onClick={sharePresentationWindow}
+                            >Share</button>
+                          </div>
+
+                          {/* Queued additional files */}
+                          {presentQueue.map((qf, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '8px 10px' }}>
+                              <span style={{ fontSize: 16, flexShrink: 0 }}>📄</span>
+                              <span style={{ flex: 1, color: '#ddd', fontSize: 12, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{qf.name}</span>
+                              <button
+                                style={{ background: '#2a2a2a', border: '1px solid #333', borderRadius: 7, color: '#aaa', padding: '5px 10px', fontSize: 11, cursor: 'pointer', flexShrink: 0, marginRight: 4 }}
+                                onClick={() => openQueuedFile(qf)}
+                              >Open</button>
+                              <button
+                                style={{ background: '#f5a623', border: 'none', borderRadius: 7, color: '#000', padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                                onClick={() => openQueuedFile(qf)}
+                              >Share</button>
+                              <button
+                                style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+                                onClick={() => setPresentQueue(q => q.filter((_, j) => j !== i))}
+                              ><X size={13} /></button>
+                            </div>
+                          ))}
+
+                          {/* Add file button */}
                           <button
-                            style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
-                            onClick={sharePresentationWindow}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'transparent', border: '1px dashed #333', borderRadius: 10, padding: '8px 0', color: '#666', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                            onClick={() => queueInputRef.current?.click()}
                           >
-                            Share Presentation
+                            <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Add another file
                           </button>
-                          <button
-                            style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
-                            onClick={() => { setPendingFile(null); setPresentStep('idle') }}
-                          >
-                            Cancel
-                          </button>
+                          <input
+                            ref={queueInputRef}
+                            type="file"
+                            accept=".key,.keynote,.pptx,.ppt,.odp,.pdf"
+                            style={{ display: 'none' }}
+                            onChange={e => {
+                              const f = e.target.files?.[0]
+                              if (f) setPresentQueue(q => [...q, f])
+                              e.target.value = ''
+                            }}
+                          />
                         </div>
+
+                        <button
+                          style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '10px 0', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                          onClick={() => { setPendingFile(null); setPresentStep('idle'); setPresentQueue([]) }}
+                        >
+                          Cancel
+                        </button>
                       </>
                     )}
                   </div>
@@ -2340,9 +2449,9 @@ const s: Record<string, React.CSSProperties> = {
   subtextBtn: { background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 20, padding: '5px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
   subtextActive: { background: '#2a2a2a', color: '#f5a623', border: '1px solid #f5a623' },
   roomWrapper: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#0a0a0a' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: '#111', borderBottom: '1px solid #222', zIndex: 10 },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#111', borderBottom: '1px solid #222', zIndex: 10, WebkitAppRegion: 'drag' as any, minHeight: 52 },
+  headerLeft: { display: 'flex', alignItems: 'center', gap: 10, WebkitAppRegion: 'no-drag' as any },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' as any },
   roomTitle: { color: '#fff', fontWeight: 300, fontSize: 16, letterSpacing: 3, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
   pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
   pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },

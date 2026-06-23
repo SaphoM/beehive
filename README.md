@@ -54,12 +54,13 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 |---------|------|-------|
 | Mic | `TrackToggle` | LiveKit-managed; mute/unmute |
 | Camera | `TrackToggle` | LiveKit-managed; on/off |
+| Background | `Layers` | Opens background effects menu; amber when active |
+| Auto Cam | `Aperture` | Opens cam mode menu; blue when active |
 | Reactions | `Hand` | Hover to reveal emoji picker; floating animations |
 | Invite Link | `Link` / `Link2Off` | Copies `?room=ROOM_ID`; icon changes on copy |
 | Video Quality | `Film` + HD badge | Low 360p / Medium 720p / High 1080p dropdown |
-| Background | `Layers` | Opens background effects menu; amber when active |
-| Auto Cam | `Aperture` | Opens cam mode menu; blue when active |
-| Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active |
+| Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active; click again to stop |
+| **Stop Sharing** | `MonitorOff` + label | Red pill — appears in controls bar **and** in the header when actively sharing (web + desktop) |
 | Leave | `PhoneOff` | Red; disconnects and returns to lobby |
 
 #### In-meeting Features
@@ -110,6 +111,10 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 ### Desktop App (Electron)
 
 BeeHive ships as a native desktop app wrapping the same React frontend with an embedded Node.js backend.
+
+**Desktop-specific window chrome:**
+- **Draggable title bar** — the header has `-webkit-app-region: drag` so the window can be dragged from anywhere in the header bar; interactive controls within have `no-drag` so they still receive clicks
+- **Traffic light clearance** — when running as Electron the header has 88 px left padding to keep the app name clear of the macOS close/minimise/maximise buttons; web builds use the normal 18 px
 
 **Extra capabilities vs. the web app:**
 

@@ -822,6 +822,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [desktopSources, setDesktopSources] = useState<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>([])
   const [showWindowPicker, setShowWindowPicker] = useState(false)
   const [pendingSource, setPendingSource] = useState<{ id: string; name: string; thumbnail: string } | null>(null)
+  const [detectingWindow, setDetectingWindow] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [presentQueue, setPresentQueue] = useState<File[]>([])
   const queueInputRef = useRef<HTMLInputElement>(null)
@@ -1249,24 +1250,24 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   const sharePresentationWindow = useCallback(async () => {
     if (!window.electronAPI) return
-    setPresentStep('opening')
-    const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
-
-    const keywords = ['keynote', 'powerpoint', 'impress', 'slides']
-    const match = sources.find(s =>
-      keywords.some(kw => s.name.toLowerCase().includes(kw))
-    )
-
-    setPresentStep('waiting')
-    if (match) {
-      // Show preview for confirmation before sharing
-      setPendingSource({ id: match.id, name: match.name, thumbnail: match.thumbnail })
-    } else {
-      // Nothing matched — fall back to picker
-      setDesktopSources(sources)
-      setShowWindowPicker(true)
+    if (!(await checkScreenPermission())) return
+    setDetectingWindow(true)
+    try {
+      const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+      const keywords = ['keynote', 'powerpoint', 'impress', 'slides']
+      const match = sources.find(s =>
+        keywords.some(kw => s.name.toLowerCase().includes(kw))
+      )
+      if (match) {
+        setPendingSource({ id: match.id, name: match.name, thumbnail: match.thumbnail })
+      } else {
+        setDesktopSources(sources)
+        setShowWindowPicker(true)
+      }
+    } finally {
+      setDetectingWindow(false)
     }
-  }, [])
+  }, [checkScreenPermission])
 
   const confirmAndShare = useCallback(async () => {
     if (!pendingSource) return
@@ -1846,9 +1847,10 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                             <span style={{ fontSize: 16, flexShrink: 0 }}>📄</span>
                             <span style={{ flex: 1, color: '#ddd', fontSize: 12, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{pendingFile.name}</span>
                             <button
-                              style={{ background: '#f5a623', border: 'none', borderRadius: 7, color: '#000', padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                              disabled={detectingWindow}
+                              style={{ background: detectingWindow ? '#555' : '#f5a623', border: 'none', borderRadius: 7, color: detectingWindow ? '#999' : '#000', padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: detectingWindow ? 'not-allowed' : 'pointer', flexShrink: 0 }}
                               onClick={sharePresentationWindow}
-                            >Share</button>
+                            >{detectingWindow ? '…' : 'Share'}</button>
                           </div>
 
                           {/* Queued additional files */}

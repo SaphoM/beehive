@@ -2527,7 +2527,7 @@ function ElectronWindowPicker({ sources, onConfirm, onClose, onRefresh }: {
   onClose: () => void
   onRefresh: () => void
 }) {
-  const [selected, setSelected] = React.useState<{ id: string; name: string; thumbnail: string } | null>(null)
+  const [selected, setSelected] = useState<{ id: string; name: string; thumbnail: string } | null>(null)
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>

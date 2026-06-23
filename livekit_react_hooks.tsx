@@ -116,15 +116,21 @@ export function useJoinRoom() {
       return null
     }
 
-    // Track participant (anon-safe: user_id is optional)
+    // Clear any stale active records for this name in this room before inserting fresh one
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('room_participants').upsert({
+    await supabase.from('room_participants')
+      .update({ is_active: false })
+      .eq('room_id', roomId)
+      .eq('display_name', displayName)
+
+    // Insert a fresh active row — always insert so joined_at is current
+    await supabase.from('room_participants').insert({
       room_id: roomId,
       user_id: user?.id ?? null,
       display_name: displayName,
       is_active: true,
       joined_at: new Date().toISOString(),
-    }, { onConflict: user?.id ? 'room_id,user_id' : undefined })
+    })
 
     const res = await fetch('/api/livekit/token', {
       method: 'POST',

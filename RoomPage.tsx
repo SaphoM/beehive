@@ -762,6 +762,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 }) {
   const allTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
   const { localParticipant } = useLocalParticipant()
+  const liveKitParticipants = useLiveKitParticipants()
   // Exclude local screen share from the grid — prevents the infinite mirror echo
   const tracks = allTracks.filter(t =>
     !(t.participant.identity === localParticipant.identity && t.source === Track.Source.ScreenShare)
@@ -1273,7 +1274,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const activeCount = participants.filter(p => p.is_active).length
+  // Use LiveKit's live count for the header — always reflects actual connected state
+  const activeCount = liveKitParticipants.length
 
   return (
     <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>

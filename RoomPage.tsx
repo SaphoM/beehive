@@ -792,9 +792,11 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [fileMode, setFileMode] = useState<'share' | 'present'>('share')
   const [fileRecipients, setFileRecipients] = useState<'all' | string[]>('all')
   const [fileUploading, setFileUploading] = useState(false)
-  const [presentStep, setPresentStep] = useState<'idle' | 'opening' | 'pick'>('idle')
+  const [presentStep, setPresentStep] = useState<'idle' | 'opening' | 'waiting'>('idle')
+  const [presentAppName, setPresentAppName] = useState('')
   const [desktopSources, setDesktopSources] = useState<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>([])
   const [showWindowPicker, setShowWindowPicker] = useState(false)
+  const [pendingSource, setPendingSource] = useState<{ id: string; name: string; thumbnail: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Window-level drag listeners — child <video> elements swallow React div-level events
@@ -1061,22 +1063,19 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     if (!pendingFile) return
 
     if (window.electronAPI) {
-      // ── Electron path: native open + custom window picker ──────────────
+      // Open the file natively; then wait for the user to enter presentation mode
       setPresentStep('opening')
-      const filePath = pendingFile.path // Electron adds .path to File objects
+      setPresentAppName(presentationApp(pendingFile.name))
+      const filePath = pendingFile.path
       if (filePath) {
         const err = await window.electronAPI.openFile(filePath)
         if (err) console.warn('[electron] openFile error:', err)
       }
-      // Give the app ~2 s to open and render its window
-      await new Promise(r => setTimeout(r, 2000))
-      const sources = await window.electronAPI.getDesktopSources()
-      setPendingFile(null)
-      setPresentStep('idle')
-      setDesktopSources(sources)
-      setShowWindowPicker(true)
+      // Brief pause so the OS has time to launch the app before we show the waiting UI
+      await new Promise(r => setTimeout(r, 1200))
+      setPresentStep('waiting') // modal stays open — user sets up slideshow
     } else {
-      // ── Browser path: OS picker (user picks the window themselves) ──────
+      // Browser: trigger OS screen-picker directly
       setPresentStep('opening')
       setPendingFile(null)
       await new Promise(r => setTimeout(r, 150))
@@ -1085,6 +1084,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     }
   }, [pendingFile, startShare])
 
+  // Auto-detect the Keynote / PowerPoint window by name and share it directly
   const shareDesktopSource = useCallback(async (sourceId: string) => {
     setShowWindowPicker(false)
     try {
@@ -1117,6 +1117,36 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       console.error('[electron] shareDesktopSource error:', e)
     }
   }, [localParticipant])
+
+  const sharePresentationWindow = useCallback(async () => {
+    if (!window.electronAPI) return
+    setPresentStep('opening')
+    const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+
+    const keywords = ['keynote', 'powerpoint', 'impress', 'slides']
+    const match = sources.find(s =>
+      keywords.some(kw => s.name.toLowerCase().includes(kw))
+    )
+
+    setPresentStep('waiting')
+    if (match) {
+      // Show preview for confirmation before sharing
+      setPendingSource({ id: match.id, name: match.name, thumbnail: match.thumbnail })
+    } else {
+      // Nothing matched — fall back to picker
+      setDesktopSources(sources)
+      setShowWindowPicker(true)
+    }
+  }, [])
+
+  const confirmAndShare = useCallback(async () => {
+    if (!pendingSource) return
+    setPendingFile(null)
+    setPresentStep('idle')
+    const id = pendingSource.id
+    setPendingSource(null)
+    await shareDesktopSource(id)
+  }, [pendingSource, shareDesktopSource])
 
   const handleFileShare = async () => {
     if (!pendingFile) return
@@ -1484,34 +1514,96 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             {fileMode === 'present' ? (
               /* ── PRESENT mode ── */
               <>
-                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
-                  {window.electronAPI ? (
-                    <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
-                      Click <strong style={{ color: '#f5a623' }}>Open & Share</strong> — BeeHive will open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)}, then show a window thumbnail picker so you can select it to share with attendees.
-                    </p>
-                  ) : (
-                    <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
-                      Open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)}, then click <strong style={{ color: '#fff' }}>Share Window</strong> — the OS window picker will open for you to select it.
-                      <span style={{ display: 'block', marginTop: 8, color: '#555', fontSize: 11 }}>Tip: install the BeeHive desktop app for one-click window sharing.</span>
-                    </p>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button
-                    style={{ flex: 1, background: presentStep === 'opening' ? '#333' : '#f5a623', color: presentStep === 'opening' ? '#666' : '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 600, cursor: presentStep === 'opening' ? 'not-allowed' : 'pointer', fontFamily: "'Roboto', sans-serif" }}
-                    disabled={presentStep === 'opening'}
-                    onClick={openAndShare}
-                  >
-                    {presentStep === 'opening' ? 'Opening…' : window.electronAPI ? 'Open & Share' : 'Share Window'}
-                  </button>
-                  <button
-                    style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
-                    title="Send as download link instead"
-                    onClick={() => setFileMode('share')}
-                  >
-                    Send link
-                  </button>
-                </div>
+                {presentStep === 'waiting' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14 }}>
+                    {pendingSource ? (
+                      /* ── Preview confirmation ── */
+                      <>
+                        <p style={{ color: '#aaa', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, letterSpacing: 0.3 }}>
+                          This is what attendees will see:
+                        </p>
+                        <div style={{ borderRadius: 10, overflow: 'hidden', border: '2px solid #f5a623', lineHeight: 0 }}>
+                          <img src={pendingSource.thumbnail} alt="Preview" style={{ width: '100%', display: 'block' }} />
+                        </div>
+                        <p style={{ color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", margin: 0, textAlign: 'center' as const }}>
+                          {pendingSource.name}
+                        </p>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                            onClick={confirmAndShare}
+                          >
+                            Confirm & Share
+                          </button>
+                          <button
+                            style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                            onClick={() => { setPendingSource(null); setDesktopSources([]); setShowWindowPicker(true) }}
+                          >
+                            Wrong window?
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      /* ── Waiting for user to enter slideshow mode ── */
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+                          <p style={{ color: '#f5a623', fontSize: 13, fontWeight: 600, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
+                            {presentAppName} is opening…
+                          </p>
+                          <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.7 }}>
+                            Enter <strong style={{ color: '#fff' }}>Presentation / Slideshow mode</strong> in {presentAppName}, then click <strong style={{ color: '#f5a623' }}>Share Presentation</strong> — BeeHive will detect the window and show you a preview before sharing.
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <button
+                            style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                            onClick={sharePresentationWindow}
+                          >
+                            Share Presentation
+                          </button>
+                          <button
+                            style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                            onClick={() => { setPendingFile(null); setPresentStep('idle') }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  /* Initial state — offer to open the file */
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+                      {window.electronAPI ? (
+                        <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
+                          Click <strong style={{ color: '#f5a623' }}>Open in {presentationApp(pendingFile.name)}</strong> — BeeHive will launch the file. Enter presentation mode, then click <strong style={{ color: '#fff' }}>Share Presentation</strong> to broadcast it to attendees automatically.
+                        </p>
+                      ) : (
+                        <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
+                          Open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)}, then click <strong style={{ color: '#fff' }}>Share Window</strong> — the OS window picker will open.
+                          <span style={{ display: 'block', marginTop: 8, color: '#555', fontSize: 11 }}>Tip: install the BeeHive desktop app for automatic window detection.</span>
+                        </p>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button
+                        style={{ flex: 1, background: presentStep === 'opening' ? '#333' : '#f5a623', color: presentStep === 'opening' ? '#666' : '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 600, cursor: presentStep === 'opening' ? 'not-allowed' : 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                        disabled={presentStep === 'opening'}
+                        onClick={openAndShare}
+                      >
+                        {presentStep === 'opening' ? 'Opening…' : window.electronAPI ? `Open in ${presentationApp(pendingFile.name)}` : 'Share Window'}
+                      </button>
+                      <button
+                        style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                        title="Send as download link instead"
+                        onClick={() => setFileMode('share')}
+                      >
+                        Send link
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               /* ── SHARE mode ── */

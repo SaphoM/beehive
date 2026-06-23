@@ -1953,66 +1953,18 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
       {/* Electron window picker */}
       {showWindowPicker && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: '90vw', maxWidth: 960, maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-              <div>
-                <span style={{ color: '#fff', fontSize: 15, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Select Window to Share</span>
-                <p style={{ color: '#555', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: '4px 0 0' }}>
-                  Click a window to preview it before sharing with attendees
-                </p>
-              </div>
-              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', flexShrink: 0 }} onClick={() => setShowWindowPicker(false)}>
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Scrollable grid — 2 columns, tall cards */}
-            <div style={{ overflowY: 'auto', flex: 1, paddingRight: 6 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-                {desktopSources.map(src => (
-                  <button
-                    key={src.id}
-                    onClick={() => {
-                      setShowWindowPicker(false)
-                      setPendingSource({ id: src.id, name: src.name, thumbnail: src.thumbnail })
-                    }}
-                    style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 12, overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, transition: 'border-color 0.15s', textAlign: 'left' as const }}
-                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#f5a623')}
-                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
-                  >
-                    <img
-                      src={src.thumbnail}
-                      alt={src.name}
-                      style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block', background: '#111' }}
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
-                      {src.appIcon && <img src={src.appIcon} alt="" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />}
-                      <span style={{ color: '#ccc', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{src.name}</span>
-                    </div>
-                  </button>
-                ))}
-                {desktopSources.length === 0 && (
-                  <div style={{ gridColumn: '1/-1', color: '#555', fontSize: 13, textAlign: 'center' as const, padding: 48 }}>
-                    No windows found. Make sure your presentation is open.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <button
-              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 10, color: '#666', padding: '10px 0', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif", flexShrink: 0 }}
-              onClick={async () => {
-                const sources = await window.electronAPI!.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
-                setDesktopSources(sources)
-              }}
-            >
-              Refresh
-            </button>
-          </div>
-        </div>
+        <ElectronWindowPicker
+          sources={desktopSources}
+          onConfirm={src => {
+            setShowWindowPicker(false)
+            setPendingSource({ id: src.id, name: src.name, thumbnail: src.thumbnail })
+          }}
+          onClose={() => setShowWindowPicker(false)}
+          onRefresh={async () => {
+            const sources = await window.electronAPI!.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+            setDesktopSources(sources)
+          }}
+        />
       )}
     </div>
   )
@@ -2523,6 +2475,97 @@ function ScreenShareMenu({ clearBeforeShare, onToggleClear, onEntireScreen, onSe
 }
 
 // ============================================================
+// ELECTRON WINDOW PICKER
+// ============================================================
+function ElectronWindowPicker({ sources, onConfirm, onClose, onRefresh }: {
+  sources: Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>
+  onConfirm: (src: { id: string; name: string; thumbnail: string }) => void
+  onClose: () => void
+  onRefresh: () => void
+}) {
+  const [selected, setSelected] = React.useState<{ id: string; name: string; thumbnail: string } | null>(null)
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 24, width: '90vw', maxWidth: 960, maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div>
+            <span style={{ color: '#fff', fontSize: 15, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Select Window to Share</span>
+            <p style={{ color: '#555', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: '4px 0 0' }}>
+              Click to select · Double-click or press Confirm to share
+            </p>
+          </div>
+          <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', flexShrink: 0 }} onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Scrollable grid */}
+        <div style={{ overflowY: 'auto', flex: 1, paddingRight: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+            {sources.map(src => {
+              const isSelected = selected?.id === src.id
+              return (
+                <button
+                  key={src.id}
+                  onClick={() => setSelected({ id: src.id, name: src.name, thumbnail: src.thumbnail })}
+                  onDoubleClick={() => onConfirm({ id: src.id, name: src.name, thumbnail: src.thumbnail })}
+                  style={{
+                    background: isSelected ? '#1e2a1e' : '#1a1a1a',
+                    border: `2px solid ${isSelected ? '#48bb78' : '#2a2a2a'}`,
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column' as const,
+                    textAlign: 'left' as const,
+                    transition: 'border-color 0.1s',
+                    outline: 'none',
+                  }}
+                >
+                  <img
+                    src={src.thumbnail}
+                    alt={src.name}
+                    style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block', background: '#111' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+                    {src.appIcon && <img src={src.appIcon} alt="" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />}
+                    <span style={{ color: isSelected ? '#48bb78' : '#ccc', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{src.name}</span>
+                    {isSelected && <span style={{ marginLeft: 'auto', color: '#48bb78', fontSize: 10, flexShrink: 0 }}>Selected</span>}
+                  </div>
+                </button>
+              )
+            })}
+            {sources.length === 0 && (
+              <div style={{ gridColumn: '1/-1', color: '#555', fontSize: 13, textAlign: 'center' as const, padding: 48 }}>
+                No windows found. Make sure your presentation is open.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+          <button
+            style={{ flex: 1, background: 'none', border: '1px solid #2a2a2a', borderRadius: 10, color: '#666', padding: '10px 0', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+            onClick={onRefresh}
+          >
+            Refresh
+          </button>
+          <button
+            disabled={!selected}
+            style={{ flex: 2, background: selected ? '#276127' : '#1a1a1a', border: `1px solid ${selected ? '#48bb78' : '#2a2a2a'}`, borderRadius: 10, color: selected ? '#48bb78' : '#444', padding: '10px 0', fontSize: 13, fontWeight: 400, cursor: selected ? 'pointer' : 'default', fontFamily: "'Roboto', sans-serif", transition: 'all 0.15s' }}
+            onClick={() => selected && onConfirm(selected)}
+          >
+            {selected ? `Share "${selected.name.slice(0, 28)}${selected.name.length > 28 ? '…' : ''}"` : 'Select a window above'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // SCREEN SHARE ACTIVE BAR
 // ============================================================
 function ScreenShareBar({ label, hasSecondary, activeSlot, onAddWindow, onSwitch, onStop }: {
@@ -2611,7 +2654,7 @@ const s: Record<string, React.CSSProperties> = {
   roomBody: { display: 'flex', flex: 1, overflow: 'hidden' },
   reactionFloat: { position: 'absolute', bottom: 100, right: 20, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', zIndex: 20 },
   floatingEmoji: { fontSize: 36, animation: 'floatUp 2.5s ease-out forwards' },
-  controls: { position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 10, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', borderRadius: 40, padding: '10px 20px', zIndex: 10 },
+  controls: { position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, flexWrap: 'wrap' as const, justifyContent: 'center', maxWidth: '96vw', background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', borderRadius: 40, padding: '10px 16px', zIndex: 10 },
   controlBtn: { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 48, height: 48, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', gap: 2 },
   hdBadge: { position: 'absolute', bottom: 6, right: 6, fontSize: 8, fontWeight: 700, color: '#f5a623', lineHeight: 1 },
   reactionBar: { position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 6, background: '#1a1a1a', border: '1px solid #333', borderRadius: 30, padding: '8px 12px' },

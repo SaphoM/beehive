@@ -78,9 +78,15 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
   - **Auto Centre** — follows the active speaker (1.5 s debounce); crosshair name tag
   - **2 in 1** — local (You) left, active speaker right; "Waiting…" when no remote speaker
 - 🖥️ Screen sharing & presentation mode:
-  - Pre-share menu: **Clear screen** toggle, **Entire Screen**, **Select Window**
+  - Pre-share menu: **Entire Screen** / **Select Window** (web also shows **Clear screen before sharing** toggle)
+  - **Web — Entire Screen**: auto-enables clear-screen mode to avoid BeeHive echoing itself before capture; clears the flag after
+  - **Web — Select Window**: standard browser screen-share picker
+  - **Electron — Entire Screen**: uses `desktopCapturer` with `types: ['screen']` to grab the primary display directly — no OS dialog
+  - **Electron — Select Window**: opens the `ElectronWindowPicker` modal; **single click** locks the selection (green border); **double-click** or the **Confirm** button shares immediately — moving the mouse does not deselect
+  - Share menu: `position: fixed; bottom: 84px` centered with `maxHeight: calc(100vh - 120px)` — never overflows on 13" displays
+  - Controls bar: `maxWidth: 96vw; flexWrap: wrap` — all buttons remain accessible on narrow screens (13" MacBook)
   - Active share bar: source label, **Add Window**, **Switch** (live `replaceTrack`), **Stop Sharing**
-  - **Local share (presenter)**: main area shows a full-screen "Broadcasting to attendees" panel — no mirror echo
+  - **Local share (presenter)**: main area shows live `<video>` preview of the shared stream with a pulsing **LIVE** badge — no mirror echo; fallback "Broadcasting…" shown while stream initialises
   - **Remote share (viewer)**: takes full main area; cameras move to Participants window (auto-opens)
   - **Presentation overlay** — floats over the presentation on both web and desktop:
     - Controls bar, speaker video window, share bar, and Auto Cam all remain visible on top of the presentation
@@ -98,8 +104,9 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
   - Targeted files render as download cards only for named recipients; "To: …" label on targeted shares
 - 💬 Real-time chat sidebar (Supabase Realtime)
 - 📴 Leave call — marks participant inactive in Supabase and broadcasts a **"[Name] left"** system event to the chat for all remaining attendees
-- 👋 **Join / leave notifications** — horizontal-rule system messages in the chat sidebar: green **"[Name] joined"** on entry, grey **"[Name] left"** on exit; automatically written to `chat_messages` with `sender_name: '__SYSTEM__'`
+- 👋 **Join / leave notifications** — horizontal-rule system messages in the chat sidebar: green **"[Name] joined"** on entry, grey **"[Name] left"** on exit; written to `chat_messages` with `display_name: '__SYSTEM__'`
 - ⏱️ **Auto-end when alone** — if you are the only active participant for 10 minutes, a countdown warning banner appears at the top of the screen (`You're alone — call ends in Xs`); clicking **Stay** resets the timer; the call ends automatically when the countdown reaches zero
+- 🔴 **Meeting ended state** — when the last participant leaves, `rooms.ended_at` is set and `rooms.is_active` is set to false; any subsequent visitor opening the invite link sees a "Meeting Ended" summary card (with end time) and a "Start a new meeting" button — the name input and join button are hidden, preventing re-join
 
 ### Participants Window
 - Click the participant count pill in the header to open
@@ -115,8 +122,9 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 BeeHive ships as a native desktop app wrapping the same React frontend with an embedded Node.js backend.
 
 **Desktop-specific window chrome:**
-- **Draggable title bar** — the header has `-webkit-app-region: drag` so the window can be dragged from anywhere in the header bar; interactive controls within have `no-drag` so they still receive clicks
-- **Traffic light clearance** — when running as Electron the header has 88 px left padding to keep the app name clear of the macOS close/minimise/maximise buttons; web builds use the normal 18 px
+- **Draggable header + lobby** — both the in-meeting header and the lobby window have `-webkit-app-region: drag`; interactive children have `no-drag`
+- **Traffic light clearance** — Electron builds use 88 px left padding in the header to clear macOS traffic lights; web builds use 18 px
+- **Stop Sharing shortcut** — a green "Stop Sharing" button appears in the header when screen sharing is active, in addition to the red pill in the controls bar
 
 **Extra capabilities vs. the web app:**
 
@@ -404,7 +412,10 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled, renameable, group mute
 - [ ] Breakaway discussions — timed sub-rooms with auto-recall
-- [x] Screen sharing (Entire Screen / Select Window / Switch source / Clear screen mode)
+- [x] Screen sharing (Entire Screen / Select Window / Switch source / Clear screen mode / echo-free web share / Electron no-dialog capture)
+- [x] Meeting ended state — last-to-leave marks room ended; invite link shows summary card, blocks re-join
+- [x] Join / leave notifications in chat
+- [x] Auto-end when alone for 10 minutes (countdown banner with Stay option)
 - [x] Speaking indicator + floating speaker video window (Minimise / Close)
 - [ ] Recording playback UI
 - [ ] DUT organisation SSO

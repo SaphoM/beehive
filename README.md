@@ -76,11 +76,16 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 - 📸 Auto Cam — floating window (bottom-right), two modes:
   - **Auto Centre** — follows the active speaker (1.5 s debounce); crosshair name tag
   - **2 in 1** — local (You) left, active speaker right; "Waiting…" when no remote speaker
-- 🖥️ Screen sharing:
+- 🖥️ Screen sharing & presentation mode:
   - Pre-share menu: **Clear screen** toggle, **Entire Screen**, **Select Window**
   - Active share bar: source label, **Add Window**, **Switch** (live `replaceTrack`), **Stop Sharing**
-  - Local share excluded from local `GridLayout` (no mirror echo)
-  - Remote share takes over the full main area; cameras move to Participants window (auto-opens)
+  - **Local share (presenter)**: main area shows a full-screen "Broadcasting to attendees" panel — no mirror echo
+  - **Remote share (viewer)**: takes full main area; cameras move to Participants window (auto-opens)
+  - **Presentation overlay** — floats over the presentation on both web and desktop:
+    - Controls bar, speaker video window, share bar, and Auto Cam all remain visible on top of the presentation
+    - **Minimise (—)** button on the controls bar: collapses to a compact pill (mic · cam · stop share · expand · hide · leave); speaker window hides
+    - **Hide (👁)** button: removes all controls from the screen; an amber **"Show controls"** pill appears at the bottom centre to restore
+    - Controls auto-restore to full when sharing ends
 - 🔊 Speaking indicator (bottom-left):
   - Animated 5-bar equaliser chip with active speaker's first name
   - Floating speaker video window; **Minimise (—)** / **Close (✕)**; reappears for new speaker

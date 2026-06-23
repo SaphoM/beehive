@@ -16,7 +16,9 @@
   <true/>
   <key>com.apple.security.device.microphone</key>
   <true/>
-  <!-- Screen capture via desktopCapturer -->
+  <!-- Screen capture via desktopCapturer / getUserMedia chromeMediaSource -->
+  <key>com.apple.security.device.screen-capture</key>
+  <true/>
   <key>com.apple.security.cs.allow-dyld-environment-variables</key>
   <true/>
 </dict>

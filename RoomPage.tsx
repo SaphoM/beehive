@@ -8,6 +8,7 @@ declare global {
       getFilePath: (file: File) => string
       openFile: (filePath: string) => Promise<string | null>
       getDesktopSources: (opts?: { types?: string[]; thumbnailSize?: { width: number; height: number } }) => Promise<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>
+      getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
     }
   }
 }
@@ -1201,10 +1202,20 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   }, [pendingFile, startShare])
 
   // Auto-detect the Keynote / PowerPoint window by name and share it directly
+  const checkScreenPermission = useCallback(async (): Promise<boolean> => {
+    if (!window.electronAPI) return true
+    const status = await window.electronAPI.getScreenAccessStatus()
+    if (status !== 'granted') {
+      alert('Screen Recording permission is required.\n\nGo to System Settings → Privacy & Security → Screen Recording and enable BeeHive, then relaunch the app.')
+      return false
+    }
+    return true
+  }, [])
+
   const shareDesktopSource = useCallback(async (sourceId: string) => {
     setShowWindowPicker(false)
+    if (!(await checkScreenPermission())) return
     try {
-      // Electron: capture the specific window without the OS picker
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
@@ -1222,7 +1233,6 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       const [rawTrack] = stream.getVideoTracks()
       if (!rawTrack) return
 
-      // Publish directly — do NOT call setScreenShareEnabled (that opens the OS picker)
       const livekitTrack = new LocalVideoTrack(rawTrack, undefined, false)
       await localParticipant.publishTrack(livekitTrack, { source: Track.Source.ScreenShare })
 
@@ -1232,8 +1242,9 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       rawTrack.addEventListener('ended', () => stopShareRef.current?.())
     } catch (e) {
       console.error('[electron] shareDesktopSource error:', e)
+      alert('Could not capture screen. Make sure BeeHive has Screen Recording permission in System Settings → Privacy & Security → Screen Recording.')
     }
-  }, [localParticipant])
+  }, [localParticipant, checkScreenPermission])
 
   const sharePresentationWindow = useCallback(async () => {
     if (!window.electronAPI) return
@@ -1598,6 +1609,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                   onEntireScreen={async () => {
                     setShareMenu(false)
                     if (window.electronAPI) {
+                      if (!(await checkScreenPermission())) return
                       const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
                       if (sources.length > 0) await shareDesktopSource(sources[0].id)
                     } else {
@@ -1609,7 +1621,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                   onSelectWindow={async () => {
                     setShareMenu(false)
                     if (window.electronAPI) {
-                      // Electron: show native window picker
+                      if (!(await checkScreenPermission())) return
                       const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
                       setDesktopSources(sources)
                       setShowWindowPicker(true)

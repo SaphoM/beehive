@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu, systemPreferences } = require('electron')
 const path = require('path')
 const { existsSync, readFileSync } = require('fs')
 const { spawn } = require('child_process')
@@ -68,6 +68,9 @@ async function createWindow() {
     },
   })
 
+  // Prevent drag-and-drop from navigating the window to the dropped file URL
+  mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
+
   if (isDev) {
     // Vite dev server — give it a moment to be ready
     await new Promise(r => setTimeout(r, 1500))
@@ -84,6 +87,14 @@ async function createWindow() {
 ipcMain.handle('open-file', async (_, filePath) => {
   const err = await shell.openPath(filePath)
   return err || null // null = success
+})
+
+// ---------------------------------------------------------------------------
+// IPC: check / request macOS Screen Recording permission
+// ---------------------------------------------------------------------------
+ipcMain.handle('get-screen-access-status', () => {
+  if (process.platform !== 'darwin') return 'granted'
+  return systemPreferences.getMediaAccessStatus('screen')
 })
 
 // ---------------------------------------------------------------------------

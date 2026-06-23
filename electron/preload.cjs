@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Get all visible windows + screens as source objects with base64 thumbnails
   getDesktopSources: (opts) => ipcRenderer.invoke('get-desktop-sources', opts),
+
+  // Check macOS Screen Recording permission ('granted' | 'denied' | 'restricted' | 'not-determined')
+  getScreenAccessStatus: () => ipcRenderer.invoke('get-screen-access-status'),
 })

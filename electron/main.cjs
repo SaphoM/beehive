@@ -160,6 +160,13 @@ app.on('second-instance', () => {
 // App lifecycle (only runs for the one allowed instance)
 // ---------------------------------------------------------------------------
 app.whenReady().then(async () => {
+  // Request camera + mic permission on macOS so the OS prompt fires before the user
+  // enters a meeting (avoids silent black video / muted mic on first use)
+  if (process.platform === 'darwin') {
+    await systemPreferences.askForMediaAccess('camera')
+    await systemPreferences.askForMediaAccess('microphone')
+  }
+
   startBackend()
   await new Promise(r => setTimeout(r, 800)) // let backend bind to :3001
   await createWindow()

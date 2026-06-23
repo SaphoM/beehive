@@ -113,22 +113,26 @@ ipcMain.handle('get-desktop-sources', async (_, opts = {}) => {
 })
 
 // ---------------------------------------------------------------------------
-// Single-instance lock — second launch focuses the existing window instead
+// Single-instance lock — must be checked before ANY app lifecycle code
+// If we don't get the lock, quit immediately and do nothing else
 // ---------------------------------------------------------------------------
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
+if (!app.requestSingleInstanceLock()) {
   app.quit()
-} else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
-  })
+  process.exit(0)
 }
 
+// Only the first instance reaches here
+app.on('second-instance', () => {
+  // A second launch was attempted — bring our window to focus
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  }
+})
+
 // ---------------------------------------------------------------------------
-// App lifecycle
+// App lifecycle (only runs for the one allowed instance)
 // ---------------------------------------------------------------------------
 app.whenReady().then(async () => {
   startBackend()

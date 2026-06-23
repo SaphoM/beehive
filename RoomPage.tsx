@@ -2440,7 +2440,7 @@ function ScreenShareMenu({ clearBeforeShare, onToggleClear, onEntireScreen, onSe
   onClose: () => void
 }) {
   return (
-    <div style={{ ...s.shareMenu, bottom: 'auto', top: 'auto', transform: 'none', position: 'fixed' as const, left: '50%', marginLeft: '-110px', bottom: 84, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' as const }}>
+    <div style={{ ...s.shareMenu, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' as const }}>
       <div style={s.shareMenuHeader}>
         <span style={s.shareMenuTitle}>Share Screen</span>
         <button style={s.shareMenuClose} onClick={onClose}><X size={14} /></button>

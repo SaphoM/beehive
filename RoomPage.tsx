@@ -1578,8 +1578,9 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                       const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
                       if (sources.length > 0) await shareDesktopSource(sources[0].id)
                     } else {
-                      // Pass forceHide=true so BeeHive hides before capture regardless of the toggle state
-                      await startShare(true)
+                      // Web: open browser native picker directly — no hiding (hiding blanks the page and
+                      // doesn't prevent echo anyway since BeeHive reappears once sharing starts)
+                      await startShare()
                     }
                   }}
                   onSelectWindow={async () => {

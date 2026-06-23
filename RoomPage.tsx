@@ -634,7 +634,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       setDragOver(false)
       const file = e.dataTransfer?.files[0]
       if (!file) return
-      if (isPresentationFile(file.name)) {
+      // Present mode only available in the Electron desktop app
+      if (window.electronAPI && isPresentationFile(file.name)) {
         setPendingFile(file)
         setFileMode('present')
         setPresentStep('idle')
@@ -1256,7 +1257,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               onChange={e => {
                 const file = e.target.files?.[0]
                 if (!file) return
-                if (isPresentationFile(file.name)) {
+                if (window.electronAPI && isPresentationFile(file.name)) {
                   setPendingFile(file); setFileMode('present'); setPresentStep('idle')
                 } else {
                   setPendingFile(file); setFileMode('share'); setFileRecipients('all')

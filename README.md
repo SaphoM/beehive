@@ -83,6 +83,13 @@ Built for scale: designed around the DUT (Durban University of Technology) use c
   - **Minimise (—)** collapses the video; a restore button appears in the chip
   - **Close (✕)** dismisses the window for that speaker identity; reappears automatically when a different speaker becomes active
   - `+N` badge on the chip when multiple participants speak simultaneously
+- 📁 **File sharing** — drag any file onto the main video area to share it with attendees:
+  - Amber dashed drop zone appears on drag-over; drop opens the **Share File** modal
+  - Paperclip button in the chat input bar opens a file picker as an alternative to drag-and-drop
+  - **Send to:** All participants (default), or select individual attendees by name via checkboxes
+  - File uploads to Supabase Storage (`shared-files` bucket, 50 MB limit); public URL broadcast via Supabase Realtime chat
+  - Targeted files render as download cards only for named recipients; a "To: …" label appears on targeted shares
+  - Download card: file type emoji, filename, size, download button
 - 💬 Real-time chat sidebar powered by Supabase Realtime
 - 📴 Leave call (`PhoneOff` icon, red)
 
@@ -137,6 +144,8 @@ FATHOM_API_KEY=your_fathom_api_key   # from fathom.video/customize#api-access-he
 | `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
 | `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
 | `GET` | `/health` | Health check — `{ status: 'ok' }` |
+
+> File uploads go directly from the browser to **Supabase Storage** (`shared-files` bucket) using the anon key — no backend route needed. The public download URL is shared via the existing Supabase Realtime chat channel.
 
 ---
 
@@ -382,4 +391,5 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Mobile (React Native + LiveKit mobile SDK)
 - [x] Fathom integration — meeting summaries, action items, transcript viewer
 - [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation)
+- [x] File sharing — drag-to-drop or paperclip button; send to all or select attendees; Supabase Storage
 - [ ] Self-hosted LiveKit option (Africa-first / data sovereignty)

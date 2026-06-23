@@ -157,9 +157,18 @@ npm run electron:dev
 
 **Building a distributable:**
 ```bash
-npm run electron:build:mac   # → release/*.dmg
+npm run electron:build:mac   # → release/BeeHive-1.0.0-arm64.dmg  (Apple Silicon)
 npm run electron:build:win   # → release/*.exe (NSIS installer)
 ```
+
+**Installing the built app (macOS):**
+1. Open `release/BeeHive-1.0.0-arm64.dmg`
+2. Drag BeeHive to Applications
+3. First launch: right-click → Open (bypasses Gatekeeper — app is unsigned)
+4. If multiple instances appear in the dock, quit all and relaunch once; the single-instance lock prevents duplicates from v1.0.0 onward
+
+**API routing in packaged builds:**
+In dev the Vite server proxies `/api/*` → `:3001`. In the packaged `.app` there is no Vite proxy — all `fetch` calls use `http://localhost:3001` directly (detected via `window.electronAPI`). The embedded backend still binds to `:3001` on launch.
 
 ---
 

@@ -6,6 +6,11 @@ export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY
 )
 
+// In packaged Electron there is no Vite proxy — backend runs on :3001 directly
+const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI
+  ? 'http://localhost:3001'
+  : ''
+
 // ============================================================
 // TYPES
 // ============================================================
@@ -132,7 +137,7 @@ export function useJoinRoom() {
       joined_at: new Date().toISOString(),
     })
 
-    const res = await fetch('/api/livekit/token', {
+    const res = await fetch(`${API_BASE}/api/livekit/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomName: room.livekit_room_name, displayName }),
@@ -289,7 +294,7 @@ export function useFathomMeetings(limit = 8) {
     try {
       const params = new URLSearchParams({ limit: String(limit) })
       if (cursor) params.set('cursor', cursor)
-      const resp = await fetch(`/api/fathom/meetings?${params}`)
+      const resp = await fetch(`${API_BASE}/api/fathom/meetings?${params}`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       if (data.error) throw new Error(data.error)
@@ -316,7 +321,7 @@ export function useFathomTranscript(recordingId: string | null) {
     if (!recordingId) return
     setLoading(true)
     try {
-      const resp = await fetch(`/api/fathom/recordings/${recordingId}/transcript`)
+      const resp = await fetch(`${API_BASE}/api/fathom/recordings/${recordingId}/transcript`)
       if (resp.ok) {
         const data = await resp.json()
         setTranscript(Array.isArray(data) ? data : (data.transcript ?? null))

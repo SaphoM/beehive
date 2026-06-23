@@ -29,6 +29,22 @@ import {
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
 const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
 
+const PRESENTATION_EXTS = ['.key', '.keynote', '.pptx', '.ppt', '.odp', '.pdf']
+const PRESENTATION_APP: Record<string, string> = {
+  '.key': 'Keynote', '.keynote': 'Keynote',
+  '.pptx': 'PowerPoint', '.ppt': 'PowerPoint',
+  '.odp': 'Impress',
+  '.pdf': 'Preview',
+}
+function isPresentationFile(name: string) {
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
+  return PRESENTATION_EXTS.includes(ext)
+}
+function presentationApp(name: string) {
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
+  return PRESENTATION_APP[ext] ?? 'the app'
+}
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -583,11 +599,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   // File share state
   const [dragOver, setDragOver] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [fileMode, setFileMode] = useState<'share' | 'present'>('share')
   const [fileRecipients, setFileRecipients] = useState<'all' | string[]>('all')
   const [fileUploading, setFileUploading] = useState(false)
+  const [presentStep, setPresentStep] = useState<'idle' | 'opening' | 'pick'>('idle')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Window-level drag listeners — child <video> elements swallow React drag events
+  // Window-level drag listeners — child <video> elements swallow React div-level events
   useEffect(() => {
     const onDragEnter = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes('Files')) setDragOver(true)
@@ -600,7 +618,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       e.preventDefault()
       setDragOver(false)
       const file = e.dataTransfer?.files[0]
-      if (file) { setPendingFile(file); setFileRecipients('all') }
+      if (!file) return
+      if (isPresentationFile(file.name)) {
+        setPendingFile(file)
+        setFileMode('present')
+        setPresentStep('idle')
+      } else {
+        setPendingFile(file)
+        setFileMode('share')
+        setFileRecipients('all')
+      }
     }
     window.addEventListener('dragenter', onDragEnter)
     window.addEventListener('dragover', onDragOver)
@@ -837,6 +864,26 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setChatInput('')
   }
 
+  const openAndShare = useCallback(async () => {
+    if (!pendingFile) return
+    // Open the file in its native app via a temporary object URL download
+    setPresentStep('opening')
+    const url = URL.createObjectURL(pendingFile)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = pendingFile.name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // Give the OS ~2 s to launch the app, then pop the window picker
+    await new Promise(r => setTimeout(r, 2000))
+    URL.revokeObjectURL(url)
+    setPresentStep('pick')
+    setPendingFile(null)
+    // Trigger the existing startShare flow — opens getDisplayMedia window picker
+    await startShare()
+  }, [pendingFile, startShare])
+
   const handleFileShare = async () => {
     if (!pendingFile) return
     setFileUploading(true)
@@ -905,11 +952,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           />
         )}
 
-        {/* Full-screen drop overlay — fixed so it sits above LiveKit video tiles */}
+        {/* Full-screen drop overlay — fixed so it covers LiveKit video tiles */}
         {dragOver && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(245,166,35,0.12)', border: '3px dashed #f5a623', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none' }}>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(245,166,35,0.1)', border: '3px dashed #f5a623', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none' }}>
             <Paperclip size={48} color="#f5a623" />
             <span style={{ color: '#f5a623', fontSize: 18, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>Drop to share with attendees</span>
+            <span style={{ color: '#f5a623', fontSize: 13, fontWeight: 300, fontFamily: "'Roboto', sans-serif", opacity: 0.7 }}>Presentation files open automatically for window sharing</span>
           </div>
         )}
 
@@ -1151,7 +1199,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               style={{ display: 'none' }}
               onChange={e => {
                 const file = e.target.files?.[0]
-                if (file) { setPendingFile(file); setFileRecipients('all') }
+                if (!file) return
+                if (isPresentationFile(file.name)) {
+                  setPendingFile(file); setFileMode('present'); setPresentStep('idle')
+                } else {
+                  setPendingFile(file); setFileMode('share'); setFileRecipients('all')
+                }
                 e.target.value = ''
               }}
             />
@@ -1170,74 +1223,109 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         )}
       </div>
 
-      {/* File Share Modal */}
+      {/* File Modal — present mode or share mode */}
       {pendingFile && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: 380, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: 400, display: 'flex', flexDirection: 'column', gap: 20 }}>
+
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Share File</span>
-              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => setPendingFile(null)}>
+              <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>
+                {fileMode === 'present' ? 'Present File' : 'Share File'}
+              </span>
+              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => { setPendingFile(null); setPresentStep('idle') }}>
                 <X size={18} />
               </button>
             </div>
 
-            {/* File preview */}
+            {/* File preview card */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '12px 14px' }}>
               <span style={{ fontSize: 28 }}>{fileIcon(pendingFile.type)}</span>
               <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div style={{ color: '#ddd', fontSize: 13, fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pendingFile.name}</div>
+                <div style={{ color: '#ddd', fontSize: 13, fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{pendingFile.name}</div>
                 <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>{formatBytes(pendingFile.size)}</div>
               </div>
             </div>
 
-            {/* Recipient selection */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <span style={{ color: '#888', fontSize: 11, fontWeight: 300, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" }}>Send to</span>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="radio" checked={fileRecipients === 'all'} onChange={() => setFileRecipients('all')} style={{ accentColor: '#f5a623' }} />
-                <span style={{ color: '#ddd', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>All participants</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="radio" checked={fileRecipients !== 'all'} onChange={() => setFileRecipients([])} style={{ accentColor: '#f5a623' }} />
-                <span style={{ color: '#ddd', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>Select participants</span>
-              </label>
-              {fileRecipients !== 'all' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 26, maxHeight: 160, overflowY: 'auto' }}>
-                  {participants.filter(p => p.is_active && p.display_name !== displayName).map(p => {
-                    const selected = (fileRecipients as string[]).includes(p.display_name)
-                    return (
-                      <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          style={{ accentColor: '#5b5ef4' }}
-                          onChange={() => {
-                            setFileRecipients(prev => {
-                              if (prev === 'all') return [p.display_name]
-                              return selected ? (prev as string[]).filter(n => n !== p.display_name) : [...(prev as string[]), p.display_name]
-                            })
-                          }}
-                        />
-                        <span style={{ color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>{p.display_name}</span>
-                      </label>
-                    )
-                  })}
-                  {participants.filter(p => p.is_active && p.display_name !== displayName).length === 0 && (
-                    <span style={{ color: '#555', fontSize: 12 }}>No other participants</span>
+            {fileMode === 'present' ? (
+              /* ── PRESENT mode ── */
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+                  <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
+                    BeeHive will open this file in <strong style={{ color: '#fff' }}>{presentationApp(pendingFile.name)}</strong>, then immediately show the window picker so you can select that window to share with everyone.
+                  </p>
+                  {presentStep === 'opening' && (
+                    <p style={{ color: '#f5a623', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
+                      Opening {presentationApp(pendingFile.name)}… window picker launching in a moment
+                    </p>
                   )}
                 </div>
-              )}
-            </div>
-
-            {/* Send button */}
-            <button
-              style={{ background: fileUploading ? '#333' : '#f5a623', color: fileUploading ? '#666' : '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 600, cursor: fileUploading ? 'not-allowed' : 'pointer', fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}
-              disabled={fileUploading || (fileRecipients !== 'all' && (fileRecipients as string[]).length === 0)}
-              onClick={handleFileShare}
-            >
-              {fileUploading ? 'Uploading…' : 'Send File'}
-            </button>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    style={{ flex: 1, background: presentStep === 'opening' ? '#333' : '#f5a623', color: presentStep === 'opening' ? '#666' : '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 600, cursor: presentStep === 'opening' ? 'not-allowed' : 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                    disabled={presentStep === 'opening'}
+                    onClick={openAndShare}
+                  >
+                    {presentStep === 'opening' ? 'Opening…' : 'Open & Share Window'}
+                  </button>
+                  <button
+                    style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+                    title="Send as download link instead"
+                    onClick={() => setFileMode('share')}
+                  >
+                    Send link
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* ── SHARE mode ── */
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+                  <span style={{ color: '#888', fontSize: 11, fontWeight: 300, letterSpacing: 1, textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif" }}>Send to</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                    <input type="radio" checked={fileRecipients === 'all'} onChange={() => setFileRecipients('all')} style={{ accentColor: '#f5a623' }} />
+                    <span style={{ color: '#ddd', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>All participants</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                    <input type="radio" checked={fileRecipients !== 'all'} onChange={() => setFileRecipients([])} style={{ accentColor: '#f5a623' }} />
+                    <span style={{ color: '#ddd', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>Select participants</span>
+                  </label>
+                  {fileRecipients !== 'all' && (
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6, marginLeft: 26, maxHeight: 160, overflowY: 'auto' as const }}>
+                      {participants.filter(p => p.is_active && p.display_name !== displayName).map(p => {
+                        const selected = (fileRecipients as string[]).includes(p.display_name)
+                        return (
+                          <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              style={{ accentColor: '#5b5ef4' }}
+                              onChange={() => {
+                                setFileRecipients(prev => {
+                                  if (prev === 'all') return [p.display_name]
+                                  return selected ? (prev as string[]).filter(n => n !== p.display_name) : [...(prev as string[]), p.display_name]
+                                })
+                              }}
+                            />
+                            <span style={{ color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>{p.display_name}</span>
+                          </label>
+                        )
+                      })}
+                      {participants.filter(p => p.is_active && p.display_name !== displayName).length === 0 && (
+                        <span style={{ color: '#555', fontSize: 12 }}>No other participants</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  style={{ background: fileUploading ? '#333' : '#f5a623', color: fileUploading ? '#666' : '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 600, cursor: fileUploading ? 'not-allowed' : 'pointer', fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}
+                  disabled={fileUploading || (fileRecipients !== 'all' && (fileRecipients as string[]).length === 0)}
+                  onClick={handleFileShare}
+                >
+                  {fileUploading ? 'Uploading…' : 'Send File'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

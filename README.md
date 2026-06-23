@@ -170,6 +170,9 @@ npm run electron:build:win   # → release/*.exe (NSIS installer)
 **API routing in packaged builds:**
 In dev the Vite server proxies `/api/*` → `:3001`. In the packaged `.app` there is no Vite proxy — all `fetch` calls use `http://localhost:3001` directly (detected via `window.electronAPI`). The embedded backend still binds to `:3001` on launch.
 
+**Invite links in the desktop app:**
+The Electron app loads from `file://` so `window.location.href` would produce broken links like `file:///?room=...`. All invite link generation uses `VITE_WEB_BASE_URL` (set in `.env`) so copied links always point to the production web app (`https://beehive-fu8w.onrender.com?room=ROOM_ID`). Guests open the link in any browser — no desktop app required.
+
 ---
 
 ### Fathom Integration

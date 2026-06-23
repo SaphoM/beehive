@@ -43,6 +43,10 @@ import {
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
 const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
 
+// Invite links must always point to the web app, not file:// (Electron)
+const WEB_BASE = (import.meta.env.VITE_WEB_BASE_URL as string | undefined)?.replace(/\/$/, '')
+  || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? window.location.origin : '')
+
 const PRESENTATION_EXTS = ['.key', '.keynote', '.pptx', '.ppt', '.odp', '.pdf']
 const PRESENTATION_APP: Record<string, string> = {
   '.key': 'Keynote', '.keynote': 'Keynote',
@@ -477,8 +481,7 @@ function SchedulePanel({ displayName, onDisplayNameChange }: { displayName: stri
     const name = roomName.trim() || (date ? `Meeting – ${new Date(date + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'BeeHive Meeting')
     const room = await createRoom(name)
     if (!room) return
-    const base = window.location.origin + window.location.pathname.replace(/\/$/, '')
-    setLink(`${base}?room=${room.id}`)
+    setLink(`${WEB_BASE}?room=${room.id}`)
   }
 
   const copyLink = () => {
@@ -1293,7 +1296,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   }
 
   const copyInviteLink = () => {
-    navigator.clipboard.writeText(window.location.href)
+    navigator.clipboard.writeText(`${WEB_BASE}?room=${roomId}`)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

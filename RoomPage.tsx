@@ -332,7 +332,7 @@ function Lobby({
   onJoinRoom?: () => void
   creating: boolean
   hasInvite: boolean
-  inviteRoom?: { name: string; participantCount: number } | null
+  inviteRoom?: { name: string; participantCount: number; ended_at: string | null } | null
   subtext: Subtext
   onSubtextChange: (v: Subtext) => void
 }) {
@@ -368,7 +368,21 @@ function Lobby({
           <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} />
         ) : (
           <>
-            {hasInvite && inviteRoom ? (
+            {hasInvite && inviteRoom?.ended_at ? (
+              /* ── Meeting ended — show summary, block joining ── */
+              <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10, alignItems: 'center', padding: '8px 0' }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#1a1a1a', border: '1px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <PhoneOff size={20} color="#555" />
+                </div>
+                <p style={{ color: '#fff', fontSize: 15, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>{inviteRoom.name}</p>
+                <p style={{ color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
+                  This meeting ended {new Date(inviteRoom.ended_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                </p>
+                <button style={{ ...s.secondaryBtn, marginTop: 4 }} onClick={onCreateRoom}>
+                  Start a new meeting
+                </button>
+              </div>
+            ) : hasInvite && inviteRoom ? (
               <div style={s.invitePreview}>
                 <p style={s.inviteLabel}>You've been invited to</p>
                 <p style={s.inviteRoomName}>{inviteRoom.name}</p>
@@ -392,28 +406,32 @@ function Lobby({
               </div>
             ) : null}
 
-            <input
-              style={s.input}
-              placeholder="Your name"
-              value={displayName}
-              onChange={(e) => onDisplayNameChange(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (hasInvite ? onJoinRoom?.() : onCreateRoom())}
-              autoFocus
-            />
-
-            {hasInvite ? (
+            {!inviteRoom?.ended_at && (
               <>
-                <button style={s.primaryBtn} onClick={onJoinRoom} disabled={creating}>
-                  {creating ? 'Joining…' : 'Join Meeting'}
-                </button>
-                <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
-                  Start a new meeting instead
-                </button>
+                <input
+                  style={s.input}
+                  placeholder="Your name"
+                  value={displayName}
+                  onChange={(e) => onDisplayNameChange(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (hasInvite ? onJoinRoom?.() : onCreateRoom())}
+                  autoFocus
+                />
+
+                {hasInvite ? (
+                  <>
+                    <button style={s.primaryBtn} onClick={onJoinRoom} disabled={creating}>
+                      {creating ? 'Joining…' : 'Join Meeting'}
+                    </button>
+                    <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
+                      Start a new meeting instead
+                    </button>
+                  </>
+                ) : (
+                  <button style={s.primaryBtn} onClick={onCreateRoom} disabled={creating}>
+                    {creating ? 'Starting…' : `Start ${subtext}`}
+                  </button>
+                )}
               </>
-            ) : (
-              <button style={s.primaryBtn} onClick={onCreateRoom} disabled={creating}>
-                {creating ? 'Starting…' : `Start ${subtext}`}
-              </button>
             )}
           </>
         )}
@@ -1079,18 +1097,23 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setChatInput('')
   }
 
-  // Mark participant inactive and broadcast leave notification, then exit
+  // Mark participant inactive, broadcast leave, end room if last person out
   const leaveWithNotification = useCallback(async () => {
     try {
-      await supabase.from('chat_messages').insert({ room_id: roomId, sender_name: '__SYSTEM__', content: `__LEAVE__${displayName}` })
+      await supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__LEAVE__${displayName}` })
       await supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName)
+      // Check if this was the last active participant; if so, mark room ended
+      const { count } = await supabase.from('room_participants').select('id', { count: 'exact', head: true }).eq('room_id', roomId).eq('is_active', true)
+      if ((count ?? 0) === 0) {
+        await supabase.from('rooms').update({ ended_at: new Date().toISOString(), is_active: false }).eq('id', roomId)
+      }
     } catch { /* best-effort */ }
     onLeave()
   }, [roomId, displayName, onLeave])
 
   // Send join notification once on mount
   useEffect(() => {
-    supabase.from('chat_messages').insert({ room_id: roomId, sender_name: '__SYSTEM__', content: `__JOIN__${displayName}` }).then(() => {})
+    supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__JOIN__${displayName}` }).then(() => {})
     return () => {
       // Mark inactive on unmount (covers LiveKit onDisconnected path)
       supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName).then(() => {})
@@ -1548,7 +1571,30 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                 <ScreenShareMenu
                   clearBeforeShare={clearBeforeShare}
                   onToggleClear={() => setClearBeforeShare(v => !v)}
-                  onShare={startShare}
+                  onEntireScreen={async () => {
+                    setShareMenu(false)
+                    if (window.electronAPI) {
+                      // Electron: use desktopCapturer to get the primary screen source
+                      const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
+                      if (sources.length > 0) await shareDesktopSource(sources[0].id)
+                    } else {
+                      // Web: auto-enable clear-screen to avoid BeeHive echo
+                      if (!clearBeforeShare) setClearBeforeShare(true)
+                      await startShare()
+                      setClearBeforeShare(false)
+                    }
+                  }}
+                  onSelectWindow={async () => {
+                    setShareMenu(false)
+                    if (window.electronAPI) {
+                      // Electron: show native window picker
+                      const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+                      setDesktopSources(sources)
+                      setShowWindowPicker(true)
+                    } else {
+                      await startShare()
+                    }
+                  }}
                   onClose={() => setShareMenu(false)}
                 />
               )}
@@ -2436,36 +2482,39 @@ function SpeakingIndicator({ overlayMode = 'visible' }: { overlayMode?: 'visible
 // ============================================================
 // SCREEN SHARE MENU
 // ============================================================
-function ScreenShareMenu({ clearBeforeShare, onToggleClear, onShare, onClose }: {
+function ScreenShareMenu({ clearBeforeShare, onToggleClear, onEntireScreen, onSelectWindow, onClose }: {
   clearBeforeShare: boolean
   onToggleClear: () => void
-  onShare: () => void
+  onEntireScreen: () => void
+  onSelectWindow: () => void
   onClose: () => void
 }) {
   return (
-    <div style={s.shareMenu}>
+    <div style={{ ...s.shareMenu, bottom: 'auto', top: 'auto', transform: 'none', position: 'fixed' as const, left: '50%', marginLeft: '-110px', bottom: 84, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' as const }}>
       <div style={s.shareMenuHeader}>
         <span style={s.shareMenuTitle}>Share Screen</span>
         <button style={s.shareMenuClose} onClick={onClose}><X size={14} /></button>
       </div>
 
-      <button style={s.shareMenuRow} onClick={onToggleClear}>
-        {clearBeforeShare
-          ? <CheckSquare size={14} color="#f5a623" />
-          : <Square size={14} color="#555" />}
-        <span style={{ ...s.shareMenuText, color: clearBeforeShare ? '#f5a623' : '#888' }}>
-          Clear screen before sharing
-        </span>
-      </button>
+      {!window.electronAPI && (
+        <button style={s.shareMenuRow} onClick={onToggleClear}>
+          {clearBeforeShare
+            ? <CheckSquare size={14} color="#f5a623" />
+            : <Square size={14} color="#555" />}
+          <span style={{ ...s.shareMenuText, color: clearBeforeShare ? '#f5a623' : '#888' }}>
+            Clear screen before sharing
+          </span>
+        </button>
+      )}
 
       <div style={s.shareMenuDivider} />
 
-      <button style={s.shareMenuOption} onClick={onShare}>
+      <button style={s.shareMenuOption} onClick={onEntireScreen}>
         <Monitor size={15} color="#aaa" />
         <span>Entire Screen</span>
       </button>
 
-      <button style={s.shareMenuOption} onClick={onShare}>
+      <button style={s.shareMenuOption} onClick={onSelectWindow}>
         <ArrowLeftRight size={15} color="#aaa" />
         <span>Select Window</span>
       </button>

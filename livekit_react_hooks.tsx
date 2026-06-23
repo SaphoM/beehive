@@ -73,18 +73,18 @@ export function useCreateRoom() {
 // ROOM INFO (for invite preview)
 // ============================================================
 export function useRoomInfo(roomId: string | null) {
-  const [room, setRoom] = useState<{ name: string; participantCount: number } | null>(null)
+  const [room, setRoom] = useState<{ name: string; participantCount: number; ended_at: string | null } | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!roomId) return
     setLoading(true)
     Promise.all([
-      supabase.from('rooms').select('name').eq('id', roomId).single(),
+      supabase.from('rooms').select('name, ended_at').eq('id', roomId).single(),
       supabase.from('room_participants').select('id', { count: 'exact' }).eq('room_id', roomId).eq('is_active', true),
     ]).then(([roomRes, participantsRes]) => {
       if (roomRes.data) {
-        setRoom({ name: roomRes.data.name, participantCount: participantsRes.count ?? 0 })
+        setRoom({ name: roomRes.data.name, participantCount: participantsRes.count ?? 0, ended_at: roomRes.data.ended_at ?? null })
       }
       setLoading(false)
     })

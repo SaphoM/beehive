@@ -49,6 +49,16 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 
 ### In Meeting
 
+#### Header
+| Element | Position | Notes |
+|---------|----------|-------|
+| **BEE**HIVE wordmark | Left | App name |
+| Participant count pill | Left | Click to open Participants window |
+| **Meeting timer** | Centre | Elapsed time in grey (`M:SS` / `H:MM:SS`); starts when the room component mounts; pointer-events none so it doesn't block dragging |
+| Stop Sharing | Right | Green pill — only visible when actively sharing screen |
+| Chat toggle | Right | Opens/closes chat sidebar |
+| Leave | Right | Red; disconnects and returns to lobby |
+
 #### Controls Bar (left → right)
 | Control | Icon | Notes |
 |---------|------|-------|

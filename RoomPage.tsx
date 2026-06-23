@@ -1128,6 +1128,22 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const aloneStartRef = useRef<number | null>(null)
   const [aloneCountdown, setAloneCountdown] = useState<number | null>(null)
   const ALONE_LIMIT = 10 * 60 * 1000 // 10 minutes
+
+  // Meeting elapsed timer
+  const meetingStartRef = useRef<number>(Date.now())
+  const [elapsedDisplay, setElapsedDisplay] = useState('0:00')
+  useEffect(() => {
+    const t = setInterval(() => {
+      const s = Math.floor((Date.now() - meetingStartRef.current) / 1000)
+      const h = Math.floor(s / 3600)
+      const m = Math.floor((s % 3600) / 60)
+      const sec = s % 60
+      setElapsedDisplay(h > 0
+        ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+        : `${m}:${String(sec).padStart(2, '0')}`)
+    }, 1000)
+    return () => clearInterval(t)
+  }, [])
   const WARN_AT = 60 * 1000           // warn at 1 minute remaining
 
   useEffect(() => {
@@ -1307,12 +1323,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   return (
     <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>
       {/* Header */}
-      <div style={{ ...s.header, paddingLeft: window.electronAPI ? 88 : 18 }}>
+      <div style={{ ...s.header, paddingLeft: window.electronAPI ? 88 : 18, position: 'relative' }}>
         <div style={s.headerLeft}>
           <span style={s.roomTitle}>{APP_NAME}</span>
           <button style={s.pill} onClick={() => setShowParticipants(v => !v)}>
             {activeCount} {activeCount === 1 ? 'participant' : 'participants'}
           </button>
+        </div>
+        {/* Centred meeting timer */}
+        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', color: '#555', fontSize: 13, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1, pointerEvents: 'none', WebkitAppRegion: 'drag' as any }}>
+          {elapsedDisplay}
         </div>
         <div style={s.headerRight}>
           {isSharing && (

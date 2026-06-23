@@ -5,6 +5,7 @@ declare global {
   interface Window {
     electronAPI?: {
       isElectron: true
+      getFilePath: (file: File) => string
       openFile: (filePath: string) => Promise<string | null>
       getDesktopSources: (opts?: { types?: string[]; thumbnailSize?: { width: number; height: number } }) => Promise<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>
     }
@@ -12,7 +13,7 @@ declare global {
 }
 // Electron adds a .path property to File objects from drag-and-drop / file input
 declare global { interface File { path?: string } }
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText, EyeOff, Minus } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -799,6 +800,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [pendingSource, setPendingSource] = useState<{ id: string; name: string; thumbnail: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Presentation overlay — floats over the screen share / remote presentation
+  const [overlayMode, setOverlayMode] = useState<'visible' | 'minimized' | 'hidden'>('visible')
+  const isPresenting = isSharing || hasRemoteScreenShare
+
+  useEffect(() => {
+    if (!isPresenting) setOverlayMode('visible')
+  }, [isPresenting])
+
   // Window-level drag listeners — child <video> elements swallow React div-level events
   useEffect(() => {
     const onDragEnter = (e: DragEvent) => {
@@ -1066,10 +1075,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       // Open the file natively; then wait for the user to enter presentation mode
       setPresentStep('opening')
       setPresentAppName(presentationApp(pendingFile.name))
-      const filePath = pendingFile.path
+      const filePath = window.electronAPI.getFilePath(pendingFile)
       if (filePath) {
         const err = await window.electronAPI.openFile(filePath)
         if (err) console.warn('[electron] openFile error:', err)
+      } else {
+        console.warn('[electron] getFilePath returned empty — file may not have a local path')
       }
       // Brief pause so the OS has time to launch the app before we show the waiting UI
       await new Promise(r => setTimeout(r, 1200))
@@ -1232,14 +1243,23 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               trackRef={remoteScreenTracks[0]}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
+          ) : isSharing ? (
+            /* Local share — full-view "Broadcasting" panel */
+            <div style={{ width: '100%', height: '100%', background: '#060606', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#0d2d0d', border: '1px solid #2d6a2d', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Monitor size={26} color="#48bb78" />
+              </div>
+              <p style={{ color: '#48bb78', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5, margin: 0 }}>Broadcasting to attendees</p>
+              <p style={{ color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>{shareLabel}</p>
+            </div>
           ) : (
             <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
               <ParticipantTile />
             </GridLayout>
           )}
 
-          {/* Active Share Bar */}
-          {isSharing && (
+          {/* Active Share Bar — hidden when overlay is hidden */}
+          {isSharing && overlayMode !== 'hidden' && (
             <ScreenShareBar
               label={shareLabel}
               hasSecondary={!!secondaryStream}
@@ -1251,7 +1271,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           )}
 
           {/* Auto Cam Window */}
-          {autoCamMode && (
+          {autoCamMode && overlayMode !== 'hidden' && (
             <AutoCamWindow
               mode={autoCamMode}
               onModeChange={setAutoCamMode}
@@ -1259,8 +1279,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             />
           )}
 
-          {/* Speaking Indicator */}
-          <SpeakingIndicator />
+          {/* Speaking Indicator — hidden when overlay is hidden */}
+          <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} />
 
           {/* Floating Reactions */}
           <div style={s.reactionFloat}>
@@ -1269,7 +1289,30 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             ))}
           </div>
 
-          {/* Controls Bar */}
+          {/* Restore pill — shown when overlay is hidden during presentation */}
+          {isPresenting && overlayMode === 'hidden' && (
+            <button
+              onClick={() => setOverlayMode('visible')}
+              style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', border: '1px solid #f5a623', borderRadius: 30, padding: '7px 18px', color: '#f5a623', fontSize: 12, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, zIndex: 20 }}
+            >
+              <Monitor size={14} /> Show controls
+            </button>
+          )}
+
+          {/* Controls Bar — minimized pill or full bar */}
+          {isPresenting && overlayMode === 'minimized' ? (
+            <div style={{ ...s.controls, gap: 8, padding: '8px 14px' }}>
+              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
+              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
+              {isSharing && (
+                <button style={{ ...s.controlBtn, background: '#276127', border: '1px solid #48bb78' }} onClick={stopShare} title="Stop sharing"><MonitorOff size={20} /></button>
+              )}
+              <div style={{ width: 1, height: 22, background: '#333' }} />
+              <button onClick={() => setOverlayMode('visible')} style={{ ...s.controlBtn, fontSize: 16 }} title="Expand">⤢</button>
+              <button onClick={() => setOverlayMode('hidden')} style={{ ...s.controlBtn }} title="Hide controls"><EyeOff size={18} /></button>
+              <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={onLeave} title="Leave"><PhoneOff size={20} /></button>
+            </div>
+          ) : overlayMode !== 'hidden' ? (
           <div style={s.controls}>
             {/* Mic */}
             <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
@@ -1392,7 +1435,21 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={onLeave} title="Leave">
               <PhoneOff size={20} />
             </button>
+
+            {/* Presentation overlay controls — minimize / hide */}
+            {isPresenting && (
+              <>
+                <div style={{ width: 1, height: 22, background: '#333' }} />
+                <button onClick={() => setOverlayMode('minimized')} style={s.controlBtn} title="Minimise controls">
+                  <Minus size={18} />
+                </button>
+                <button onClick={() => setOverlayMode('hidden')} style={s.controlBtn} title="Hide from presentation screen">
+                  <EyeOff size={18} />
+                </button>
+              </>
+            )}
           </div>
+          ) : null}
         </div>
 
         {/* Chat Sidebar */}
@@ -1658,43 +1715,61 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         </div>
       )}
 
-      {/* Electron window picker — shown after openFile() so user can click a thumbnail */}
+      {/* Electron window picker */}
       {showWindowPicker && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: 680, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 20, overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Select Window to Share</span>
-              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => setShowWindowPicker(false)}>
-                <X size={18} />
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: '90vw', maxWidth: 960, maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div>
+                <span style={{ color: '#fff', fontSize: 15, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Select Window to Share</span>
+                <p style={{ color: '#555', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: '4px 0 0' }}>
+                  Click a window to preview it before sharing with attendees
+                </p>
+              </div>
+              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', flexShrink: 0 }} onClick={() => setShowWindowPicker(false)}>
+                <X size={20} />
               </button>
             </div>
-            <p style={{ color: '#666', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0 }}>
-              Click a window to share it live with all attendees — no OS dialog needed.
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, overflowY: 'auto', paddingRight: 4 }}>
-              {desktopSources.map(src => (
-                <button
-                  key={src.id}
-                  onClick={() => shareDesktopSource(src.id)}
-                  style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', transition: 'border-color 0.15s' }}
-                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#f5a623')}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
-                >
-                  <img src={src.thumbnail} alt={src.name} style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', display: 'block', background: '#111' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
-                    {src.appIcon && <img src={src.appIcon} alt="" style={{ width: 16, height: 16, borderRadius: 3, flexShrink: 0 }} />}
-                    <span style={{ color: '#ccc', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{src.name}</span>
+
+            {/* Scrollable grid — 2 columns, tall cards */}
+            <div style={{ overflowY: 'auto', flex: 1, paddingRight: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+                {desktopSources.map(src => (
+                  <button
+                    key={src.id}
+                    onClick={() => {
+                      setShowWindowPicker(false)
+                      setPendingSource({ id: src.id, name: src.name, thumbnail: src.thumbnail })
+                    }}
+                    style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 12, overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, transition: 'border-color 0.15s', textAlign: 'left' as const }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#f5a623')}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
+                  >
+                    <img
+                      src={src.thumbnail}
+                      alt={src.name}
+                      style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block', background: '#111' }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+                      {src.appIcon && <img src={src.appIcon} alt="" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />}
+                      <span style={{ color: '#ccc', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{src.name}</span>
+                    </div>
+                  </button>
+                ))}
+                {desktopSources.length === 0 && (
+                  <div style={{ gridColumn: '1/-1', color: '#555', fontSize: 13, textAlign: 'center' as const, padding: 48 }}>
+                    No windows found. Make sure your presentation is open.
                   </div>
-                </button>
-              ))}
-              {desktopSources.length === 0 && (
-                <div style={{ gridColumn: '1/-1', color: '#555', fontSize: 13, textAlign: 'center', padding: 32 }}>No windows found. Make sure your presentation is open.</div>
-              )}
+                )}
+              </div>
             </div>
+
+            {/* Footer */}
             <button
-              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 10, color: '#666', padding: '9px 0', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 10, color: '#666', padding: '10px 0', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif", flexShrink: 0 }}
               onClick={async () => {
-                const sources = await window.electronAPI!.getDesktopSources()
+                const sources = await window.electronAPI!.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
                 setDesktopSources(sources)
               }}
             >
@@ -2072,7 +2147,7 @@ function AutoCamWindow({ mode, onModeChange, onClose }: {
 // ============================================================
 // SPEAKING INDICATOR + SPEAKER VIDEO WINDOW
 // ============================================================
-function SpeakingIndicator() {
+function SpeakingIndicator({ overlayMode = 'visible' }: { overlayMode?: 'visible' | 'minimized' | 'hidden' }) {
   const participants = useLiveKitParticipants()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
   const [speakers, setSpeakers] = useState<Array<{ identity: string; name: string; level: number }>>([])
@@ -2110,11 +2185,11 @@ function SpeakingIndicator() {
     }
   }, [speakers, dismissedId])
 
-  if (speakers.length === 0) return null
+  if (speakers.length === 0 || overlayMode === 'hidden') return null
 
   const activeSpeaker = speakers[0]
   const camTrack = cameraTracks.find(t => t.participant.identity === activeSpeaker.identity)
-  const showWindow = !minimized && dismissedId !== activeSpeaker.identity
+  const showWindow = !minimized && dismissedId !== activeSpeaker.identity && overlayMode !== 'minimized'
   const BAR_SHAPE = [0.35, 0.65, 1.0, 0.65, 0.35]
 
   return (

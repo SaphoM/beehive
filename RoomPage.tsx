@@ -866,21 +866,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   const openAndShare = useCallback(async () => {
     if (!pendingFile) return
-    // Open the file in its native app via a temporary object URL download
     setPresentStep('opening')
-    const url = URL.createObjectURL(pendingFile)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = pendingFile.name
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    // Give the OS ~2 s to launch the app, then pop the window picker
-    await new Promise(r => setTimeout(r, 2000))
-    URL.revokeObjectURL(url)
-    setPresentStep('pick')
     setPendingFile(null)
-    // Trigger the existing startShare flow — opens getDisplayMedia window picker
+    // Small delay so the modal closes before the OS picker appears
+    await new Promise(r => setTimeout(r, 150))
+    setPresentStep('idle')
+    // Open getDisplayMedia window picker — user selects the PowerPoint/Keynote window
     await startShare()
   }, [pendingFile, startShare])
 
@@ -1252,13 +1243,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               <>
                 <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
                   <p style={{ color: '#aaa', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0, lineHeight: 1.6 }}>
-                    BeeHive will open this file in <strong style={{ color: '#fff' }}>{presentationApp(pendingFile.name)}</strong>, then immediately show the window picker so you can select that window to share with everyone.
+                    Open <strong style={{ color: '#fff' }}>{pendingFile.name}</strong> in {presentationApp(pendingFile.name)} on your Mac, then click <strong style={{ color: '#fff' }}>Share Window</strong> below — the OS window picker will open and you select the {presentationApp(pendingFile.name)} window to share with attendees.
                   </p>
-                  {presentStep === 'opening' && (
-                    <p style={{ color: '#f5a623', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
-                      Opening {presentationApp(pendingFile.name)}… window picker launching in a moment
-                    </p>
-                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button
@@ -1266,7 +1252,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                     disabled={presentStep === 'opening'}
                     onClick={openAndShare}
                   >
-                    {presentStep === 'opening' ? 'Opening…' : 'Open & Share Window'}
+                    Share Window
                   </button>
                   <button
                     style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '11px 14px', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}

@@ -12,6 +12,9 @@ let backendProcess
 // Load .env and spawn the Express backend as a child process
 // ---------------------------------------------------------------------------
 function startBackend() {
+  // In dev mode, concurrently already starts the backend — don't double-spawn it
+  if (isDev) return
+
   const backendPath = isDev
     ? path.join(__dirname, '..', 'livekit_node_backend.js')
     : path.join(process.resourcesPath, 'app', 'livekit_node_backend.js')

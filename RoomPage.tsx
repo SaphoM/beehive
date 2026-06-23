@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -21,12 +21,31 @@ import {
   useRoomInfo,
   useFathomMeetings,
   useFathomTranscript,
+  supabase,
   type FathomMeeting,
   type FathomTranscriptLine,
 } from './livekit_react_hooks'
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
 const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function fileIcon(mime: string) {
+  if (mime.startsWith('image/')) return '🖼️'
+  if (mime.startsWith('video/')) return '🎬'
+  if (mime.startsWith('audio/')) return '🎵'
+  if (mime.includes('pdf')) return '📄'
+  if (mime.includes('zip') || mime.includes('tar') || mime.includes('gzip')) return '🗜️'
+  if (mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('csv')) return '📊'
+  if (mime.includes('presentation') || mime.includes('powerpoint')) return '📽️'
+  if (mime.includes('word') || mime.includes('document')) return '📝'
+  return '📎'
+}
 
 // Load MediaPipe Selfie Segmentation from CDN (injected once, polled until ready)
 async function ensureMediaPipe(): Promise<void> {
@@ -561,6 +580,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
 
+  // File share state
+  const [dragOver, setDragOver] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [fileRecipients, setFileRecipients] = useState<'all' | string[]>('all')
+  const [fileUploading, setFileUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   // Background effects state
   const [bgMenuOpen, setBgMenuOpen] = useState(false)
   const [bgEffect, setBgEffect] = useState<'none' | 'blur' | 'image' | 'virtual'>('none')
@@ -784,6 +810,25 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setChatInput('')
   }
 
+  const handleFileShare = async () => {
+    if (!pendingFile) return
+    setFileUploading(true)
+    const path = `${roomId}/${Date.now()}-${pendingFile.name}`
+    const { data, error } = await supabase.storage.from('shared-files').upload(path, pendingFile)
+    if (error || !data) {
+      alert('Upload failed — ' + (error?.message ?? 'unknown error'))
+      setFileUploading(false)
+      return
+    }
+    const { data: { publicUrl } } = supabase.storage.from('shared-files').getPublicUrl(data.path)
+    const recipientList = fileRecipients === 'all' ? ['__all__'] : fileRecipients
+    const payload = JSON.stringify({ name: pendingFile.name, url: publicUrl, size: pendingFile.size, mime: pendingFile.type, recipients: recipientList })
+    await sendMessage(`__FILE__${payload}`, displayName)
+    setFileUploading(false)
+    setPendingFile(null)
+    setFileRecipients('all')
+  }
+
   const sendReaction = (emoji: string) => {
     const id = reactionId.current++
     setFloatingReactions(prev => [...prev, { id, emoji }])
@@ -833,8 +878,25 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           />
         )}
 
-        {/* Video Grid */}
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* Video Grid — also acts as file drop zone */}
+        <div
+          style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }}
+          onDrop={e => {
+            e.preventDefault()
+            setDragOver(false)
+            const file = e.dataTransfer.files[0]
+            if (file) { setPendingFile(file); setFileRecipients('all') }
+          }}
+        >
+          {/* Drop overlay */}
+          {dragOver && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(245,166,35,0.15)', border: '2px dashed #f5a623', borderRadius: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, pointerEvents: 'none' }}>
+              <Paperclip size={40} color="#f5a623" />
+              <span style={{ color: '#f5a623', fontSize: 16, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>Drop to share with attendees</span>
+            </div>
+          )}
           {hasRemoteScreenShare ? (
             <ParticipantTile
               trackRef={remoteScreenTracks[0]}
@@ -1013,15 +1075,39 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                   No messages yet
                 </p>
               )}
-              {messages.map(m => (
-                <div key={m.id} style={s.message}>
-                  <span style={s.msgName}>{m.display_name}</span>
-                  <span style={s.msgText}>{m.message}</span>
-                  <span style={s.msgTime}>
-                    {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-              ))}
+              {messages.map(m => {
+                if (m.message.startsWith('__FILE__')) {
+                  let meta: { name: string; url: string; size: number; mime: string; recipients: string[] } | null = null
+                  try { meta = JSON.parse(m.message.slice(8)) } catch { return null }
+                  if (!meta) return null
+                  const isForMe = meta.recipients.includes('__all__') || meta.recipients.includes(displayName)
+                  if (!isForMe) return null
+                  return (
+                    <div key={m.id} style={s.fileCard}>
+                      <span style={s.msgName}>{m.display_name} shared a file</span>
+                      <a href={meta.url} target="_blank" rel="noreferrer" download={meta.name} style={s.fileCardLink}>
+                        <span style={{ fontSize: 18 }}>{fileIcon(meta.mime)}</span>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{meta.name}</span>
+                        <span style={{ color: '#555', fontSize: 11, flexShrink: 0 }}>{formatBytes(meta.size)}</span>
+                        <Download size={14} color="#5b5ef4" style={{ flexShrink: 0 }} />
+                      </a>
+                      {!meta.recipients.includes('__all__') && (
+                        <span style={{ color: '#555', fontSize: 11 }}>To: {meta.recipients.join(', ')}</span>
+                      )}
+                      <span style={s.msgTime}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  )
+                }
+                return (
+                  <div key={m.id} style={s.message}>
+                    <span style={s.msgName}>{m.display_name}</span>
+                    <span style={s.msgText}>{m.message}</span>
+                    <span style={s.msgTime}>
+                      {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                )
+              })}
               <div ref={chatEndRef} />
             </div>
             <div style={s.chatInputRow}>
@@ -1032,8 +1118,25 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               />
+              <button
+                style={{ ...s.sendBtn, background: 'transparent', color: '#666', width: 34 }}
+                title="Share a file"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip size={16} />
+              </button>
               <button style={s.sendBtn} onClick={handleSend}>↑</button>
             </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              style={{ display: 'none' }}
+              onChange={e => {
+                const file = e.target.files?.[0]
+                if (file) { setPendingFile(file); setFileRecipients('all') }
+                e.target.value = ''
+              }}
+            />
 
             {recordings.length > 0 && (
               <div style={s.recordings}>
@@ -1048,6 +1151,78 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           </div>
         )}
       </div>
+
+      {/* File Share Modal */}
+      {pendingFile && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#141414', border: '1px solid #2a2a2a', borderRadius: 16, padding: 28, width: 380, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>Share File</span>
+              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => setPendingFile(null)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* File preview */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '12px 14px' }}>
+              <span style={{ fontSize: 28 }}>{fileIcon(pendingFile.type)}</span>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ color: '#ddd', fontSize: 13, fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pendingFile.name}</div>
+                <div style={{ color: '#555', fontSize: 11, marginTop: 2 }}>{formatBytes(pendingFile.size)}</div>
+              </div>
+            </div>
+
+            {/* Recipient selection */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <span style={{ color: '#888', fontSize: 11, fontWeight: 300, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" }}>Send to</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="radio" checked={fileRecipients === 'all'} onChange={() => setFileRecipients('all')} style={{ accentColor: '#f5a623' }} />
+                <span style={{ color: '#ddd', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>All participants</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="radio" checked={fileRecipients !== 'all'} onChange={() => setFileRecipients([])} style={{ accentColor: '#f5a623' }} />
+                <span style={{ color: '#ddd', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>Select participants</span>
+              </label>
+              {fileRecipients !== 'all' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 26, maxHeight: 160, overflowY: 'auto' }}>
+                  {participants.filter(p => p.is_active && p.display_name !== displayName).map(p => {
+                    const selected = (fileRecipients as string[]).includes(p.display_name)
+                    return (
+                      <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          style={{ accentColor: '#5b5ef4' }}
+                          onChange={() => {
+                            setFileRecipients(prev => {
+                              if (prev === 'all') return [p.display_name]
+                              return selected ? (prev as string[]).filter(n => n !== p.display_name) : [...(prev as string[]), p.display_name]
+                            })
+                          }}
+                        />
+                        <span style={{ color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>{p.display_name}</span>
+                      </label>
+                    )
+                  })}
+                  {participants.filter(p => p.is_active && p.display_name !== displayName).length === 0 && (
+                    <span style={{ color: '#555', fontSize: 12 }}>No other participants</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Send button */}
+            <button
+              style={{ background: fileUploading ? '#333' : '#f5a623', color: fileUploading ? '#666' : '#000', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 600, cursor: fileUploading ? 'not-allowed' : 'pointer', fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}
+              disabled={fileUploading || (fileRecipients !== 'all' && (fileRecipients as string[]).length === 0)}
+              onClick={handleFileShare}
+            >
+              {fileUploading ? 'Uploading…' : 'Send File'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1658,7 +1833,9 @@ const s: Record<string, React.CSSProperties> = {
   msgText: { color: '#ddd', fontSize: 13, lineHeight: 1.4 },
   msgTime: { color: '#444', fontSize: 11 },
   chatInputRow: { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid #1e1e1e' },
-  sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer' },
+  sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  fileCard: { display: 'flex', flexDirection: 'column' as const, gap: 4, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '10px 12px' },
+  fileCardLink: { display: 'flex', alignItems: 'center', gap: 8, color: '#ddd', textDecoration: 'none', fontSize: 13, background: '#111', border: '1px solid #222', borderRadius: 8, padding: '8px 10px', marginTop: 4 },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
   recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
 

@@ -1044,14 +1044,15 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   useEffect(() => { stopShareRef.current = stopShare }, [stopShare])
 
-  const startShare = useCallback(async () => {
-    if (clearBeforeShare) {
+  const startShare = useCallback(async (forceHide = false) => {
+    const shouldHide = clearBeforeShare || forceHide
+    if (shouldHide) {
       setRoomHidden(true)
       await new Promise(r => setTimeout(r, 400))
     }
     try {
       await localParticipant.setScreenShareEnabled(true)
-      if (clearBeforeShare) setRoomHidden(false)
+      if (shouldHide) setRoomHidden(false)
       const pub = localParticipant.getTrackPublication(Track.Source.ScreenShare)
       const mediaTrack = (pub?.track as any)?.mediaStreamTrack as MediaStreamTrack | undefined
       const label = mediaTrack?.label || 'Your screen'
@@ -1064,7 +1065,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       setIsSharing(true)
       setShareMenu(false)
     } catch {
-      if (clearBeforeShare) setRoomHidden(false)
+      if (shouldHide) setRoomHidden(false)
     }
   }, [clearBeforeShare, localParticipant])
 
@@ -1574,14 +1575,11 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                   onEntireScreen={async () => {
                     setShareMenu(false)
                     if (window.electronAPI) {
-                      // Electron: use desktopCapturer to get the primary screen source
                       const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
                       if (sources.length > 0) await shareDesktopSource(sources[0].id)
                     } else {
-                      // Web: auto-enable clear-screen to avoid BeeHive echo
-                      if (!clearBeforeShare) setClearBeforeShare(true)
-                      await startShare()
-                      setClearBeforeShare(false)
+                      // Pass forceHide=true so BeeHive hides before capture regardless of the toggle state
+                      await startShare(true)
                     }
                   }}
                   onSelectWindow={async () => {

@@ -14,4 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Check macOS Screen Recording permission ('granted' | 'denied' | 'restricted' | 'not-determined')
   getScreenAccessStatus: () => ipcRenderer.invoke('get-screen-access-status'),
+
+  // Float BeeHive above all other windows (set after opening Keynote/PowerPoint)
+  // Call stopFloating() when sharing starts or the modal is cancelled
+  stopFloating: () => ipcRenderer.send('stop-floating'),
 })

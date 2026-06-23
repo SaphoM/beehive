@@ -9,6 +9,7 @@ declare global {
       openFile: (filePath: string) => Promise<string | null>
       getDesktopSources: (opts?: { types?: string[]; thumbnailSize?: { width: number; height: number } }) => Promise<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>
       getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
+      stopFloating: () => void
     }
   }
 }
@@ -1269,6 +1270,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   const confirmAndShare = useCallback(async () => {
     if (!pendingSource) return
+    window.electronAPI?.stopFloating()
     setPendingFile(null)
     setPresentStep('idle')
     const id = pendingSource.id
@@ -1781,7 +1783,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               <span style={{ color: '#fff', fontSize: 14, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>
                 {fileMode === 'present' ? 'Present File' : 'Share File'}
               </span>
-              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => { setPendingFile(null); setPresentStep('idle'); setPresentQueue([]) }}>
+              <button style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex' }} onClick={() => { window.electronAPI?.stopFloating(); setPendingFile(null); setPresentStep('idle'); setPresentQueue([]) }}>
                 <X size={18} />
               </button>
             </div>
@@ -1891,7 +1893,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
                         <button
                           style={{ background: '#1a1a1a', color: '#888', border: '1px solid #2a2a2a', borderRadius: 10, padding: '10px 0', fontSize: 13, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
-                          onClick={() => { setPendingFile(null); setPresentStep('idle'); setPresentQueue([]) }}
+                          onClick={() => { window.electronAPI?.stopFloating(); setPendingFile(null); setPresentStep('idle'); setPresentQueue([]) }}
                         >
                           Cancel
                         </button>

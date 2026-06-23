@@ -65,6 +65,7 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false, // prevent black screen when another app takes focus
     },
   })
 
@@ -86,7 +87,20 @@ async function createWindow() {
 // ---------------------------------------------------------------------------
 ipcMain.handle('open-file', async (_, filePath) => {
   const err = await shell.openPath(filePath)
+  // After launching the native app, float BeeHive above it so the user
+  // can still see and click "Share Presentation"
+  if (!err && mainWindow) {
+    mainWindow.setAlwaysOnTop(true, 'floating')
+    mainWindow.focus()
+  }
   return err || null // null = success
+})
+
+// ---------------------------------------------------------------------------
+// IPC: stop floating BeeHive above other windows (called when sharing starts or is cancelled)
+// ---------------------------------------------------------------------------
+ipcMain.on('stop-floating', () => {
+  mainWindow?.setAlwaysOnTop(false)
 })
 
 // ---------------------------------------------------------------------------

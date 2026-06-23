@@ -1078,6 +1078,57 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setChatInput('')
   }
 
+  // Mark participant inactive and broadcast leave notification, then exit
+  const leaveWithNotification = useCallback(async () => {
+    try {
+      await supabase.from('chat_messages').insert({ room_id: roomId, sender_name: '__SYSTEM__', content: `__LEAVE__${displayName}` })
+      await supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName)
+    } catch { /* best-effort */ }
+    onLeave()
+  }, [roomId, displayName, onLeave])
+
+  // Send join notification once on mount
+  useEffect(() => {
+    supabase.from('chat_messages').insert({ room_id: roomId, sender_name: '__SYSTEM__', content: `__JOIN__${displayName}` }).then(() => {})
+    return () => {
+      // Mark inactive on unmount (covers LiveKit onDisconnected path)
+      supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName).then(() => {})
+    }
+  }, [roomId, displayName])
+
+  // Auto-end call if user is alone for 10 minutes
+  const aloneStartRef = useRef<number | null>(null)
+  const [aloneCountdown, setAloneCountdown] = useState<number | null>(null)
+  const ALONE_LIMIT = 10 * 60 * 1000 // 10 minutes
+  const WARN_AT = 60 * 1000           // warn at 1 minute remaining
+
+  useEffect(() => {
+    const activeCount = participants.filter(p => p.is_active).length
+    if (activeCount <= 1) {
+      if (aloneStartRef.current === null) aloneStartRef.current = Date.now()
+    } else {
+      aloneStartRef.current = null
+      setAloneCountdown(null)
+    }
+  }, [participants])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (aloneStartRef.current === null) return
+      const elapsed = Date.now() - aloneStartRef.current
+      const remaining = ALONE_LIMIT - elapsed
+      if (remaining <= 0) {
+        clearInterval(interval)
+        leaveWithNotification()
+      } else if (remaining <= WARN_AT) {
+        setAloneCountdown(Math.ceil(remaining / 1000))
+      } else {
+        setAloneCountdown(null)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [leaveWithNotification])
+
   const openAndShare = useCallback(async () => {
     if (!pendingFile) return
 
@@ -1247,9 +1298,24 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
             <MessageSquare size={18} />
           </button>
-          <button style={s.leaveBtn} onClick={onLeave}>Leave</button>
+          <button style={s.leaveBtn} onClick={leaveWithNotification}>Leave</button>
         </div>
       </div>
+
+      {/* Alone countdown banner */}
+      {aloneCountdown !== null && (
+        <div style={{ background: '#1a1200', borderBottom: '1px solid #f5a623', padding: '8px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ color: '#f5a623', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif" }}>
+            You're alone in this meeting. Call ends in <strong>{aloneCountdown}s</strong>.
+          </span>
+          <button
+            style={{ background: 'none', border: '1px solid #444', borderRadius: 6, color: '#888', padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+            onClick={() => { aloneStartRef.current = Date.now(); setAloneCountdown(null) }}
+          >
+            Stay
+          </button>
+        </div>
+      )}
 
       {/* Docked participants strip — sits between header and room body */}
       {showParticipants && participantsDocked && (
@@ -1365,7 +1431,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               <div style={{ width: 1, height: 22, background: '#333' }} />
               <button onClick={() => setOverlayMode('visible')} style={{ ...s.controlBtn, fontSize: 16 }} title="Expand">⤢</button>
               <button onClick={() => setOverlayMode('hidden')} style={{ ...s.controlBtn }} title="Hide controls"><EyeOff size={18} /></button>
-              <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={onLeave} title="Leave"><PhoneOff size={20} /></button>
+              <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={leaveWithNotification} title="Leave"><PhoneOff size={20} /></button>
             </div>
           ) : overlayMode !== 'hidden' ? (
           <div style={s.controls}>
@@ -1498,7 +1564,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             )}
 
             {/* Leave */}
-            <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={onLeave} title="Leave">
+            <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
               <PhoneOff size={20} />
             </button>
 
@@ -1529,6 +1595,19 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                 </p>
               )}
               {messages.map(m => {
+                if (m.message.startsWith('__JOIN__') || m.message.startsWith('__LEAVE__')) {
+                  const isJoin = m.message.startsWith('__JOIN__')
+                  const name = m.message.slice(8)
+                  return (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', padding: '2px 0' }}>
+                      <div style={{ flex: 1, height: 1, background: '#222' }} />
+                      <span style={{ color: isJoin ? '#48bb78' : '#888', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", whiteSpace: 'nowrap' as const }}>
+                        {isJoin ? `${name} joined` : `${name} left`}
+                      </span>
+                      <div style={{ flex: 1, height: 1, background: '#222' }} />
+                    </div>
+                  )
+                }
                 if (m.message.startsWith('__FILE__')) {
                   let meta: { name: string; url: string; size: number; mime: string; recipients: string[] } | null = null
                   try { meta = JSON.parse(m.message.slice(8)) } catch { return null }

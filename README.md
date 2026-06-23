@@ -97,7 +97,9 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
   - Uploads to Supabase Storage (`shared-files` bucket, 50 MB limit); URL shared via Supabase Realtime
   - Targeted files render as download cards only for named recipients; "To: …" label on targeted shares
 - 💬 Real-time chat sidebar (Supabase Realtime)
-- 📴 Leave call
+- 📴 Leave call — marks participant inactive in Supabase and broadcasts a **"[Name] left"** system event to the chat for all remaining attendees
+- 👋 **Join / leave notifications** — horizontal-rule system messages in the chat sidebar: green **"[Name] joined"** on entry, grey **"[Name] left"** on exit; automatically written to `chat_messages` with `sender_name: '__SYSTEM__'`
+- ⏱️ **Auto-end when alone** — if you are the only active participant for 10 minutes, a countdown warning banner appears at the top of the screen (`You're alone — call ends in Xs`); clicking **Stay** resets the timer; the call ends automatically when the countdown reaches zero
 
 ### Participants Window
 - Click the participant count pill in the header to open

@@ -1993,9 +1993,15 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       {showWindowPicker && (
         <ElectronWindowPicker
           sources={desktopSources}
-          onConfirm={src => {
+          onConfirm={async src => {
             setShowWindowPicker(false)
-            setPendingSource({ id: src.id, name: src.name, thumbnail: src.thumbnail })
+            if (pendingFile) {
+              // Present-file flow: show preview confirmation before sharing
+              setPendingSource({ id: src.id, name: src.name, thumbnail: src.thumbnail })
+            } else {
+              // Direct share from share menu: start immediately
+              await shareDesktopSource(src.id)
+            }
           }}
           onClose={() => setShowWindowPicker(false)}
           onRefresh={async () => {

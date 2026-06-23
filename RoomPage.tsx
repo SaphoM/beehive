@@ -587,6 +587,33 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const [fileUploading, setFileUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Window-level drag listeners — child <video> elements swallow React drag events
+  useEffect(() => {
+    const onDragEnter = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) setDragOver(true)
+    }
+    const onDragOver = (e: DragEvent) => { e.preventDefault() }
+    const onDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget || (e.relatedTarget as Node).nodeName === 'HTML') setDragOver(false)
+    }
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault()
+      setDragOver(false)
+      const file = e.dataTransfer?.files[0]
+      if (file) { setPendingFile(file); setFileRecipients('all') }
+    }
+    window.addEventListener('dragenter', onDragEnter)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
+
   // Background effects state
   const [bgMenuOpen, setBgMenuOpen] = useState(false)
   const [bgEffect, setBgEffect] = useState<'none' | 'blur' | 'image' | 'virtual'>('none')
@@ -878,25 +905,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           />
         )}
 
-        {/* Video Grid — also acts as file drop zone */}
-        <div
-          style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
-          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }}
-          onDrop={e => {
-            e.preventDefault()
-            setDragOver(false)
-            const file = e.dataTransfer.files[0]
-            if (file) { setPendingFile(file); setFileRecipients('all') }
-          }}
-        >
-          {/* Drop overlay */}
-          {dragOver && (
-            <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(245,166,35,0.15)', border: '2px dashed #f5a623', borderRadius: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, pointerEvents: 'none' }}>
-              <Paperclip size={40} color="#f5a623" />
-              <span style={{ color: '#f5a623', fontSize: 16, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>Drop to share with attendees</span>
-            </div>
-          )}
+        {/* Full-screen drop overlay — fixed so it sits above LiveKit video tiles */}
+        {dragOver && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(245,166,35,0.12)', border: '3px dashed #f5a623', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none' }}>
+            <Paperclip size={48} color="#f5a623" />
+            <span style={{ color: '#f5a623', fontSize: 18, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>Drop to share with attendees</span>
+          </div>
+        )}
+
+        {/* Video Grid */}
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           {hasRemoteScreenShare ? (
             <ParticipantTile
               trackRef={remoteScreenTracks[0]}

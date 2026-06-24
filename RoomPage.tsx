@@ -10,6 +10,7 @@ declare global {
       getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
       stopFloating: () => void
       requestMediaPermissions: () => Promise<{ camera: string; mic: string }>
+      presentationControl: (direction: 'next' | 'prev') => Promise<boolean>
       toggleFullscreen: () => Promise<boolean>
       getFullscreen: () => Promise<boolean>
       onFullscreenChange: (cb: (v: boolean) => void) => () => void
@@ -18,7 +19,7 @@ declare global {
 }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -681,6 +682,30 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     }
   }, [hasRemoteScreenShare, isSharing])
 
+  // Presenter slideshow control — drives Keynote / PowerPoint via the desktop
+  // app, so the presenter can advance slides from the main area or fullscreen
+  // without switching back to the presentation app. macOS desktop only.
+  const canControlSlides = !!window.electronAPI && isSharing
+  const controlSlides = useCallback((direction: 'next' | 'prev') => {
+    window.electronAPI?.presentationControl(direction)
+  }, [])
+
+  // Keyboard slide navigation while presenting (ignore when typing in a field)
+  useEffect(() => {
+    if (!canControlSlides) return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault(); controlSlides('next')
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault(); controlSlides('prev')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [canControlSlides, controlSlides])
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -1051,6 +1076,27 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                 {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
               </button>
             </div>
+          )}
+
+          {/* Presenter slide controls — control Keynote / PowerPoint from the
+              main area and in fullscreen (desktop only, while sharing) */}
+          {canControlSlides && (
+            <>
+              <button
+                onClick={() => controlSlides('prev')}
+                title="Previous slide (←)"
+                style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', zIndex: 9100, width: 46, height: 46, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', border: '1px solid #333', borderRadius: '50%', color: '#eee', cursor: 'pointer' }}
+              >
+                <ChevronLeft size={24} />
+              </button>
+              <button
+                onClick={() => controlSlides('next')}
+                title="Next slide (→ / Space)"
+                style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', zIndex: 9100, width: 46, height: 46, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', border: '1px solid #333', borderRadius: '50%', color: '#eee', cursor: 'pointer' }}
+              >
+                <ChevronRight size={24} />
+              </button>
+            </>
           )}
 
           {/* Active Share Bar */}

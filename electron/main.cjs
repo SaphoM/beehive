@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu, systemPreferences } = require('electron')
 const path = require('path')
 const { existsSync, readFileSync } = require('fs')
-const { spawn } = require('child_process')
+const { spawn, execFile } = require('child_process')
 
 const isDev = !app.isPackaged
 
@@ -199,6 +199,35 @@ ipcMain.handle('toggle-fullscreen', () => {
 })
 
 ipcMain.handle('get-fullscreen', () => mainWindow?.isFullScreen() ?? false)
+
+// ---------------------------------------------------------------------------
+// IPC: drive the presenter's slideshow (next / previous slide).
+// Uses AppleScript so it works even while BeeHive is the front window — no
+// native key-injection module required. Targets Keynote first, then
+// PowerPoint. macOS only; needs Automation permission (prompted on first use).
+// ---------------------------------------------------------------------------
+ipcMain.handle('presentation-control', (_, direction) => {
+  if (process.platform !== 'darwin') return false
+  const keynote = direction === 'prev' ? 'show previous' : 'show next'
+  const ppt = direction === 'prev' ? 'go to previous slide' : 'go to next slide'
+  const script = `
+tell application "System Events" to set procs to name of every process
+if procs contains "Keynote" then
+  try
+    tell application "Keynote" to ${keynote}
+  end try
+else if procs contains "Microsoft PowerPoint" then
+  try
+    tell application "Microsoft PowerPoint" to ${ppt} (slide show view of slide show window 1)
+  end try
+end if`
+  return new Promise(resolve => {
+    execFile('osascript', ['-e', script], err => {
+      if (err) console.warn('[presentation-control]', err.message)
+      resolve(!err)
+    })
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Single-instance lock — must be checked before ANY app lifecycle code

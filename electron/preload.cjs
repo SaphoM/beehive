@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Returns { camera: 'granted'|'denied'|'restricted'|'not-determined', mic: ... }
   requestMediaPermissions: () => ipcRenderer.invoke('request-media-permissions'),
 
+  // Drive the presenter's slideshow (Keynote / PowerPoint) — 'next' | 'prev'
+  presentationControl: (direction) => ipcRenderer.invoke('presentation-control', direction),
+
   // Native OS fullscreen (toggles macOS fullscreen, not just element fullscreen)
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
   getFullscreen: () => ipcRenderer.invoke('get-fullscreen'),

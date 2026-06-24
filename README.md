@@ -103,6 +103,21 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
     - **Minimise (—)** button on the controls bar: collapses to a compact pill (mic · cam · stop share · expand · hide · leave); speaker window hides
     - **Hide (👁)** button: removes all controls from the screen; an amber **"Show controls"** pill appears at the bottom centre to restore
     - Controls auto-restore to full when sharing ends
+- 🔳 **Fullscreen** (`Maximize2` / `Minimize2`, top-right of the main area) — expands the presentation/main area to fill the **entire screen** (web + desktop):
+  - An overlay (`position: fixed; inset: 0`) makes the main area cover the header, chat sidebar, and participants window
+  - Native OS fullscreen is also engaged — Electron via `setFullScreen()` IPC, web via the HTML5 Fullscreen API
+  - **Esc**, the macOS green button, or the collapse button all exit; the exit button stays reachable even when controls are hidden
+- 🪟 **Pop-out** (`ExternalLink`, top-right of the main area) — detaches the shared presentation into its own separate, resizable window (Teams-style), so it can be dragged to a second monitor:
+  - Works on **web** (`window.open`) and **desktop** (Electron `setWindowOpenHandler` spawns a native child window)
+  - Available to the **viewer** (a remote presenter's share) **and** the **presenter** (their own share)
+  - Auto-closes when sharing stops
+- 🎯 **Laser pointer** (`Crosshair`, top-right of the main area) — broadcasts your cursor position to everyone:
+  - Toggle on, then move the mouse over the main area; all participants see a coloured, name-labelled pointer at that spot
+  - Positions are sent over a Supabase Realtime broadcast channel (`cursors:{roomId}`), throttled to ~30 fps; cursor is removed for others when you leave the area or toggle off
+- 🎚️ **Presenter slide control** (desktop only, while sharing) — the presenter can drive their **Keynote / PowerPoint** slideshow from the BeeHive main area or in fullscreen, without switching back to the presentation app:
+  - On-screen **‹ ›** chevrons on the left/right edges of the main area, plus keyboard **← / →**, **Space**, **PageUp / PageDown**
+  - Implemented with AppleScript (`osascript`) via an Electron IPC handler — no native key-injection module required; targets Keynote first, then PowerPoint
+  - Requires macOS **Automation** permission (prompted on first use)
 - 🔊 Speaking indicator (bottom-left):
   - Animated 5-bar equaliser chip with active speaker's first name
   - Floating speaker video window; **Minimise (—)** / **Close (✕)**; reappears for new speaker
@@ -230,18 +245,20 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 beehive/
 ├── src/
 │   └── main.tsx                        # React entry point
-├── RoomPage.tsx                        # All UI components:
-│                                       #   RoomPage (router)
-│                                       #   Lobby + SchedulePanel
-│                                       #   MeetingRoom
-│                                       #   SpeakingIndicator
-│                                       #   BackgroundMenu
-│                                       #   AutoCamWindow
-│                                       #   ScreenShareMenu / ScreenShareBar
-│                                       #   ParticipantsWindow (draggable, dockable)
-│                                       #   DockedParticipantsStrip
-│                                       #   ElectronWindowPicker
-│                                       #   FathomPanel / FathomMeetingRow
+├── RoomPage.tsx                        # Root router (RoomPage) + MeetingRoom
+├── components/                         # Extracted UI components & shared modules
+│   ├── roomUtils.ts                    #   constants, helpers, drawVirtualScene
+│   ├── roomStyles.ts                   #   shared `s` styles object
+│   ├── Lobby.tsx                       #   lobby (Start Now / Schedule tabs)
+│   ├── SchedulePanel.tsx               #   schedule + email-invite panel
+│   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
+│   ├── ParticipantsWindow.tsx          #   draggable/dockable window + strip
+│   ├── BackgroundMenu.tsx              #   background-effects menu
+│   ├── AutoCamWindow.tsx               #   auto-cam floating window
+│   ├── SpeakingIndicator.tsx           #   active-speaker chip + video
+│   ├── ScreenShareMenu.tsx             #   pre-share menu
+│   ├── ScreenShareBar.tsx              #   active-share bar
+│   └── ElectronWindowPicker.tsx        #   desktop window picker
 ├── livekit_react_hooks.tsx             # Hooks: useCreateRoom, useJoinRoom,
 │                                       #   useRoomInfo, useParticipants,
 │                                       #   useChat, useRecordings,
@@ -435,6 +452,10 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Group system — auto-labelled, renameable, group mute
 - [ ] Breakaway discussions — timed sub-rooms with auto-recall
 - [x] Screen sharing (Entire Screen / Select Window / Switch source / Clear screen mode / echo-free web share / Electron no-dialog capture)
+- [x] Fullscreen — expand the main area to fill the entire screen (web + desktop)
+- [x] Pop-out — detach the shared presentation into a separate window (web + desktop, viewer + presenter)
+- [x] Laser pointer — broadcast your cursor to all participants over Supabase Realtime
+- [x] Presenter slide control — drive Keynote / PowerPoint from the main area & fullscreen (macOS desktop, AppleScript)
 - [x] Meeting ended state — last-to-leave marks room ended; invite link shows summary card, blocks re-join
 - [x] Join / leave notifications in chat
 - [x] Auto-end when alone for 10 minutes (countdown banner with Stay option)

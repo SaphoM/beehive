@@ -16,7 +16,7 @@ declare global {
 }
 // Electron adds a .path property to File objects from drag-and-drop / file input
 declare global { interface File { path?: string } }
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText, EyeOff, Minus, Maximize2, Minimize2 } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText, EyeOff, Minus, Maximize2, Minimize2, ExternalLink } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -918,6 +918,105 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
 
+  // Pop-out — opens the remote screen share (or local preview) in a detached browser window
+  // so the viewer can move/resize it independently while keeping controls in the meeting window
+  const popOutWinRef = useRef<Window | null>(null)
+  const [isPoppedOut, setIsPoppedOut] = useState(false)
+
+  const handlePopOut = useCallback(() => {
+    // Focus the existing pop-out window if still open
+    if (popOutWinRef.current && !popOutWinRef.current.closed) {
+      popOutWinRef.current.focus()
+      return
+    }
+
+    // Resolve the underlying MediaStreamTrack from the remote screen share
+    const trackRef = remoteScreenTracks[0]
+    const lkTrack = (trackRef?.publication as any)?.track
+    const mst: MediaStreamTrack | undefined = lkTrack?.mediaStreamTrack
+
+    const w = window.open(
+      '',
+      'beehive-popout',
+      'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no'
+    )
+    if (!w) return
+
+    // Build a self-contained dark-themed player page
+    w.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Shared content | BeeHive</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{width:100%;height:100%;background:#060606;overflow:hidden;font-family:'Roboto',sans-serif}
+    #root{display:flex;flex-direction:column;width:100%;height:100%;align-items:center;justify-content:center}
+    video{width:100%;height:100%;object-fit:contain;background:#060606}
+    #badge{position:fixed;top:14px;left:14px;display:flex;align-items:center;gap:6px;
+           background:rgba(0,0,0,.65);backdrop-filter:blur(6px);border:1px solid #48bb78;
+           border-radius:20px;padding:4px 10px;color:#48bb78;font-size:11px;font-weight:600;letter-spacing:1px}
+    #dot{width:7px;height:7px;border-radius:50%;background:#48bb78;animation:pulse 1.5s ease-in-out infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    #placeholder{color:#555;font-size:14px;font-weight:300;text-align:center;padding:24px}
+  </style>
+</head>
+<body>
+  <div id="root">
+    <video id="v" autoplay playsinline></video>
+    <div id="placeholder" style="display:none">Waiting for shared content…</div>
+  </div>
+  <div id="badge"><div id="dot"></div>LIVE</div>
+</body>
+</html>`)
+    w.document.close()
+
+    const attach = () => {
+      const video = w.document.getElementById('v') as HTMLVideoElement | null
+      const placeholder = w.document.getElementById('placeholder') as HTMLElement | null
+      if (!video) return
+      if (mst) {
+        video.srcObject = new MediaStream([mst])
+        video.play().catch(() => {})
+        if (placeholder) placeholder.style.display = 'none'
+      } else {
+        // No track resolved — show placeholder; the MediaStream may arrive shortly
+        if (placeholder) placeholder.style.display = 'block'
+        video.style.display = 'none'
+      }
+    }
+
+    if (w.document.readyState === 'complete') {
+      attach()
+    } else {
+      w.addEventListener('load', attach)
+    }
+
+    popOutWinRef.current = w
+    setIsPoppedOut(true)
+
+    // Poll so we update state when the user closes the pop-out window
+    const poll = setInterval(() => {
+      if (w.closed) {
+        setIsPoppedOut(false)
+        popOutWinRef.current = null
+        clearInterval(poll)
+      }
+    }, 500)
+  }, [remoteScreenTracks])
+
+  // Close the pop-out automatically when the remote share ends
+  useEffect(() => {
+    if (!hasRemoteScreenShare && popOutWinRef.current && !popOutWinRef.current.closed) {
+      const w = popOutWinRef.current
+      // Give the page a moment to update its title before closing
+      try { w.document.title = 'Share ended — BeeHive' } catch {}
+      setTimeout(() => { if (!w.closed) w.close() }, 1500)
+      setIsPoppedOut(false)
+      popOutWinRef.current = null
+    }
+  }, [hasRemoteScreenShare])
+
   // Background effects state
   const [bgMenuOpen, setBgMenuOpen] = useState(false)
   const [bgEffect, setBgEffect] = useState<'none' | 'blur' | 'image' | 'virtual'>('none')
@@ -1496,15 +1595,28 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             </GridLayout>
           )}
 
-          {/* Expand / collapse main area to fill the whole screen (web + desktop) */}
+          {/* Top-right button cluster: Pop out (remote share only) + Expand/Collapse */}
           {overlayMode !== 'hidden' && (
-            <button
-              onClick={toggleFullscreen}
-              title={isFullscreen ? 'Exit full screen' : 'Expand to full screen'}
-              style={{ position: 'absolute', top: 14, right: 14, zIndex: 30, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: '1px solid #333', borderRadius: 8, color: '#ccc', cursor: 'pointer' }}
-            >
-              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
+            <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 30, display: 'flex', gap: 6 }}>
+              {/* Pop out — only when viewing someone else's screen share */}
+              {hasRemoteScreenShare && (
+                <button
+                  onClick={handlePopOut}
+                  title={isPoppedOut ? 'Pop-out window is open — click to focus' : 'Pop out to new window'}
+                  style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPoppedOut ? 'rgba(66,153,225,0.25)' : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${isPoppedOut ? '#4299e1' : '#333'}`, borderRadius: 8, color: isPoppedOut ? '#4299e1' : '#ccc', cursor: 'pointer' }}
+                >
+                  <ExternalLink size={17} />
+                </button>
+              )}
+              {/* Fullscreen expand / collapse */}
+              <button
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'Exit full screen' : 'Expand to full screen'}
+                style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: '1px solid #333', borderRadius: 8, color: '#ccc', cursor: 'pointer' }}
+              >
+                {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              </button>
+            </div>
           )}
 
           {/* Active Share Bar — hidden when overlay is hidden */}

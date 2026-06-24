@@ -256,39 +256,59 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     }
   }, [])
 
-  // Fullscreen — uses native OS fullscreen in Electron, browser fullscreen on web
+  // Fullscreen — `isFullscreen` drives a CSS overlay that makes the main area
+  // cover the ENTIRE app (header, sidebar, participants all hidden behind it).
+  // We *also* trigger native OS fullscreen so the window fills the whole monitor.
+  // The CSS overlay is the source of truth, so this works even if the native
+  // call is unavailable (e.g. Electron main process not yet reloaded).
   const mainAreaRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
-  const toggleFullscreen = useCallback(async () => {
-    if (window.electronAPI) {
-      // Electron: toggle true OS fullscreen via IPC
-      const next = await window.electronAPI.toggleFullscreen()
-      setIsFullscreen(next)
-    } else {
-      // Web: fullscreen the entire document so OS chrome disappears
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {})
-      } else {
-        document.documentElement.requestFullscreen().catch(() => {})
-      }
+  const goNativeFullscreen = useCallback(async (on: boolean) => {
+    // Prefer Electron's true OS fullscreen (removes the title bar / fills monitor)
+    if (window.electronAPI?.toggleFullscreen) {
+      try {
+        const cur = await window.electronAPI.getFullscreen()
+        if (cur !== on) await window.electronAPI.toggleFullscreen()
+        return
+      } catch { /* fall through to web API */ }
     }
+    // Web (and Electron without the new IPC): HTML5 Fullscreen API
+    try {
+      if (on && !document.fullscreenElement) {
+        await document.documentElement.requestFullscreen()
+      } else if (!on && document.fullscreenElement) {
+        await document.exitFullscreen()
+      }
+    } catch { /* user gesture / unsupported — CSS overlay still applies */ }
   }, [])
 
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => {
+      const next = !prev
+      goNativeFullscreen(next)
+      return next
+    })
+  }, [goNativeFullscreen])
+
   useEffect(() => {
-    // Web: listen for fullscreen change (F11, Escape, browser button)
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    // Web: keep state in sync when the user presses Esc / F11 / browser button
+    const onChange = () => { if (!document.fullscreenElement) setIsFullscreen(false) }
     document.addEventListener('fullscreenchange', onChange)
 
-    // Electron: listen for OS-level fullscreen events (green button, F11, swipe)
+    // Electron: sync when OS fullscreen is toggled via green button / swipe / Esc
     let cleanup: (() => void) | undefined
     if (window.electronAPI?.onFullscreenChange) {
-      cleanup = window.electronAPI.onFullscreenChange(setIsFullscreen)
-      window.electronAPI.getFullscreen().then(setIsFullscreen).catch(() => {})
+      cleanup = window.electronAPI.onFullscreenChange(v => setIsFullscreen(v))
     }
+
+    // Esc always exits the CSS overlay, even if native fullscreen wasn't engaged
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false) }
+    document.addEventListener('keydown', onKey)
 
     return () => {
       document.removeEventListener('fullscreenchange', onChange)
+      document.removeEventListener('keydown', onKey)
       cleanup?.()
     }
   }, [])
@@ -951,7 +971,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         {/* Video Grid */}
         <div
           ref={mainAreaRef}
-          style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#060606', cursor: laserActive ? 'crosshair' : undefined }}
+          style={{
+            ...(isFullscreen
+              ? { position: 'fixed', inset: 0, zIndex: 9000 }
+              : { flex: 1, position: 'relative' }),
+            overflow: 'hidden',
+            background: '#060606',
+            cursor: laserActive ? 'crosshair' : undefined,
+          }}
           onMouseMove={handleMainAreaMouseMove}
           onMouseLeave={handleMainAreaMouseLeave}
         >
@@ -988,8 +1015,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           )}
 
           {/* Top-right button cluster: Laser pointer + Pop out + Expand/Collapse */}
-          {overlayMode !== 'hidden' && (
-            <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 100, display: 'flex', gap: 6 }}>
+          {(overlayMode !== 'hidden' || isFullscreen) && (
+            <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 9100, display: 'flex', gap: 6 }}>
               {/* Laser pointer — show my cursor position to all participants */}
               <button
                 onClick={() => setLaserActive(v => !v)}

@@ -72,6 +72,24 @@ async function createWindow() {
   // Prevent drag-and-drop from navigating the window to the dropped file URL
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
 
+  // Allow window.open() (used by the "Pop out" presentation viewer) to spawn a
+  // real native child window instead of being blocked by Electron's default deny
+  mainWindow.webContents.setWindowOpenHandler(({ frameName }) => {
+    if (frameName === 'beehive-popout') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1280,
+          height: 720,
+          backgroundColor: '#060606',
+          autoHideMenuBar: true,
+          webPreferences: { contextIsolation: true, nodeIntegration: false },
+        },
+      }
+    }
+    return { action: 'allow' }
+  })
+
   // Push OS fullscreen state changes to the renderer (green button, F11, Escape)
   mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('fullscreen-change', true))
   mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('fullscreen-change', false))

@@ -323,9 +323,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       return
     }
 
-    const trackRef = remoteScreenTracks[0]
-    const lkTrack = (trackRef?.publication as any)?.track
-    const mst: MediaStreamTrack | undefined = lkTrack?.mediaStreamTrack
+    // Pick the stream to pop out: a remote presenter's share if we're viewing
+    // one, otherwise our own share if we're the presenter.
+    const remoteTrackRef = remoteScreenTracks[0]
+    const remoteMst: MediaStreamTrack | undefined =
+      ((remoteTrackRef?.publication as any)?.track)?.mediaStreamTrack
+    const localMst: MediaStreamTrack | undefined = localShareStream?.getVideoTracks()[0]
+    const mst: MediaStreamTrack | undefined = remoteMst || localMst
 
     const w = window.open(
       '',
@@ -392,17 +396,19 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         clearInterval(poll)
       }
     }, 500)
-  }, [remoteScreenTracks])
+  }, [remoteScreenTracks, localShareStream])
 
+  // Auto-close the pop-out when there's no longer anything being shared
   useEffect(() => {
-    if (!hasRemoteScreenShare && popOutWinRef.current && !popOutWinRef.current.closed) {
+    const stillSharing = hasRemoteScreenShare || isSharing
+    if (!stillSharing && popOutWinRef.current && !popOutWinRef.current.closed) {
       const w = popOutWinRef.current
       try { w.document.title = 'Share ended — BeeHive' } catch {}
       setTimeout(() => { if (!w.closed) w.close() }, 1500)
       setIsPoppedOut(false)
       popOutWinRef.current = null
     }
-  }, [hasRemoteScreenShare])
+  }, [hasRemoteScreenShare, isSharing])
 
   // Laser pointer — broadcast cursor position to all participants via Supabase realtime
   const CURSOR_COLORS = ['#f5a623', '#48bb78', '#4299e1', '#ed64a6', '#9f7aea', '#ed8936']
@@ -1025,10 +1031,10 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               >
                 <Crosshair size={17} />
               </button>
-              {hasRemoteScreenShare && (
+              {(hasRemoteScreenShare || isSharing) && (
                 <button
                   onClick={handlePopOut}
-                  title={isPoppedOut ? 'Pop-out window is open — click to focus' : 'Pop out to new window'}
+                  title={isPoppedOut ? 'Pop-out window is open — click to focus' : 'Pop out presentation to a separate window'}
                   style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPoppedOut ? 'rgba(66,153,225,0.25)' : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${isPoppedOut ? '#4299e1' : '#333'}`, borderRadius: 8, color: isPoppedOut ? '#4299e1' : '#ccc', cursor: 'pointer' }}
                 >
                   <ExternalLink size={17} />

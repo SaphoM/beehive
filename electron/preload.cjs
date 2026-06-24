@@ -18,4 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Float BeeHive above all other windows (set after opening Keynote/PowerPoint)
   // Call stopFloating() when sharing starts or the modal is cancelled
   stopFloating: () => ipcRenderer.send('stop-floating'),
+
+  // Check & request camera/mic permissions from the main process
+  // Returns { camera: 'granted'|'denied'|'restricted'|'not-determined', mic: ... }
+  requestMediaPermissions: () => ipcRenderer.invoke('request-media-permissions'),
 })

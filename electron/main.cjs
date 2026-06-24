@@ -73,8 +73,15 @@ async function createWindow() {
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
 
   if (isDev) {
-    // Vite dev server — give it a moment to be ready
-    await new Promise(r => setTimeout(r, 1500))
+    // Poll until the Vite dev server is actually responding
+    const http = require('http')
+    await new Promise(r => {
+      const check = () => {
+        http.get('http://localhost:5173', res => { res.resume(); r() })
+          .on('error', () => setTimeout(check, 200))
+      }
+      check()
+    })
     mainWindow.loadURL('http://localhost:5173')
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
@@ -109,6 +116,27 @@ ipcMain.on('stop-floating', () => {
 ipcMain.handle('get-screen-access-status', () => {
   if (process.platform !== 'darwin') return 'granted'
   return systemPreferences.getMediaAccessStatus('screen')
+})
+
+// ---------------------------------------------------------------------------
+// IPC: check & request camera + mic permissions from the main process
+// Called by renderer after window loads so the dialog appears in context
+// ---------------------------------------------------------------------------
+ipcMain.handle('request-media-permissions', async () => {
+  if (process.platform !== 'darwin') return { camera: 'granted', mic: 'granted' }
+  const camStatus = systemPreferences.getMediaAccessStatus('camera')
+  const micStatus = systemPreferences.getMediaAccessStatus('microphone')
+  console.log('[permissions] camera:', camStatus, 'mic:', micStatus)
+  const results = { camera: camStatus, mic: micStatus }
+  if (camStatus === 'not-determined') {
+    results.camera = (await systemPreferences.askForMediaAccess('camera')) ? 'granted' : 'denied'
+    console.log('[permissions] camera after ask:', results.camera)
+  }
+  if (micStatus === 'not-determined') {
+    results.mic = (await systemPreferences.askForMediaAccess('microphone')) ? 'granted' : 'denied'
+    console.log('[permissions] mic after ask:', results.mic)
+  }
+  return results
 })
 
 // ---------------------------------------------------------------------------
@@ -160,12 +188,13 @@ app.on('second-instance', () => {
 // App lifecycle (only runs for the one allowed instance)
 // ---------------------------------------------------------------------------
 app.whenReady().then(async () => {
-  // Request camera + mic permission on macOS so the OS prompt fires before the user
-  // enters a meeting (avoids silent black video / muted mic on first use)
-  if (process.platform === 'darwin') {
-    await systemPreferences.askForMediaAccess('camera')
-    await systemPreferences.askForMediaAccess('microphone')
-  }
+  // Allow camera/mic/screen permission requests from the renderer to pass through
+  // to macOS TCC. Must be set before any window loads.
+  const { session } = require('electron')
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, callback) => {
+    callback(true)
+  })
+  session.defaultSession.setPermissionCheckHandler(() => true)
 
   startBackend()
   await new Promise(r => setTimeout(r, 800)) // let backend bind to :3001

@@ -10,12 +10,13 @@ declare global {
       getDesktopSources: (opts?: { types?: string[]; thumbnailSize?: { width: number; height: number } }) => Promise<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>
       getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
       stopFloating: () => void
+      requestMediaPermissions: () => Promise<{ camera: string; mic: string }>
     }
   }
 }
 // Electron adds a .path property to File objects from drag-and-drop / file input
 declare global { interface File { path?: string } }
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText, EyeOff, Minus } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, Mic, MicOff, Video, VideoOff, X, Monitor, MonitorOff, MonitorX, ArrowLeftRight, CheckSquare, Square, Aperture, Crosshair, Users, Layers, FlipHorizontal, Upload, Paperclip, Download, FileText, EyeOff, Minus, Maximize2, Minimize2 } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -254,6 +255,17 @@ export default function RoomPage() {
     const params = new URLSearchParams(window.location.search)
     const roomId = params.get('room')
     if (roomId) setJoinRoomId(roomId)
+  }, [])
+
+  // Request camera + mic permissions from the main process on app load (Electron only)
+  // This ensures the macOS TCC dialog appears in context, not during an active call
+  useEffect(() => {
+    if (!window.electronAPI?.requestMediaPermissions) return
+    window.electronAPI.requestMediaPermissions().then(r => {
+      console.log('[permissions] camera:', r.camera, 'mic:', r.mic)
+    }).catch(err => {
+      console.error('[permissions] error:', err)
+    })
   }, [])
 
   const handleCreate = async () => {
@@ -796,7 +808,18 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     t.participant.identity !== localParticipant.identity
   )
   const hasRemoteScreenShare = remoteScreenTracks.length > 0
-  const cameraTracks = tracks.filter(t => t.source !== Track.Source.ScreenShare)
+  const cameraTracksRaw = tracks.filter(t => t.source !== Track.Source.ScreenShare)
+  // useTracks with onlySubscribed:false can return both placeholder and real track for
+  // the same participant when camera first enables — deduplicate, keeping the published track
+  const cameraTracks = (() => {
+    const byKey = new Map<string, typeof cameraTracksRaw[0]>()
+    for (const t of cameraTracksRaw) {
+      const key = `${t.participant.identity}-${t.source}`
+      const existing = byKey.get(key)
+      if (!existing || t.publication) byKey.set(key, t)
+    }
+    return [...byKey.values()]
+  })()
   const participants = useParticipants(roomId)
   const { messages, sendMessage } = useChat(roomId)
   const recordings = useRecordings(roomId)
@@ -826,6 +849,19 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [presentQueue, setPresentQueue] = useState<File[]>([])
   const queueInputRef = useRef<HTMLInputElement>(null)
+
+  // Camera diagnostic — log exact getUserMedia result on room entry
+  useEffect(() => {
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        const [track] = stream.getVideoTracks()
+        console.log('[camera-diag] SUCCESS — device:', track?.label, 'enabled:', track?.enabled, 'readyState:', track?.readyState)
+        stream.getTracks().forEach(t => t.stop())
+      })
+      .catch(err => {
+        console.error('[camera-diag] FAILED —', err.name, err.message, err.constraint)
+      })
+  }, [])
 
   // Window-level drag listeners — child <video> elements swallow React div-level events
   useEffect(() => {
@@ -862,6 +898,24 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       window.removeEventListener('dragleave', onDragLeave)
       window.removeEventListener('drop', onDrop)
     }
+  }, [])
+
+  // Fullscreen (expand main area to fill the whole computer screen — web + desktop)
+  const mainAreaRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const toggleFullscreen = useCallback(() => {
+    const el = mainAreaRef.current
+    if (!el) return
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {})
+    } else {
+      el.requestFullscreen().catch(() => {})
+    }
+  }, [])
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
 
   // Background effects state
@@ -1407,7 +1461,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         )}
 
         {/* Video Grid */}
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div ref={mainAreaRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#060606' }}>
           {hasRemoteScreenShare ? (
             <ParticipantTile
               trackRef={remoteScreenTracks[0]}
@@ -1440,6 +1494,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
               <ParticipantTile />
             </GridLayout>
+          )}
+
+          {/* Expand / collapse main area to fill the whole screen (web + desktop) */}
+          {overlayMode !== 'hidden' && (
+            <button
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Exit full screen' : 'Expand to full screen'}
+              style={{ position: 'absolute', top: 14, right: 14, zIndex: 30, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: '1px solid #333', borderRadius: 8, color: '#ccc', cursor: 'pointer' }}
+            >
+              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
           )}
 
           {/* Active Share Bar — hidden when overlay is hidden */}

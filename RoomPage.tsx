@@ -313,102 +313,10 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     }
   }, [])
 
-  // Pop-out — opens the remote screen share in a detached browser window
+  // Pop-out — opens the shared presentation in a detached window. The handler
+  // and its effect live further down (after the share state they depend on).
   const popOutWinRef = useRef<Window | null>(null)
   const [isPoppedOut, setIsPoppedOut] = useState(false)
-
-  const handlePopOut = useCallback(() => {
-    if (popOutWinRef.current && !popOutWinRef.current.closed) {
-      popOutWinRef.current.focus()
-      return
-    }
-
-    // Pick the stream to pop out: a remote presenter's share if we're viewing
-    // one, otherwise our own share if we're the presenter.
-    const remoteTrackRef = remoteScreenTracks[0]
-    const remoteMst: MediaStreamTrack | undefined =
-      ((remoteTrackRef?.publication as any)?.track)?.mediaStreamTrack
-    const localMst: MediaStreamTrack | undefined = localShareStream?.getVideoTracks()[0]
-    const mst: MediaStreamTrack | undefined = remoteMst || localMst
-
-    const w = window.open(
-      '',
-      'beehive-popout',
-      'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no'
-    )
-    if (!w) return
-
-    w.document.write(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>Shared content | BeeHive</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    html,body{width:100%;height:100%;background:#060606;overflow:hidden;font-family:'Roboto',sans-serif}
-    #root{display:flex;flex-direction:column;width:100%;height:100%;align-items:center;justify-content:center}
-    video{width:100%;height:100%;object-fit:contain;background:#060606}
-    #badge{position:fixed;top:14px;left:14px;display:flex;align-items:center;gap:6px;
-           background:rgba(0,0,0,.65);backdrop-filter:blur(6px);border:1px solid #48bb78;
-           border-radius:20px;padding:4px 10px;color:#48bb78;font-size:11px;font-weight:600;letter-spacing:1px}
-    #dot{width:7px;height:7px;border-radius:50%;background:#48bb78;animation:pulse 1.5s ease-in-out infinite}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-    #placeholder{color:#555;font-size:14px;font-weight:300;text-align:center;padding:24px}
-  </style>
-</head>
-<body>
-  <div id="root">
-    <video id="v" autoplay playsinline></video>
-    <div id="placeholder" style="display:none">Waiting for shared content…</div>
-  </div>
-  <div id="badge"><div id="dot"></div>LIVE</div>
-</body>
-</html>`)
-    w.document.close()
-
-    const attach = () => {
-      const video = w.document.getElementById('v') as HTMLVideoElement | null
-      const placeholder = w.document.getElementById('placeholder') as HTMLElement | null
-      if (!video) return
-      if (mst) {
-        video.srcObject = new MediaStream([mst])
-        video.play().catch(() => {})
-        if (placeholder) placeholder.style.display = 'none'
-      } else {
-        if (placeholder) placeholder.style.display = 'block'
-        video.style.display = 'none'
-      }
-    }
-
-    if (w.document.readyState === 'complete') {
-      attach()
-    } else {
-      w.addEventListener('load', attach)
-    }
-
-    popOutWinRef.current = w
-    setIsPoppedOut(true)
-
-    const poll = setInterval(() => {
-      if (w.closed) {
-        setIsPoppedOut(false)
-        popOutWinRef.current = null
-        clearInterval(poll)
-      }
-    }, 500)
-  }, [remoteScreenTracks, localShareStream])
-
-  // Auto-close the pop-out when there's no longer anything being shared
-  useEffect(() => {
-    const stillSharing = hasRemoteScreenShare || isSharing
-    if (!stillSharing && popOutWinRef.current && !popOutWinRef.current.closed) {
-      const w = popOutWinRef.current
-      try { w.document.title = 'Share ended — BeeHive' } catch {}
-      setTimeout(() => { if (!w.closed) w.close() }, 1500)
-      setIsPoppedOut(false)
-      popOutWinRef.current = null
-    }
-  }, [hasRemoteScreenShare, isSharing])
 
   // Laser pointer — broadcast cursor position to all participants via Supabase realtime
   const CURSOR_COLORS = ['#f5a623', '#48bb78', '#4299e1', '#ed64a6', '#9f7aea', '#ed8936']
@@ -677,6 +585,101 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       setActiveSlot(s => s === 'primary' ? 'secondary' : 'primary')
     } catch { /* track replacement failed */ }
   }, [secondaryStream, localParticipant])
+
+  // Pop-out handler — defined here so it can read share state (localShareStream,
+  // isSharing) which is declared above. Opens the presentation in a new window.
+  const handlePopOut = useCallback(() => {
+    if (popOutWinRef.current && !popOutWinRef.current.closed) {
+      popOutWinRef.current.focus()
+      return
+    }
+
+    // Pick the stream to pop out: a remote presenter's share if we're viewing
+    // one, otherwise our own share if we're the presenter.
+    const remoteTrackRef = remoteScreenTracks[0]
+    const remoteMst: MediaStreamTrack | undefined =
+      ((remoteTrackRef?.publication as any)?.track)?.mediaStreamTrack
+    const localMst: MediaStreamTrack | undefined = localShareStream?.getVideoTracks()[0]
+    const mst: MediaStreamTrack | undefined = remoteMst || localMst
+
+    const w = window.open(
+      '',
+      'beehive-popout',
+      'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no'
+    )
+    if (!w) return
+
+    w.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Shared content | BeeHive</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{width:100%;height:100%;background:#060606;overflow:hidden;font-family:'Roboto',sans-serif}
+    #root{display:flex;flex-direction:column;width:100%;height:100%;align-items:center;justify-content:center}
+    video{width:100%;height:100%;object-fit:contain;background:#060606}
+    #badge{position:fixed;top:14px;left:14px;display:flex;align-items:center;gap:6px;
+           background:rgba(0,0,0,.65);backdrop-filter:blur(6px);border:1px solid #48bb78;
+           border-radius:20px;padding:4px 10px;color:#48bb78;font-size:11px;font-weight:600;letter-spacing:1px}
+    #dot{width:7px;height:7px;border-radius:50%;background:#48bb78;animation:pulse 1.5s ease-in-out infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    #placeholder{color:#555;font-size:14px;font-weight:300;text-align:center;padding:24px}
+  </style>
+</head>
+<body>
+  <div id="root">
+    <video id="v" autoplay playsinline></video>
+    <div id="placeholder" style="display:none">Waiting for shared content…</div>
+  </div>
+  <div id="badge"><div id="dot"></div>LIVE</div>
+</body>
+</html>`)
+    w.document.close()
+
+    const attach = () => {
+      const video = w.document.getElementById('v') as HTMLVideoElement | null
+      const placeholder = w.document.getElementById('placeholder') as HTMLElement | null
+      if (!video) return
+      if (mst) {
+        video.srcObject = new MediaStream([mst])
+        video.play().catch(() => {})
+        if (placeholder) placeholder.style.display = 'none'
+      } else {
+        if (placeholder) placeholder.style.display = 'block'
+        video.style.display = 'none'
+      }
+    }
+
+    if (w.document.readyState === 'complete') {
+      attach()
+    } else {
+      w.addEventListener('load', attach)
+    }
+
+    popOutWinRef.current = w
+    setIsPoppedOut(true)
+
+    const poll = setInterval(() => {
+      if (w.closed) {
+        setIsPoppedOut(false)
+        popOutWinRef.current = null
+        clearInterval(poll)
+      }
+    }, 500)
+  }, [remoteScreenTracks, localShareStream])
+
+  // Auto-close the pop-out when there's no longer anything being shared
+  useEffect(() => {
+    const stillSharing = hasRemoteScreenShare || isSharing
+    if (!stillSharing && popOutWinRef.current && !popOutWinRef.current.closed) {
+      const w = popOutWinRef.current
+      try { w.document.title = 'Share ended — BeeHive' } catch {}
+      setTimeout(() => { if (!w.closed) w.close() }, 1500)
+      setIsPoppedOut(false)
+      popOutWinRef.current = null
+    }
+  }, [hasRemoteScreenShare, isSharing])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })

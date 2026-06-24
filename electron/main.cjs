@@ -72,6 +72,10 @@ async function createWindow() {
   // Prevent drag-and-drop from navigating the window to the dropped file URL
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
 
+  // Push OS fullscreen state changes to the renderer (green button, F11, Escape)
+  mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('fullscreen-change', true))
+  mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('fullscreen-change', false))
+
   if (isDev) {
     // Poll until the Vite dev server is actually responding
     const http = require('http')
@@ -164,6 +168,19 @@ ipcMain.handle('get-desktop-sources', async (_, opts = {}) => {
     return []
   }
 })
+
+// ---------------------------------------------------------------------------
+// IPC: native OS fullscreen toggle (web requestFullscreen only fills the window;
+// this toggles the actual macOS / Windows fullscreen mode)
+// ---------------------------------------------------------------------------
+ipcMain.handle('toggle-fullscreen', () => {
+  if (!mainWindow) return false
+  const next = !mainWindow.isFullScreen()
+  mainWindow.setFullScreen(next)
+  return next
+})
+
+ipcMain.handle('get-fullscreen', () => mainWindow?.isFullScreen() ?? false)
 
 // ---------------------------------------------------------------------------
 // Single-instance lock — must be checked before ANY app lifecycle code

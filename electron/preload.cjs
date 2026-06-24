@@ -22,4 +22,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Check & request camera/mic permissions from the main process
   // Returns { camera: 'granted'|'denied'|'restricted'|'not-determined', mic: ... }
   requestMediaPermissions: () => ipcRenderer.invoke('request-media-permissions'),
+
+  // Native OS fullscreen (toggles macOS fullscreen, not just element fullscreen)
+  toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+  getFullscreen: () => ipcRenderer.invoke('get-fullscreen'),
+  onFullscreenChange: (cb) => {
+    const handler = (_, v) => cb(v)
+    ipcRenderer.on('fullscreen-change', handler)
+    return () => ipcRenderer.off('fullscreen-change', handler)
+  },
 })

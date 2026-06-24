@@ -10,6 +10,9 @@ declare global {
       getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
       stopFloating: () => void
       requestMediaPermissions: () => Promise<{ camera: string; mic: string }>
+      toggleFullscreen: () => Promise<boolean>
+      getFullscreen: () => Promise<boolean>
+      onFullscreenChange: (cb: (v: boolean) => void) => () => void
     }
   }
 }
@@ -253,22 +256,41 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     }
   }, [])
 
-  // Fullscreen (expand main area to fill the whole computer screen — web + desktop)
+  // Fullscreen — uses native OS fullscreen in Electron, browser fullscreen on web
   const mainAreaRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const toggleFullscreen = useCallback(() => {
-    const el = mainAreaRef.current
-    if (!el) return
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {})
+
+  const toggleFullscreen = useCallback(async () => {
+    if (window.electronAPI) {
+      // Electron: toggle true OS fullscreen via IPC
+      const next = await window.electronAPI.toggleFullscreen()
+      setIsFullscreen(next)
     } else {
-      el.requestFullscreen().catch(() => {})
+      // Web: fullscreen the entire document so OS chrome disappears
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {})
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {})
+      }
     }
   }, [])
+
   useEffect(() => {
+    // Web: listen for fullscreen change (F11, Escape, browser button)
     const onChange = () => setIsFullscreen(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', onChange)
-    return () => document.removeEventListener('fullscreenchange', onChange)
+
+    // Electron: listen for OS-level fullscreen events (green button, F11, swipe)
+    let cleanup: (() => void) | undefined
+    if (window.electronAPI?.onFullscreenChange) {
+      cleanup = window.electronAPI.onFullscreenChange(setIsFullscreen)
+      window.electronAPI.getFullscreen().then(setIsFullscreen).catch(() => {})
+    }
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      cleanup?.()
+    }
   }, [])
 
   // Pop-out — opens the remote screen share in a detached browser window
@@ -361,6 +383,53 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
       popOutWinRef.current = null
     }
   }, [hasRemoteScreenShare])
+
+  // Laser pointer — broadcast cursor position to all participants via Supabase realtime
+  const CURSOR_COLORS = ['#f5a623', '#48bb78', '#4299e1', '#ed64a6', '#9f7aea', '#ed8936']
+  const myColor = CURSOR_COLORS[displayName.charCodeAt(0) % CURSOR_COLORS.length]
+  const [laserActive, setLaserActive] = useState(false)
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; color: string }>>(new Map())
+  const cursorChannelRef = useRef<any>(null)
+  const lastCursorSend = useRef(0)
+
+  useEffect(() => {
+    const channel = supabase.channel(`cursors:${roomId}`, { config: { broadcast: { self: false } } })
+    channel.on('broadcast', { event: 'cursor' }, ({ payload }: any) => {
+      setRemoteCursors(prev => {
+        const next = new Map(prev)
+        next.set(payload.name, { x: payload.x, y: payload.y, color: payload.color })
+        return next
+      })
+    })
+    channel.on('broadcast', { event: 'cursor-off' }, ({ payload }: any) => {
+      setRemoteCursors(prev => { const next = new Map(prev); next.delete(payload.name); return next })
+    })
+    channel.subscribe()
+    cursorChannelRef.current = channel
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId])
+
+  const handleMainAreaMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!laserActive || !cursorChannelRef.current) return
+    const now = Date.now()
+    if (now - lastCursorSend.current < 33) return // ~30fps throttle
+    lastCursorSend.current = now
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    cursorChannelRef.current.send({ type: 'broadcast', event: 'cursor', payload: { name: displayName, x, y, color: myColor } })
+  }, [laserActive, displayName, myColor])
+
+  const handleMainAreaMouseLeave = useCallback(() => {
+    if (!laserActive || !cursorChannelRef.current) return
+    cursorChannelRef.current.send({ type: 'broadcast', event: 'cursor-off', payload: { name: displayName } })
+  }, [laserActive, displayName])
+
+  useEffect(() => {
+    if (!laserActive && cursorChannelRef.current) {
+      cursorChannelRef.current.send({ type: 'broadcast', event: 'cursor-off', payload: { name: displayName } })
+    }
+  }, [laserActive, displayName])
 
   // Background effects state
   const [bgMenuOpen, setBgMenuOpen] = useState(false)
@@ -880,7 +949,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
         )}
 
         {/* Video Grid */}
-        <div ref={mainAreaRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#060606' }}>
+        <div
+          ref={mainAreaRef}
+          style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#060606', cursor: laserActive ? 'crosshair' : undefined }}
+          onMouseMove={handleMainAreaMouseMove}
+          onMouseLeave={handleMainAreaMouseLeave}
+        >
           {hasRemoteScreenShare ? (
             <ParticipantTile
               trackRef={remoteScreenTracks[0]}
@@ -913,9 +987,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             </GridLayout>
           )}
 
-          {/* Top-right button cluster: Pop out + Expand/Collapse */}
+          {/* Top-right button cluster: Laser pointer + Pop out + Expand/Collapse */}
           {overlayMode !== 'hidden' && (
-            <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 30, display: 'flex', gap: 6 }}>
+            <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 100, display: 'flex', gap: 6 }}>
+              {/* Laser pointer — show my cursor position to all participants */}
+              <button
+                onClick={() => setLaserActive(v => !v)}
+                title={laserActive ? 'Turn off laser pointer' : 'Laser pointer — show your cursor to everyone'}
+                style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: laserActive ? `${myColor}33` : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${laserActive ? myColor : '#333'}`, borderRadius: 8, color: laserActive ? myColor : '#ccc', cursor: 'pointer' }}
+              >
+                <Crosshair size={17} />
+              </button>
               {hasRemoteScreenShare && (
                 <button
                   onClick={handlePopOut}
@@ -958,6 +1040,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
           {/* Speaking Indicator */}
           <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} />
+
+          {/* Remote laser pointer cursors */}
+          {Array.from(remoteCursors.entries()).map(([name, cur]) => (
+            <div
+              key={name}
+              style={{ position: 'absolute', left: `${cur.x * 100}%`, top: `${cur.y * 100}%`, zIndex: 90, pointerEvents: 'none', transform: 'translate(-50%, -50%)' }}
+            >
+              <div style={{ width: 14, height: 14, borderRadius: '50%', background: cur.color, border: '2px solid #fff', boxShadow: `0 0 8px ${cur.color}` }} />
+              <span style={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', background: cur.color, color: '#000', fontSize: 10, fontWeight: 700, fontFamily: "'Roboto', sans-serif", borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' as const, letterSpacing: 0.5 }}>{name.split(' ')[0]}</span>
+            </div>
+          ))}
 
           {/* Floating Reactions */}
           <div style={s.reactionFloat}>

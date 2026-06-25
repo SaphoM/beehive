@@ -16,7 +16,8 @@
 
       /* ── Mobile: lift speaking indicator above controls bar ─────────── */
       @media (max-width: 640px) {
-        .speaking-wrap { bottom: 120px !important; }
+        /* safe-area accounts for home indicator (34px on iPhone 13); +130px clears the controls bar */
+        .speaking-wrap { bottom: calc(env(safe-area-inset-bottom, 0px) + 130px) !important; }
         /* Hide the full speaker video window on mobile (chip only) */
         .speaking-wrap > div:first-child { display: none !important; }
       }

@@ -223,7 +223,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   // Mobile responsive
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 640)
-  const [isSmallPhone, setIsSmallPhone] = useState(() => window.innerWidth <= 390)
+  const [isSmallPhone, setIsSmallPhone] = useState(() => window.innerWidth <= 430)
   const [showMobileEmoji, setShowMobileEmoji] = useState(false)
   const [emojiTrigger, setEmojiTrigger] = useState<'hand' | 'smile'>('hand')
   const [showMoreMobile, setShowMoreMobile] = useState(false)
@@ -232,7 +232,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   useEffect(() => {
     const onResize = () => {
       setIsMobile(window.innerWidth <= 640)
-      setIsSmallPhone(window.innerWidth <= 390)
+      setIsSmallPhone(window.innerWidth <= 430)
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -1097,15 +1097,18 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           {/* Top-right button cluster: Laser pointer + Pop out + Expand/Collapse */}
           {(overlayMode !== 'hidden' || isFullscreen) && (
             <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 9100, display: 'flex', gap: 6 }}>
-              {/* Laser pointer — show my cursor position to all participants */}
-              <button
-                onClick={() => setLaserActive(v => !v)}
-                title={laserActive ? 'Turn off laser pointer' : 'Laser pointer — show your cursor to everyone'}
-                style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: laserActive ? `${myColor}33` : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${laserActive ? myColor : '#333'}`, borderRadius: 8, color: laserActive ? myColor : '#ccc', cursor: 'pointer' }}
-              >
-                <Crosshair size={17} />
-              </button>
-              {(hasRemoteScreenShare || isSharing) && (
+              {/* Laser pointer — desktop only (needs mouse cursor) */}
+              {!isMobile && (
+                <button
+                  onClick={() => setLaserActive(v => !v)}
+                  title={laserActive ? 'Turn off laser pointer' : 'Laser pointer — show your cursor to everyone'}
+                  style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: laserActive ? `${myColor}33` : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${laserActive ? myColor : '#333'}`, borderRadius: 8, color: laserActive ? myColor : '#ccc', cursor: 'pointer' }}
+                >
+                  <Crosshair size={17} />
+                </button>
+              )}
+              {/* Pop-out presentation — desktop only */}
+              {!isMobile && (hasRemoteScreenShare || isSharing) && (
                 <button
                   onClick={handlePopOut}
                   title={isPoppedOut ? 'Pop-out window is open — click to focus' : 'Pop out presentation to a separate window'}

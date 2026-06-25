@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BeeHive — X Spark</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,14 +27,42 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Set --vh to the real inner height so iOS Safari layouts don't hide behind browser chrome -->
+    <!--
+      Responsive zoom-to-fit: render the page at a fixed "design width" (the
+      smallest modern phone, 375px = iPhone SE / 13 mini) and let the browser
+      scale that layout up or down to match the actual device on load. This
+      keeps the in-meeting UI identical across all phone sizes and guarantees
+      nothing is ever cut off, regardless of screen width.
+
+      --vh is also set to the (scaled) inner height so iOS Safari layouts don't
+      hide behind the browser chrome.
+    -->
     <script>
-      function setVH() {
-        document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
-      }
-      setVH();
-      window.addEventListener('resize', setVH);
-      window.addEventListener('orientationchange', function () { setTimeout(setVH, 120); });
+      (function () {
+        var DESIGN_WIDTH = 375; // smallest modern iPhone (SE / 13 mini)
+        var meta = document.getElementById('viewport-meta');
+
+        function setVH() {
+          document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
+        }
+
+        function applyViewport() {
+          // Real device width in CSS px — screen.width is unaffected by our override
+          var deviceW = (window.screen && window.screen.width) ? window.screen.width : window.innerWidth;
+          if (deviceW <= 640) {
+            // Zoom the 375px design to fit this phone (zooms in on larger phones,
+            // out on tiny ones). user-scalable left on for accessibility pinch-zoom.
+            meta.setAttribute('content', 'width=' + DESIGN_WIDTH + ', initial-scale=' + (deviceW / DESIGN_WIDTH));
+          } else {
+            meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
+          }
+          setVH();
+        }
+
+        applyViewport();
+        window.addEventListener('resize', setVH);
+        window.addEventListener('orientationchange', function () { setTimeout(applyViewport, 150); });
+      })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

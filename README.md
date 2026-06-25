@@ -64,11 +64,13 @@ Compact single-row header; timer and secondary controls move elsewhere to save s
 
 | Element | Notes |
 |---------|-------|
-| **BEE**HIVE wordmark | Smaller font (12 px, letterSpacing 2) |
-| Participant count pill | Display only — tap does not open floating window; main grid is always the primary view |
-| Leave | Compact red button; always visible |
+| **BEE**HIVE wordmark | Smaller font (12 px, letterSpacing 2); `whiteSpace: nowrap`; left side shrinks before right |
+| Participant count pill | Shows full `N participant(s)` on phones > 430 px; shows count number only (e.g. `3`) on ≤ 430 px to prevent overflow |
+| Leave | Compact red button (`flexShrink: 0`); always fully visible |
 | Chat, Stop Sharing | Hidden from header — Chat accessible via `+` More panel |
 | **Meeting timer** | Floating pill overlaid at the top-centre of the video area (not in the header) |
+
+Header flex is `minWidth: 0` / `flexShrink: 1` on the left group and `flexShrink: 0` on the right — left content compresses, Leave button stays whole on every screen size.
 
 #### Controls Bar — Desktop (left → right)
 | Control | Icon | Notes |
@@ -96,6 +98,8 @@ Two rows stack above each other; emoji panel floats above the More row.
 | Invite Link | `Link` | Copy room link |
 | Leave | `PhoneOff` | Red; end call |
 | More | `Plus` | Toggle the More row (grey when open) |
+
+Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider mobile screens. Gap and padding reduce proportionally so the row always fits within the device width.
 
 **More row** (appears above primary row when `+` tapped, spans full screen width):
 | Control | Icon | Notes |
@@ -143,11 +147,11 @@ Two rows stack above each other; emoji panel floats above the More row.
   - An overlay (`position: fixed; inset: 0`) makes the main area cover the header, chat sidebar, and participants window
   - Native OS fullscreen is also engaged — Electron via `setFullScreen()` IPC, web via the HTML5 Fullscreen API
   - **Esc**, the macOS green button, or the collapse button all exit; the exit button stays reachable even when controls are hidden
-- 🪟 **Pop-out** (`ExternalLink`, top-right of the main area) — detaches the shared presentation into its own separate, resizable window (Teams-style), so it can be dragged to a second monitor:
+- 🪟 **Pop-out** (`ExternalLink`, top-right of the main area, **desktop only**) — detaches the shared presentation into its own separate, resizable window (Teams-style), so it can be dragged to a second monitor:
   - Works on **web** (`window.open`) and **desktop** (Electron `setWindowOpenHandler` spawns a native child window)
   - Available to the **viewer** (a remote presenter's share) **and** the **presenter** (their own share)
   - Auto-closes when sharing stops
-- 🎯 **Laser pointer** (`Crosshair`, top-right of the main area) — broadcasts your cursor position to everyone:
+- 🎯 **Laser pointer** (`Crosshair`, top-right of the main area, **desktop only**) — broadcasts your cursor position to everyone:
   - Toggle on, then move the mouse over the main area; all participants see a coloured, name-labelled pointer at that spot
   - Positions are sent over a Supabase Realtime broadcast channel (`cursors:{roomId}`), throttled to ~30 fps; cursor is removed for others when you leave the area or toggle off
 - 🎚️ **Presenter slide control** (desktop only, while sharing) — the presenter can drive their **Keynote / PowerPoint** slideshow from the BeeHive main area or in fullscreen, without switching back to the presentation app:
@@ -388,6 +392,54 @@ PORT=3001
 
 ---
 
+## Mobile Web Responsive Design
+
+BeeHive's in-meeting UI is fully responsive for mobile browsers (iOS Safari, Android Chrome).
+
+### Viewport Zoom-to-Fit
+
+The page uses a **fixed 375 px design width** (iPhone SE / 13 mini — the smallest modern phone) and scales the viewport `initial-scale` on load so the layout fills any phone screen exactly, with nothing cut off:
+
+```
+375 px device  →  scale 1.00  (SE, 13 mini)
+390 px device  →  scale 1.04  (iPhone 13, 14)
+393 px device  →  scale 1.05  (iPhone 14 Pro, 15)
+430 px device  →  scale 1.15  (iPhone 13/14 Pro Max)
+```
+
+Tablet and desktop (> 640 px) revert to `width=device-width, initial-scale=1.0`.
+
+Implemented via a synchronous `<script>` in `index.html` (before React loads) that reads `window.screen.width` and sets the `<meta name="viewport">` content. Re-applied on `orientationchange`.
+
+### iOS Safari Viewport Height (`--vh`)
+
+iOS Safari's `100vh` includes the browser chrome (address bar + toolbar), so layout using `height: 100vh` would extend behind the UI. BeeHive sets a `--vh` CSS custom property equal to `window.innerHeight` (the real available height) on load, resize, and orientation change. All full-screen containers use `height: var(--vh, 100vh)` instead.
+
+### Breakpoints
+
+| Variable | Threshold | Used for |
+|----------|-----------|---------|
+| `isMobile` | `≤ 640 px` | Switch to mobile controls bar, compact header, floating timer |
+| `isSmallPhone` | `≤ 430 px` | 40 px buttons, tighter gaps, count-only participant pill |
+
+### Safe-Area Clearance
+
+Controls bar bottom padding: `calc(env(safe-area-inset-bottom, 0px) + 72px)` — clears the home indicator (34 px on iPhone 13+) plus browser toolbar.
+
+Speaking indicator bottom: `calc(env(safe-area-inset-bottom, 0px) + 130px)` — clears the controls bar.
+
+### Mobile-Only / Desktop-Only Features
+
+| Feature | Mobile | Desktop |
+|---------|--------|---------|
+| Laser pointer | Hidden (needs mouse cursor) | Visible |
+| Pop-out presentation | Hidden (no multi-window on mobile) | Visible |
+| Participant window popup | Hidden (main grid is primary view) | Clickable pill |
+| Floating timer | Shown in video area | Shown in header |
+| Chat / Stop Sharing | In `+` More panel | In header |
+
+---
+
 ## Running Locally
 
 **Web (two terminals):**
@@ -398,6 +450,8 @@ npm run dev:backend     # → BeeHive backend on :3001
 # Terminal 2
 npm run dev:frontend    # → http://localhost:5173
 ```
+
+> **Port note:** BeeHive owns port **5173**. If another project also uses Vite on 5173, move that project's `.claude/launch.json` to a different port (e.g. 5174) to avoid conflicts.
 
 **Desktop app:**
 ```bash
@@ -499,7 +553,8 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [ ] Recording playback UI
 - [ ] DUT organisation SSO
 - [ ] Syspro integration (government contracts)
-- [ ] Mobile (React Native + LiveKit mobile SDK)
+- [x] Mobile web responsive — zoom-to-fit viewport, iOS safe-area, small-phone button sizing, no horizontal overflow (all modern iPhone sizes)
+- [ ] Mobile native app (React Native + LiveKit mobile SDK)
 - [x] Fathom integration — meeting summaries, action items, transcript viewer
 - [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation)
 - [x] File sharing — drag-to-drop or paperclip; send to all or select attendees; Supabase Storage

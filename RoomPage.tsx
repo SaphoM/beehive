@@ -224,6 +224,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   // Mobile responsive
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 640)
   const [showMobileEmoji, setShowMobileEmoji] = useState(false)
+  const [emojiTrigger, setEmojiTrigger] = useState<'hand' | 'smile'>('hand')
   const [showMoreMobile, setShowMoreMobile] = useState(false)
   const [showReactions, setShowReactions] = useState(false)
 
@@ -1173,7 +1174,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
                   {/* Emoji panel — appears above primary bar, not over buttons */}
                   {showMobileEmoji && (
-                    <div style={{ display: 'flex', gap: 6, background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 30, padding: '8px 14px', border: '1px solid #2a2a2a' }}>
+                    <div style={{ display: 'flex', gap: 4, background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 30, padding: '6px 10px', border: '1px solid #2a2a2a', maxWidth: 'calc(100vw - 40px)', justifyContent: 'center' }}>
                       {REACTIONS.map(e => (
                         <button key={e} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', padding: '2px 4px', borderRadius: 8 }} onClick={() => { sendReaction(e); setShowMobileEmoji(false) }}>{e}</button>
                       ))}
@@ -1272,8 +1273,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                       </button>
                       {/* Emoji toggle — shows panel above this row */}
                       <button
-                        style={{ ...mb, ...(showMobileEmoji ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
-                        onClick={() => setShowMobileEmoji(v => !v)}
+                        style={{ ...mb, ...(showMobileEmoji && emojiTrigger === 'smile' ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
+                        onClick={() => { setEmojiTrigger('smile'); setShowMobileEmoji(v => !v) }}
                         title="Reactions"
                       >
                         <Smile size={18} />
@@ -1286,8 +1287,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                     <TrackToggle source={Track.Source.Microphone} style={mb} showIcon />
                     <TrackToggle source={Track.Source.Camera} style={mb} showIcon />
                     <button
-                      style={{ ...mb, ...(showMobileEmoji ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
-                      onClick={() => { setShowMobileEmoji(v => !v); setShowMoreMobile(false) }}
+                      style={{ ...mb, ...(showMobileEmoji && emojiTrigger === 'hand' ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
+                      onClick={() => { setEmojiTrigger('hand'); setShowMobileEmoji(v => !v); setShowMoreMobile(false) }}
                       title="Reactions"
                     >
                       <Hand size={18} />

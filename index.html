@@ -14,45 +14,11 @@
       @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
       .controls-bar::-webkit-scrollbar { display: none; }
 
-      /* ── Mobile responsive controls bar ─────────────────────────────── */
+      /* ── Mobile: lift speaking indicator above controls bar ─────────── */
       @media (max-width: 640px) {
-        .controls-bar {
-          flex-wrap: wrap !important;
-          max-width: calc(100vw - 20px) !important;
-          justify-content: center !important;
-          gap: 6px !important;
-          padding: 8px 10px !important;
-          border-radius: 16px !important;
-          bottom: 10px !important;
-        }
-        /* Square icon buttons */
-        .controls-bar > button,
-        .controls-bar > div > button,
-        .controls-bar [data-lk-source],
-        .controls-bar lk-track-toggle,
-        .controls-bar > div {
-          width: 42px !important;
-          height: 42px !important;
-          min-width: 42px !important;
-          min-height: 42px !important;
-        }
-        /* Shrink icons slightly */
-        .controls-bar svg { width: 17px !important; height: 17px !important; }
-        /* "Stop Sharing" text button — make it compact */
-        .controls-bar button[title="Stop sharing"] {
-          width: auto !important;
-          padding: 0 10px !important;
-          height: 38px !important;
-          font-size: 11px !important;
-        }
-        /* Speaking indicator — float above the controls bar */
-        .speaking-wrap {
-          bottom: 115px !important;
-        }
-        /* Hide the full speaker video window on mobile — chip only */
-        .speaking-wrap > div:first-child:not(.speaking-chip) {
-          display: none !important;
-        }
+        .speaking-wrap { bottom: 120px !important; }
+        /* Hide the full speaker video window on mobile (chip only) */
+        .speaking-wrap > div:first-child { display: none !important; }
       }
     </style>
   </head>

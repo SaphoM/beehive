@@ -59,19 +59,44 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Chat toggle | Right | Opens/closes chat sidebar |
 | Leave | Right | Red; disconnects and returns to lobby |
 
-#### Controls Bar (left → right)
+#### Controls Bar — Desktop (left → right)
 | Control | Icon | Notes |
 |---------|------|-------|
 | Mic | `TrackToggle` | LiveKit-managed; mute/unmute |
 | Camera | `TrackToggle` | LiveKit-managed; on/off |
 | Background | `Layers` | Opens background effects menu; amber when active |
 | Auto Cam | `Aperture` | Opens cam mode menu; blue when active |
-| Reactions | `Hand` | Hover to reveal emoji picker; floating animations |
+| Reactions | `Hand` | Click to toggle emoji picker above bar; floating animations |
 | Invite Link | `Link` / `Link2Off` | Copies `?room=ROOM_ID`; icon changes on copy |
 | Video Quality | `Film` + HD badge | Low 360p / Medium 720p / High 1080p dropdown |
 | Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active; click again to stop |
-| **Stop Sharing** | `MonitorOff` + label | Red pill — appears in controls bar **and** in the header when actively sharing (web + desktop) |
+| **Stop Sharing** | `MonitorOff` + label | Red pill — appears in controls bar **and** in the header when actively sharing |
 | Leave | `PhoneOff` | Red; disconnects and returns to lobby |
+
+#### Controls Bar — Mobile (≤ 640 px)
+Two rows stack above each other; emoji panel floats above the More row.
+
+**Primary row** (always visible, centered, full-width safe area):
+| Control | Icon | Notes |
+|---------|------|-------|
+| Mic | `TrackToggle` | Mute/unmute |
+| Camera | `TrackToggle` | Camera on/off |
+| Reactions | `Hand` | Toggle emoji panel (amber when open) |
+| Invite Link | `Link` | Copy room link |
+| Leave | `PhoneOff` | Red; end call |
+| More | `Plus` | Toggle the More row (grey when open) |
+
+**More row** (appears above primary row when `+` tapped, spans full screen width):
+| Control | Icon | Notes |
+|---------|------|-------|
+| Background | `Layers` | Background effects |
+| Auto Cam | `Aperture` | Auto centre / 2-in-1 |
+| Quality | `Film` + HD | Video quality selector |
+| Screen Share | `Monitor` | Share screen (web picker) |
+| Chat | `MessageSquare` | Toggle chat sidebar (blue when open) |
+| Reactions | `Smile` | Toggle emoji panel above the More row (amber when open) |
+
+**Emoji panel** appears above whichever row triggered it; tapping any emoji sends it and closes the panel.
 
 #### In-meeting Features
 - 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)

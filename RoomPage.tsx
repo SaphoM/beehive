@@ -19,7 +19,7 @@ declare global {
 }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Plus, Smile } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -1182,7 +1182,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
                   {/* More panel — extra controls above primary bar */}
                   {showMoreMobile && (
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 20, padding: '12px 16px', border: '1px solid #2a2a2a', maxWidth: 'calc(100vw - 20px)' }}>
+                    <div style={{ display: 'flex', gap: 0, justifyContent: 'space-around', alignItems: 'center', background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 20, padding: '12px 10px', border: '1px solid #2a2a2a', width: 'calc(100vw - 20px)' }}>
                       {/* Background */}
                       <div style={{ position: 'relative' }}>
                         <button style={{ ...mb, ...(bgActive ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }} onClick={() => setBgMenuOpen(v => !v)} title="Background">
@@ -1269,6 +1269,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                       <button style={{ ...mb, ...(showChat ? { background: '#1a1a4a', border: '1px solid #5b5ef4' } : {}) }}
                         onClick={() => setShowChat(v => !v)} title="Chat">
                         <MessageSquare size={18} />
+                      </button>
+                      {/* Emoji toggle — shows panel above this row */}
+                      <button
+                        style={{ ...mb, ...(showMobileEmoji ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
+                        onClick={() => setShowMobileEmoji(v => !v)}
+                        title="Reactions"
+                      >
+                        <Smile size={18} />
                       </button>
                     </div>
                   )}

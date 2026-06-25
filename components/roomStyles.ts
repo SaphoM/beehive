@@ -15,7 +15,7 @@ export const s: Record<string, React.CSSProperties> = {
   subtextRow: { display: 'flex', gap: 8 },
   subtextBtn: { background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 20, padding: '5px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
   subtextActive: { background: '#2a2a2a', color: '#f5a623', border: '1px solid #f5a623' },
-  roomWrapper: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#0a0a0a' },
+  roomWrapper: { display: 'flex', flexDirection: 'column', height: 'var(--vh, 100vh)', background: '#0a0a0a' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#111', borderBottom: '1px solid #222', zIndex: 10, WebkitAppRegion: 'drag' as any, minHeight: 52 },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 10, WebkitAppRegion: 'no-drag' as any },
   headerRight: { display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' as any },

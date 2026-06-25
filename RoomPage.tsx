@@ -132,7 +132,7 @@ export default function RoomPage() {
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
         connect={true}
         onDisconnected={handleLeave}
-        style={{ height: '100vh' }}
+        style={{ height: 'var(--vh, 100vh)' }}
       >
         <MeetingRoom
           roomId={activeRoomId}
@@ -223,13 +223,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
 
   // Mobile responsive
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 640)
+  const [isSmallPhone, setIsSmallPhone] = useState(() => window.innerWidth <= 390)
   const [showMobileEmoji, setShowMobileEmoji] = useState(false)
   const [emojiTrigger, setEmojiTrigger] = useState<'hand' | 'smile'>('hand')
   const [showMoreMobile, setShowMoreMobile] = useState(false)
   const [showReactions, setShowReactions] = useState(false)
 
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 640)
+    const onResize = () => {
+      setIsMobile(window.innerWidth <= 640)
+      setIsSmallPhone(window.innerWidth <= 390)
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -962,7 +966,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             style={{ ...s.pill, fontSize: isMobile ? 11 : 12, padding: isMobile ? '2px 8px' : '3px 10px' }}
             onClick={() => !isMobile && setShowParticipants(v => !v)}
           >
-            {activeCount} {activeCount === 1 ? 'participant' : 'participants'}
+            {isSmallPhone ? activeCount : `${activeCount} ${activeCount === 1 ? 'participant' : 'participants'}`}
           </button>
         </div>
 
@@ -1197,7 +1201,8 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           {isMobile ? (
             /* ── Mobile controls ─────────────────────────────────────────── */
             overlayMode !== 'hidden' && (() => {
-              const mb: React.CSSProperties = { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 46, height: 46, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', flexShrink: 0 }
+              const btnSize = isSmallPhone ? 40 : 46
+              const mb: React.CSSProperties = { background: '#2a2a2a', border: 'none', borderRadius: 50, width: btnSize, height: btnSize, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', flexShrink: 0 }
               return (
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 72px)', zIndex: 10 }}>
 
@@ -1312,7 +1317,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                   )}
 
                   {/* Primary row: Mic · Camera · Emoji · Link · End · More */}
-                  <div style={{ display: 'flex', gap: 10, background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(14px)', borderRadius: 40, padding: '10px 16px' }}>
+                  <div style={{ display: 'flex', gap: isSmallPhone ? 6 : 10, background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(14px)', borderRadius: 40, padding: isSmallPhone ? '8px 12px' : '10px 16px' }}>
                     <TrackToggle source={Track.Source.Microphone} style={mb} showIcon />
                     <TrackToggle source={Track.Source.Camera} style={mb} showIcon />
                     <button

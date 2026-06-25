@@ -24,6 +24,15 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Set --vh to the real inner height so iOS Safari layouts don't hide behind browser chrome -->
+    <script>
+      function setVH() {
+        document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
+      }
+      setVH();
+      window.addEventListener('resize', setVH);
+      window.addEventListener('orientationchange', function () { setTimeout(setVH, 120); });
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

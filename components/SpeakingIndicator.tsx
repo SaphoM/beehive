@@ -49,7 +49,7 @@ export function SpeakingIndicator({ overlayMode = 'visible' }: { overlayMode?: '
   const BAR_SHAPE = [0.35, 0.65, 1.0, 0.65, 0.35]
 
   return (
-    <div style={s.speakingWrap}>
+    <div style={s.speakingWrap} className="speaking-wrap">
       {showWindow && (
         <div style={s.speakerWindow}>
           <div style={s.speakerWindowHeader}>

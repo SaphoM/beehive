@@ -196,7 +196,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   const { messages, sendMessage } = useChat(roomId)
   const recordings = useRecordings(roomId)
   const [chatInput, setChatInput] = useState('')
-  const [showChat, setShowChat] = useState(true)
+  const [showChat, setShowChat] = useState(() => window.innerWidth > 768)
   const [showParticipants, setShowParticipants] = useState(false)
   const [participantsDocked, setParticipantsDocked] = useState(false)
   const [showQuality, setShowQuality] = useState(false)

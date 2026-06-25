@@ -1169,7 +1169,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             overlayMode !== 'hidden' && (() => {
               const mb: React.CSSProperties = { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 46, height: 46, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', flexShrink: 0 }
               return (
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingBottom: 14, zIndex: 10 }}>
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 72px)', zIndex: 10 }}>
 
                   {/* Emoji panel — appears above primary bar, not over buttons */}
                   {showMobileEmoji && (

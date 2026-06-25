@@ -1170,7 +1170,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
           )}
 
           {/* Speaking Indicator */}
-          <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} />
+          <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} isPresenting={isPresenting} />
 
           {/* Remote laser pointer cursors */}
           {Array.from(remoteCursors.entries()).map(([name, cur]) => (

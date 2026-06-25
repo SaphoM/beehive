@@ -947,18 +947,35 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
   return (
     <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>
       {/* Header */}
-      <div style={{ ...s.header, paddingLeft: window.electronAPI ? 88 : 18, position: 'relative' }}>
-        <div style={s.headerLeft}>
-          <span style={s.roomTitle}>{APP_NAME}</span>
-          <button style={s.pill} onClick={() => setShowParticipants(v => !v)}>
+      <div style={{
+        ...s.header,
+        paddingLeft: window.electronAPI ? 88 : (isMobile ? 12 : 18),
+        paddingRight: isMobile ? 12 : 18,
+        paddingTop: isMobile ? 10 : 14,
+        paddingBottom: isMobile ? 10 : 14,
+        position: 'relative',
+        minHeight: isMobile ? 44 : 52,
+      }}>
+        <div style={{ ...s.headerLeft, gap: isMobile ? 6 : 10 }}>
+          <span style={{ ...s.roomTitle, fontSize: isMobile ? 12 : 16, letterSpacing: isMobile ? 2 : 3 }}>{APP_NAME}</span>
+          <button
+            style={{ ...s.pill, fontSize: isMobile ? 11 : 12, padding: isMobile ? '2px 8px' : '3px 10px' }}
+            onClick={() => !isMobile && setShowParticipants(v => !v)}
+          >
             {activeCount} {activeCount === 1 ? 'participant' : 'participants'}
           </button>
         </div>
-        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', color: '#555', fontSize: 13, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1, pointerEvents: 'none', WebkitAppRegion: 'drag' as any }}>
-          {elapsedDisplay}
-        </div>
-        <div style={s.headerRight}>
-          {isSharing && (
+
+        {/* Timer — desktop only in header; mobile uses floating pill */}
+        {!isMobile && (
+          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', color: '#555', fontSize: 13, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1, pointerEvents: 'none', WebkitAppRegion: 'drag' as any }}>
+            {elapsedDisplay}
+          </div>
+        )}
+
+        <div style={{ ...s.headerRight, gap: isMobile ? 6 : 8 }}>
+          {/* Hide Stop Sharing + chat icon on mobile — accessible via controls */}
+          {!isMobile && isSharing && (
             <button
               style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#276127', border: '1px solid #48bb78', borderRadius: 8, color: '#48bb78', padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
               onClick={stopShare}
@@ -967,10 +984,15 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               <MonitorOff size={14} /> Stop Sharing
             </button>
           )}
-          <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
-            <MessageSquare size={18} />
-          </button>
-          <button style={s.leaveBtn} onClick={leaveWithNotification}>Leave</button>
+          {!isMobile && (
+            <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
+              <MessageSquare size={18} />
+            </button>
+          )}
+          <button
+            style={{ ...s.leaveBtn, padding: isMobile ? '5px 12px' : '7px 16px', fontSize: isMobile ? 12 : 13 }}
+            onClick={leaveWithNotification}
+          >Leave</button>
         </div>
       </div>
 
@@ -1059,6 +1081,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
               <ParticipantTile />
             </GridLayout>
+          )}
+
+          {/* Mobile floating timer — just below the header, centred over video */}
+          {isMobile && (
+            <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)', borderRadius: 12, padding: '3px 12px', zIndex: 5, pointerEvents: 'none' }}>
+              <span style={{ color: '#666', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>{elapsedDisplay}</span>
+            </div>
           )}
 
           {/* Top-right button cluster: Laser pointer + Pop out + Expand/Collapse */}

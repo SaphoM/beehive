@@ -26,12 +26,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 })
 
 const DEV_USERS = [
-  { email: 'sapho@xspark.co.za',      name: 'Sapho',  role: 'admin' },
-  { email: 'dev1@xspark.co.za',        name: 'Dev One' },
-  { email: 'dev2@xspark.co.za',        name: 'Dev Two' },
-  { email: 'dev3@xspark.co.za',        name: 'Dev Three' },
-  { email: 'dev4@xspark.co.za',        name: 'Dev Four' },
-  { email: 'dev5@xspark.co.za',        name: 'Dev Five' },
+  { email: 'sapho@xspark.co.za',       name: 'Sapho Maqhwazima',    role: 'admin' },
+  { email: 'khaya@xspark.co.za',       name: 'Khaya Cokoto' },
+  { email: 'witness@xspark.co.za',     name: 'Witness Chauke' },
+  { email: 'xolisa@xspark.co.za',      name: 'Xolisa Liwani' },
+  { email: 'nhlakanipho@xspark.co.za', name: 'Nhlakanipho Ngobese' },
+  { email: 'kamo@xspark.co.za',        name: 'Kamo Mokoena' },
 ]
 
 async function main() {

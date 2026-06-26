@@ -45,6 +45,7 @@ import {
 } from './livekit_react_hooks'
 
 import { Lobby } from './components/Lobby'
+import { InviteModal } from './components/InviteModal'
 import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { AutoCamWindow } from './components/AutoCamWindow'
@@ -68,7 +69,7 @@ import {
 } from './components/roomUtils'
 
 export default function RoomPage() {
-  const { user } = useAuth()
+  const { user, session } = useAuth()
   const { profile } = useProfile(user?.id ?? null)
 
   const [view, setView] = useState<'lobby' | 'room'>('lobby')
@@ -157,6 +158,7 @@ export default function RoomPage() {
           roomName={activeRoomName ?? ''}
           displayName={displayName}
           onLeave={handleLeave}
+          session={session}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
@@ -184,9 +186,11 @@ export default function RoomPage() {
 // ============================================================
 // MEETING ROOM
 // ============================================================
-function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
+function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   roomId: string; roomName: string; displayName: string; onLeave: () => void
+  session?: import('@supabase/supabase-js').Session | null
 }) {
+  const [showInviteModal, setShowInviteModal] = useState(false)
   const allTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
   const { localParticipant } = useLocalParticipant()
   const liveKitParticipants = useLiveKitParticipants()
@@ -961,10 +965,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
     setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), 2500)
   }
 
-  const copyInviteLink = () => {
-    navigator.clipboard.writeText(`${WEB_BASE}?room=${roomId}`)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const handleInviteBtn = () => {
+    if (session) {
+      // Authenticated: open modal to create a proper invitation with token
+      setShowInviteModal(true)
+    } else {
+      // Anonymous (frictionless join): just copy the plain room link
+      navigator.clipboard.writeText(`${WEB_BASE}?room=${roomId}`)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   const activeCount = liveKitParticipants.length
@@ -1351,7 +1361,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
                     >
                       <Hand size={18} />
                     </button>
-                    <button style={mb} onClick={copyInviteLink} title="Invite link">
+                    <button style={mb} onClick={handleInviteBtn} title="Invite link">
                       {copied ? <Link2Off size={18} /> : <Link size={18} />}
                     </button>
                     <button style={{ ...mb, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
@@ -1447,7 +1457,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
               </div>
 
               {/* Invite Link */}
-              <button style={s.controlBtn} onClick={copyInviteLink} title="Copy invite link">
+              <button style={s.controlBtn} onClick={handleInviteBtn} title="Copy invite link">
                 {copied ? <Link2Off size={20} /> : <Link size={20} />}
               </button>
 
@@ -1851,6 +1861,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave }: {
             const sources = await window.electronAPI!.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
             setDesktopSources(sources)
           }}
+        />
+      )}
+
+      {showInviteModal && (
+        <InviteModal
+          roomId={roomId}
+          onClose={() => setShowInviteModal(false)}
         />
       )}
     </div>

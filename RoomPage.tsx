@@ -409,6 +409,54 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     }
   }, [laserActive, displayName])
 
+  // Raise hand — broadcast to all participants via Supabase realtime
+  const [raisedHands, setRaisedHands] = useState<{ identity: string; name: string; raisedAt: number }[]>([])
+  const [myHandRaised, setMyHandRaised] = useState(false)
+  const handsChannelRef = useRef<any>(null)
+
+  useEffect(() => {
+    const channel = supabase.channel(`hands:${roomId}`, { config: { broadcast: { self: false } } })
+    channel
+      .on('broadcast', { event: 'hand_raised' }, ({ payload }: any) => {
+        setRaisedHands(prev => prev.find(h => h.identity === payload.identity) ? prev : [...prev, { identity: payload.identity, name: payload.name, raisedAt: payload.raisedAt }])
+      })
+      .on('broadcast', { event: 'hand_lowered' }, ({ payload }: any) => {
+        setRaisedHands(prev => prev.filter(h => h.identity !== payload.identity))
+      })
+      .on('broadcast', { event: 'all_hands_lowered' }, () => {
+        setRaisedHands([])
+        setMyHandRaised(false)
+      })
+      .subscribe()
+    handsChannelRef.current = channel
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId])
+
+  const toggleRaiseHand = () => {
+    if (myHandRaised) {
+      handsChannelRef.current?.send({ type: 'broadcast', event: 'hand_lowered', payload: { identity: displayName } })
+      setRaisedHands(prev => prev.filter(h => h.identity !== displayName))
+      setMyHandRaised(false)
+    } else {
+      const entry = { identity: displayName, name: displayName, raisedAt: Date.now() }
+      handsChannelRef.current?.send({ type: 'broadcast', event: 'hand_raised', payload: entry })
+      setRaisedHands(prev => [...prev, entry])
+      setMyHandRaised(true)
+    }
+  }
+
+  const dismissHand = (identity: string) => {
+    handsChannelRef.current?.send({ type: 'broadcast', event: 'hand_lowered', payload: { identity } })
+    setRaisedHands(prev => prev.filter(h => h.identity !== identity))
+    if (identity === displayName) setMyHandRaised(false)
+  }
+
+  const lowerAllHands = () => {
+    handsChannelRef.current?.send({ type: 'broadcast', event: 'all_hands_lowered', payload: {} })
+    setRaisedHands([])
+    setMyHandRaised(false)
+  }
+
   // Background effects state
   const [bgMenuOpen, setBgMenuOpen] = useState(false)
   const [bgEffect, setBgEffect] = useState<'none' | 'blur' | 'image' | 'virtual'>('none')
@@ -1228,6 +1276,26 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             ))}
           </div>
 
+          {/* Raised hands — chips in top-right; host can dismiss individually or clear all */}
+          {raisedHands.length > 0 && (
+            <div style={{ position: 'absolute', top: 66, right: 14, zIndex: 15, display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+              {raisedHands.map(h => (
+                <div key={h.identity} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(10,10,10,0.88)', backdropFilter: 'blur(12px)', border: '1px solid #444', borderRadius: 24, padding: '6px 10px 6px 12px', fontSize: 13, color: '#fff', fontFamily: "'Roboto', sans-serif", fontWeight: 300, whiteSpace: 'nowrap' as const }}>
+                  <span style={{ fontSize: 18, lineHeight: 1 }}>✋</span>
+                  <span>{h.name}</span>
+                  <button onClick={() => dismissHand(h.identity)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', alignItems: 'center', padding: 0, marginLeft: 2 }} title="Lower hand">
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              {raisedHands.length > 1 && (
+                <button onClick={lowerAllHands} style={{ background: 'rgba(10,10,10,0.7)', border: '1px solid #333', borderRadius: 20, padding: '4px 14px', color: '#888', fontSize: 11, fontFamily: "'Roboto', sans-serif", cursor: 'pointer' }}>
+                  Lower all
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Restore pill */}
           {isPresenting && overlayMode === 'hidden' && (
             <button
@@ -1342,6 +1410,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                       {/* Invite link */}
                       <button style={mb} onClick={handleInviteBtn} title="Invite link">
                         {copied ? <Link2Off size={isSmallPhone ? 16 : 18} /> : <Link size={isSmallPhone ? 16 : 18} />}
+                      </button>
+                      {/* Raise Hand */}
+                      <button
+                        style={{ ...mb, ...(myHandRaised ? { background: '#2a3a1a', border: '1px solid #68d391' } : {}) }}
+                        onClick={toggleRaiseHand}
+                        title={myHandRaised ? 'Lower hand' : 'Raise hand'}
+                      >
+                        <Hand size={isSmallPhone ? 16 : 18} />
                       </button>
                       {/* Background */}
                       <button
@@ -1480,7 +1556,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
               {/* Reactions */}
               <div style={{ position: 'relative' }}>
                 <button style={{ ...s.controlBtn, ...(showReactions ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }} title="Reactions" onClick={() => setShowReactions(v => !v)}>
-                  <Hand size={20} />
+                  <Smile size={20} />
                 </button>
                 {showReactions && (
                   <div style={s.reactionBar}>
@@ -1490,6 +1566,15 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                   </div>
                 )}
               </div>
+
+              {/* Raise Hand */}
+              <button
+                style={{ ...s.controlBtn, ...(myHandRaised ? { background: '#2a3a1a', border: '1px solid #68d391' } : {}) }}
+                onClick={toggleRaiseHand}
+                title={myHandRaised ? 'Lower hand' : 'Raise hand'}
+              >
+                <Hand size={20} />
+              </button>
 
               {/* Invite Link */}
               <button style={s.controlBtn} onClick={handleInviteBtn} title="Copy invite link">

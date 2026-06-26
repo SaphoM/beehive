@@ -19,7 +19,7 @@ declare global {
 }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Plus, Smile } from 'lucide-react'
+import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Plus, Smile, Volume2, VolumeX } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -253,6 +253,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const [emojiTrigger, setEmojiTrigger] = useState<'hand' | 'smile'>('hand')
   const [showMoreMobile, setShowMoreMobile] = useState(false)
   const [showReactions, setShowReactions] = useState(false)
+  const [speakerMuted, setSpeakerMuted] = useState(false)
 
   useEffect(() => {
     const onResize = () => {
@@ -965,6 +966,12 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), 2500)
   }
 
+  const toggleSpeaker = () => {
+    const next = !speakerMuted
+    document.querySelectorAll<HTMLAudioElement>('audio').forEach(a => { a.muted = next })
+    setSpeakerMuted(next)
+  }
+
   const handleInviteBtn = () => {
     if (session) {
       // Authenticated: open modal to create a proper invitation with token
@@ -1238,142 +1245,156 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
               const btnSize = isSmallPhone ? 40 : 46
               const mb: React.CSSProperties = { background: '#2a2a2a', border: 'none', borderRadius: 50, width: btnSize, height: btnSize, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', flexShrink: 0 }
               return (
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 72px)', zIndex: 10 }}>
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10 }}>
 
-                  {/* Emoji panel — appears above primary bar, not over buttons */}
+                  {/* Emoji picker — floats above scroll bar */}
                   {showMobileEmoji && (
-                    <div style={{ display: 'flex', gap: 4, background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 30, padding: '6px 10px', border: '1px solid #2a2a2a', maxWidth: 'calc(100vw - 40px)', justifyContent: 'center' }}>
+                    <div style={{ position: 'absolute', bottom: btnSize + 24, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4, background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 30, padding: '6px 10px', border: '1px solid #2a2a2a', maxWidth: 'calc(100vw - 40px)', justifyContent: 'center', zIndex: 20 }}>
                       {REACTIONS.map(e => (
                         <button key={e} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', padding: '2px 4px', borderRadius: 8 }} onClick={() => { sendReaction(e); setShowMobileEmoji(false) }}>{e}</button>
                       ))}
                     </div>
                   )}
 
-                  {/* More panel — extra controls above primary bar */}
-                  {showMoreMobile && (
-                    <div style={{ display: 'flex', gap: 0, justifyContent: 'space-around', alignItems: 'center', background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 20, padding: '12px 10px', border: '1px solid #2a2a2a', width: 'calc(100vw - 20px)' }}>
-                      {/* Background */}
-                      <div style={{ position: 'relative' }}>
-                        <button style={{ ...mb, ...(bgActive ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }} onClick={() => setBgMenuOpen(v => !v)} title="Background">
-                          <Layers size={18} />
-                        </button>
-                        {bgMenuOpen && (
-                          <BackgroundMenu
-                            effect={bgEffect} presetId={bgPresetId} flip={bgFlip} blurLevel={blurLevel}
-                            uploadedImageName={bgUploadedImageName}
-                            onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
-                            onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
-                            onImageUpload={handleImageUpload} onClose={() => setBgMenuOpen(false)}
-                          />
-                        )}
+                  {/* Dropdown menus — rendered outside the overflow container so they aren't clipped */}
+                  {bgMenuOpen && (
+                    <BackgroundMenu
+                      effect={bgEffect} presetId={bgPresetId} flip={bgFlip} blurLevel={blurLevel}
+                      uploadedImageName={bgUploadedImageName}
+                      onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
+                      onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
+                      onImageUpload={handleImageUpload} onClose={() => setBgMenuOpen(false)}
+                    />
+                  )}
+                  {showAutoCamMenu && !autoCamMode && (
+                    <div style={{ ...s.autoCamMenu }}>
+                      <div style={s.shareMenuHeader}>
+                        <span style={s.shareMenuTitle}>Auto Cam</span>
+                        <button style={s.shareMenuClose} onClick={() => setShowAutoCamMenu(false)}><X size={14} /></button>
                       </div>
-                      {/* Auto Cam */}
-                      <div style={{ position: 'relative' }}>
-                        <button style={{ ...mb, ...(autoCamMode ? { background: '#1a2e4a', border: '1px solid #4299e1' } : {}) }}
-                          onClick={() => { if (autoCamMode) { setAutoCamMode(null); setShowAutoCamMenu(false) } else setShowAutoCamMenu(v => !v) }}
-                          title="Auto cam">
-                          <Aperture size={18} />
-                        </button>
-                        {showAutoCamMenu && !autoCamMode && (
-                          <div style={{ ...s.autoCamMenu, bottom: 54 }}>
-                            <div style={s.shareMenuHeader}>
-                              <span style={s.shareMenuTitle}>Auto Cam</span>
-                              <button style={s.shareMenuClose} onClick={() => setShowAutoCamMenu(false)}><X size={14} /></button>
-                            </div>
-                            <button style={s.shareMenuOption} onClick={() => { setAutoCamMode('center'); setShowAutoCamMenu(false) }}>
-                              <Crosshair size={15} color="#aaa" /><span>Auto Centre</span>
-                            </button>
-                            <button style={s.shareMenuOption} onClick={() => { setAutoCamMode('split'); setShowAutoCamMenu(false) }}>
-                              <Users size={15} color="#aaa" /><span>2 in 1</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      {/* Quality */}
-                      <div style={{ position: 'relative' }}>
-                        <button style={mb} onClick={() => setShowQuality(v => !v)} title="Quality">
-                          <Film size={18} /><span style={s.hdBadge}>HD</span>
-                        </button>
-                        {showQuality && (
-                          <div style={{ ...s.qualityMenu, bottom: 54 }}>
-                            {QUALITY_OPTIONS.map(q => (
-                              <button key={q} style={{ ...s.qualityOption, ...(quality === q ? s.qualityActive : {}) }}
-                                onClick={() => { setQuality(q); setShowQuality(false) }}>{q}</button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      {/* Screen Share */}
-                      <div style={{ position: 'relative' }}>
-                        <button style={{ ...mb, ...(isSharing ? { background: '#276127', border: '1px solid #48bb78' } : {}) }}
-                          onClick={() => isSharing ? stopShare() : setShareMenu(v => !v)}
-                          title={isSharing ? 'Stop' : 'Share'}>
-                          {isSharing ? <MonitorOff size={18} /> : <Monitor size={18} />}
-                        </button>
-                        {shareMenu && !isSharing && (
-                          <ScreenShareMenu
-                            clearBeforeShare={clearBeforeShare}
-                            onToggleClear={() => setClearBeforeShare(v => !v)}
-                            onEntireScreen={async () => {
-                              setShareMenu(false); setShowMoreMobile(false)
-                              if (window.electronAPI) {
-                                if (!(await checkScreenPermission())) return
-                                const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
-                                if (sources.length > 0) await shareDesktopSource(sources[0].id)
-                              } else { await startShare() }
-                            }}
-                            onSelectWindow={async () => {
-                              setShareMenu(false); setShowMoreMobile(false)
-                              if (window.electronAPI) {
-                                if (!(await checkScreenPermission())) return
-                                const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
-                                setDesktopSources(sources); setShowWindowPicker(true)
-                              } else { await startShare() }
-                            }}
-                            onClose={() => setShareMenu(false)}
-                          />
-                        )}
-                      </div>
-                      {/* Chat toggle */}
-                      <button style={{ ...mb, ...(showChat ? { background: '#1a1a4a', border: '1px solid #5b5ef4' } : {}) }}
-                        onClick={() => setShowChat(v => !v)} title="Chat">
-                        <MessageSquare size={18} />
+                      <button style={s.shareMenuOption} onClick={() => { setAutoCamMode('center'); setShowAutoCamMenu(false) }}>
+                        <Crosshair size={15} color="#aaa" /><span>Auto Centre</span>
                       </button>
-                      {/* Emoji toggle — shows panel above this row */}
-                      <button
-                        style={{ ...mb, ...(showMobileEmoji && emojiTrigger === 'smile' ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
-                        onClick={() => { setEmojiTrigger('smile'); setShowMobileEmoji(v => !v) }}
-                        title="Reactions"
-                      >
-                        <Smile size={18} />
+                      <button style={s.shareMenuOption} onClick={() => { setAutoCamMode('split'); setShowAutoCamMenu(false) }}>
+                        <Users size={15} color="#aaa" /><span>2 in 1</span>
                       </button>
                     </div>
                   )}
+                  {showQuality && (
+                    <div style={{ ...s.qualityMenu }}>
+                      {QUALITY_OPTIONS.map(q => (
+                        <button key={q} style={{ ...s.qualityOption, ...(quality === q ? s.qualityActive : {}) }}
+                          onClick={() => { setQuality(q); setShowQuality(false) }}>{q}</button>
+                      ))}
+                    </div>
+                  )}
+                  {shareMenu && !isSharing && (
+                    <ScreenShareMenu
+                      clearBeforeShare={clearBeforeShare}
+                      onToggleClear={() => setClearBeforeShare(v => !v)}
+                      onEntireScreen={async () => {
+                        setShareMenu(false)
+                        if (window.electronAPI) {
+                          if (!(await checkScreenPermission())) return
+                          const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
+                          if (sources.length > 0) await shareDesktopSource(sources[0].id)
+                        } else { await startShare() }
+                      }}
+                      onSelectWindow={async () => {
+                        setShareMenu(false)
+                        if (window.electronAPI) {
+                          if (!(await checkScreenPermission())) return
+                          const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+                          setDesktopSources(sources); setShowWindowPicker(true)
+                        } else { await startShare() }
+                      }}
+                      onClose={() => setShareMenu(false)}
+                    />
+                  )}
 
-                  {/* Primary row: Mic · Camera · Emoji · Link · End · More */}
-                  <div style={{ display: 'flex', gap: isSmallPhone ? 6 : 10, background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(14px)', borderRadius: 40, padding: isSmallPhone ? '8px 12px' : '10px 16px' }}>
-                    <TrackToggle source={Track.Source.Microphone} style={mb} showIcon />
-                    <TrackToggle source={Track.Source.Camera} style={mb} showIcon />
-                    <button
-                      style={{ ...mb, ...(showMobileEmoji && emojiTrigger === 'hand' ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
-                      onClick={() => { setEmojiTrigger('hand'); setShowMobileEmoji(v => !v); setShowMoreMobile(false) }}
-                      title="Reactions"
-                    >
-                      <Hand size={18} />
-                    </button>
-                    <button style={mb} onClick={handleInviteBtn} title="Invite link">
-                      {copied ? <Link2Off size={18} /> : <Link size={18} />}
-                    </button>
-                    <button style={{ ...mb, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
-                      <PhoneOff size={18} />
-                    </button>
-                    <button
-                      style={{ ...mb, ...(showMoreMobile ? { background: '#333', border: '1px solid #555' } : {}) }}
-                      onClick={() => { setShowMoreMobile(v => !v); setShowMobileEmoji(false) }}
-                      title="More"
-                    >
-                      <Plus size={18} />
-                    </button>
+                  {/* Single horizontally scrollable row — all controls visible, scroll to reach more */}
+                  <style>{`.beehive-ctrl-scroll::-webkit-scrollbar { display: none }`}</style>
+                  <div
+                    className="beehive-ctrl-scroll"
+                    style={{ overflowX: 'auto', scrollbarWidth: 'none' as any, background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(14px)', padding: `${isSmallPhone ? 8 : 10}px 16px`, paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + ${isSmallPhone ? 8 : 10}px)` }}
+                  >
+                    <div style={{ display: 'flex', gap: isSmallPhone ? 6 : 10, width: 'max-content' }}>
+                      {/* Mic */}
+                      <TrackToggle source={Track.Source.Microphone} style={mb} showIcon />
+                      {/* Speaker mute */}
+                      <button
+                        style={{ ...mb, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
+                        onClick={toggleSpeaker}
+                        title={speakerMuted ? 'Unmute speaker' : 'Mute speaker'}
+                      >
+                        {speakerMuted ? <VolumeX size={isSmallPhone ? 16 : 18} /> : <Volume2 size={isSmallPhone ? 16 : 18} />}
+                      </button>
+                      {/* Camera */}
+                      <TrackToggle source={Track.Source.Camera} style={mb} showIcon />
+                      {/* Reactions */}
+                      <button
+                        style={{ ...mb, ...(showMobileEmoji ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
+                        onClick={() => { setShowMobileEmoji(v => !v); setBgMenuOpen(false); setShowQuality(false); setShareMenu(false); setShowAutoCamMenu(false) }}
+                        title="Reactions"
+                      >
+                        <Smile size={isSmallPhone ? 16 : 18} />
+                      </button>
+                      {/* Invite link */}
+                      <button style={mb} onClick={handleInviteBtn} title="Invite link">
+                        {copied ? <Link2Off size={isSmallPhone ? 16 : 18} /> : <Link size={isSmallPhone ? 16 : 18} />}
+                      </button>
+                      {/* Background */}
+                      <button
+                        style={{ ...mb, ...(bgActive ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                        onClick={() => { setBgMenuOpen(v => !v); setShowMobileEmoji(false); setShowQuality(false); setShareMenu(false); setShowAutoCamMenu(false) }}
+                        title="Background"
+                      >
+                        <Layers size={isSmallPhone ? 16 : 18} />
+                      </button>
+                      {/* Auto Cam */}
+                      <button
+                        style={{ ...mb, ...(autoCamMode ? { background: '#1a2e4a', border: '1px solid #4299e1' } : {}) }}
+                        onClick={() => {
+                          if (autoCamMode) { setAutoCamMode(null); setShowAutoCamMenu(false) }
+                          else { setShowAutoCamMenu(v => !v); setBgMenuOpen(false); setShowQuality(false); setShareMenu(false); setShowMobileEmoji(false) }
+                        }}
+                        title="Auto cam"
+                      >
+                        <Aperture size={isSmallPhone ? 16 : 18} />
+                      </button>
+                      {/* Quality */}
+                      <button
+                        style={{ ...mb, ...(showQuality ? { background: '#333', border: '1px solid #555' } : {}) }}
+                        onClick={() => { setShowQuality(v => !v); setBgMenuOpen(false); setShowAutoCamMenu(false); setShareMenu(false); setShowMobileEmoji(false) }}
+                        title="Quality"
+                      >
+                        <Film size={isSmallPhone ? 16 : 18} />
+                        <span style={s.hdBadge}>HD</span>
+                      </button>
+                      {/* Screen Share */}
+                      <button
+                        style={{ ...mb, ...(isSharing ? { background: '#276127', border: '1px solid #48bb78' } : {}) }}
+                        onClick={() => {
+                          if (isSharing) stopShare()
+                          else { setShareMenu(v => !v); setBgMenuOpen(false); setShowAutoCamMenu(false); setShowQuality(false); setShowMobileEmoji(false) }
+                        }}
+                        title={isSharing ? 'Stop sharing' : 'Share screen'}
+                      >
+                        {isSharing ? <MonitorOff size={isSmallPhone ? 16 : 18} /> : <Monitor size={isSmallPhone ? 16 : 18} />}
+                      </button>
+                      {/* Chat */}
+                      <button
+                        style={{ ...mb, ...(showChat ? { background: '#1a1a4a', border: '1px solid #5b5ef4' } : {}) }}
+                        onClick={() => setShowChat(v => !v)}
+                        title="Chat"
+                      >
+                        <MessageSquare size={isSmallPhone ? 16 : 18} />
+                      </button>
+                      {/* Leave */}
+                      <button style={{ ...mb, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
+                        <PhoneOff size={isSmallPhone ? 16 : 18} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -1382,6 +1403,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             /* ── Desktop: minimised presenter bar ────────────────────────── */
             <div style={{ ...s.controls, gap: 8, padding: '8px 14px' }}>
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
+              <button
+                style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
+                onClick={toggleSpeaker}
+                title={speakerMuted ? 'Unmute speaker' : 'Mute speaker'}
+              >
+                {speakerMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+              </button>
               <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
               {isSharing && (
                 <button style={{ ...s.controlBtn, background: '#276127', border: '1px solid #48bb78' }} onClick={stopShare} title="Stop sharing"><MonitorOff size={20} /></button>
@@ -1395,6 +1423,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             /* ── Desktop: full controls bar ──────────────────────────────── */
             <div style={s.controls} className="controls-bar">
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
+              <button
+                style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
+                onClick={toggleSpeaker}
+                title={speakerMuted ? 'Unmute speaker' : 'Mute speaker'}
+              >
+                {speakerMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              </button>
               <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
 
               {/* Background Effects */}

@@ -25,7 +25,7 @@ const c: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase', textAlign: 'center', marginBottom: 4,
   },
   logoAccent: { fontWeight: 400 },
-  subtitle: { color: '#666', fontSize: 12, textAlign: 'center', marginTop: -12 },
+  subtitle: { color: '#666', fontSize: 12, textAlign: 'center', marginTop: 8 },
   label: { color: '#888', fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
   input: {
     background: '#1a1a1a', border: '1px solid #333', borderRadius: 8,

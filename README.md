@@ -26,7 +26,7 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Video/Audio | LiveKit Cloud |
 | Database | Supabase (PostgreSQL) |
 | Real-time | Supabase Realtime subscriptions |
-| Auth | Supabase Auth (anon + authenticated) |
+| Auth | Supabase Auth — Magic Link + Email OTP (no passwords) |
 | Icons | Lucide React |
 | Fonts | Roboto (Google Fonts) — Thin (100) / Light (300) / Regular (400) |
 | Backend | Node.js + Express 5 |
@@ -38,6 +38,54 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 
 ## Features
 
+### Authentication
+
+BeeHive uses **passwordless auth** — no passwords, ever.
+
+| Flow | How it works |
+|------|-------------|
+| **Magic link** | Enter email → click link in email → signed in (web default) |
+| **6-digit OTP** | Enter email → receive code → type code in app (Electron default; also available on web) |
+| **Frictionless room join** | `?room=ID` links bypass auth entirely — guests join directly |
+| **Post-meeting register** | Guests who joined via room link are prompted to register after the meeting ends (card-flip animation in lobby) |
+
+**Roles:**
+
+| Role | Who |
+|------|-----|
+| `admin` | sapho@xspark.co.za |
+| `user` | All other team members |
+
+Admin role is assigned automatically by the seed script. New self-registered users get the `user` role via a Supabase trigger on `auth.users`.
+
+**Auth gate:** The `AuthGate` component wraps the entire app. `?room=` links skip the gate; all other routes require a session.
+
+**Session persistence:** Sessions are stored in `localStorage` and survive page reloads. Default expiry: 1 week.
+
+**Electron deep-link:** Magic links redirect to `beehive://auth/confirm#token=…`. Electron intercepts the URL scheme, extracts the token from the hash, and loads it into the renderer so Supabase can establish the session automatically.
+
+**Supabase URL configuration (required for production):**
+- Site URL → `https://beehive-fu8w.onrender.com`
+- Redirect URLs → `https://beehive-fu8w.onrender.com/**`, `http://localhost:5173/**`
+
+---
+
+### Invitations
+
+Authenticated users can invite colleagues to a meeting from inside the meeting room (Link button in the controls bar).
+
+**Flow:**
+1. Click **Link** (🔗) in controls bar → `InviteModal` opens
+2. Enter colleague's email → **Send invitation**
+3. Backend generates a secure 32-byte random token, stores it in `invitations` table (7-day expiry), returns the full invite link
+4. Copy `?room=ROOM_ID&invite=TOKEN` and share it
+
+**Token lifecycle:** `pending` → `accepted` (on redemption) / `expired` (auto on read) / `revoked` (manual)
+
+> **Anonymous guests** (no session): clicking the Link button copies the plain `?room=ID` link as before.
+
+---
+
 ### Lobby
 
 - **BEE**HIVE wordmark — `BEE` in Roboto Regular (400), `HIVE` in Roboto Thin (100)
@@ -45,6 +93,9 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
   - **Start Now** — Meet / Sting mode toggle; enter name; start immediately
   - **Schedule** — pick date + time, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately
 - Invite preview — guests visiting a `?room=ROOM_ID` link see the room name and live participant count before joining
+- **Register CTA** — unauthenticated guests see a "Register to save your history" button; clicking it card-flips the lobby card to a registration form (magic link or OTP)
+- **Post-meeting register** — guests who joined via room link are prompted to register when they return to the lobby after a meeting ends (same card-flip animation)
+- **User strip** — authenticated users see their name and a Sign out button at the top of the lobby card
 - **Recent meetings** — expandable Fathom panel showing AI-summarised past meetings
 
 ### In Meeting
@@ -116,7 +167,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 #### In-meeting Features
 - 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)
 - 👋 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥)
-- 🔗 Invite link — copies `?room=ROOM_ID` URL to clipboard
+- 🔗 Invite link — authenticated users open `InviteModal` (creates a tokenised invitation); anonymous guests copy the plain `?room=ROOM_ID` URL
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
 - 🎨 Background Effects (`Layers` button, amber when active) — uses **MediaPipe Selfie Segmentation**; four modes:
   - **None** — restores original camera track
@@ -238,6 +289,9 @@ In dev the Vite server proxies `/api/*` → `:3001`. In the packaged `.app` ther
 **Invite links in the desktop app:**
 The Electron app loads from `file://` so `window.location.href` would produce broken links like `file:///?room=...`. All invite link generation uses `VITE_WEB_BASE_URL` (set in `.env`) so copied links always point to the production web app (`https://beehive-fu8w.onrender.com?room=ROOM_ID`). Guests open the link in any browser — no desktop app required.
 
+**Magic link deep-link (Electron):**
+Supabase sends magic links with `emailRedirectTo: beehive://auth/confirm`. When clicked, macOS routes the URL to Electron via the registered `beehive://` URL scheme. `main.cjs` catches it via `open-url` (macOS) or `second-instance` argv (Windows), extracts the token hash, and loads `/?auth=confirm#<token>` in the renderer so Supabase's `detectSessionInUrl` processes it automatically.
+
 ---
 
 ### Fathom Integration
@@ -259,9 +313,12 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 
 ### Security
 - Row Level Security (RLS) on all Supabase tables
-- Anon-safe participant tracking (no login required for invite links)
-- Fathom API key proxied through backend
+- Passwordless auth — no password storage, no brute-force surface
+- Invitation tokens: 32-byte cryptographically random, 7-day expiry, single-use, revocable
+- Anon-safe participant tracking (no login required for `?room=` invite links)
+- Fathom API key proxied through backend (never reaches client)
 - Electron: `contextIsolation: true`, `nodeIntegration: false`, `contextBridge` only
+- `beehive://` deep-link handler validates token structure before loading into renderer
 
 ---
 
@@ -273,6 +330,10 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 | `POST` | `/api/livekit/webhook` | LiveKit webhook receiver (`egress_ended`, `participant_left`) |
 | `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
 | `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
+| `POST` | `/api/invitations` | Create invitation; body: `{ invited_email, room_id? }`; auth required |
+| `GET` | `/api/invitations/validate/:token` | Validate token without redeeming; returns invitation record |
+| `POST` | `/api/invitations/redeem/:token` | Mark invitation accepted; auth required |
+| `DELETE` | `/api/invitations/:id` | Revoke invitation; auth required (owner or admin) |
 | `GET` | `/health` | Health check — `{ status: 'ok' }` |
 
 > File uploads go directly from the browser to **Supabase Storage** using the anon key — no backend route needed.
@@ -284,35 +345,44 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 ```
 beehive/
 ├── src/
-│   └── main.tsx                        # React entry point
+│   └── main.tsx                        # React entry — wraps app in <AuthGate>
 ├── RoomPage.tsx                        # Root router (RoomPage) + MeetingRoom
-├── components/                         # Extracted UI components & shared modules
-│   ├── roomUtils.ts                    #   constants, helpers, drawVirtualScene
-│   ├── roomStyles.ts                   #   shared `s` styles object
-│   ├── Lobby.tsx                       #   lobby (Start Now / Schedule tabs)
+├── components/                         # UI components & shared modules
+│   ├── AuthGate.tsx                    #   auth wrapper; ?room= bypasses gate
+│   ├── AuthScreen.tsx                  #   magic link + OTP sign-in / register UI
+│   ├── InviteModal.tsx                 #   in-meeting invitation creator
+│   ├── Lobby.tsx                       #   lobby (Start Now / Schedule + card-flip register)
 │   ├── SchedulePanel.tsx               #   schedule + email-invite panel
 │   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
 │   ├── ParticipantsWindow.tsx          #   draggable/dockable window + strip
 │   ├── BackgroundMenu.tsx              #   background-effects menu
 │   ├── AutoCamWindow.tsx               #   auto-cam floating window
-│   ├── SpeakingIndicator.tsx           #   active-speaker chip + video
+│   ├── SpeakingIndicator.tsx           #   active-speaker chip + video (dual-window in presentation mode)
 │   ├── ScreenShareMenu.tsx             #   pre-share menu
 │   ├── ScreenShareBar.tsx              #   active-share bar
-│   └── ElectronWindowPicker.tsx        #   desktop window picker
-├── livekit_react_hooks.tsx             # Hooks: useCreateRoom, useJoinRoom,
-│                                       #   useRoomInfo, useParticipants,
-│                                       #   useChat, useRecordings,
-│                                       #   useFathomMeetings, useFathomTranscript
-├── livekit_node_backend.js             # Express API: token, webhooks, Fathom proxy
+│   ├── ElectronWindowPicker.tsx        #   desktop window picker
+│   ├── roomUtils.ts                    #   constants, helpers, drawVirtualScene
+│   └── roomStyles.ts                   #   shared `s` styles object
+├── livekit_react_hooks.tsx             # Hooks: useAuth, useProfile, useIsAdmin,
+│                                       #   useInvitation, useCreateRoom, useJoinRoom,
+│                                       #   useRoomInfo, useParticipants, useChat,
+│                                       #   useRecordings, useFathomMeetings, useFathomTranscript
+├── livekit_node_backend.js             # Express API: token, webhooks, Fathom proxy,
+│                                       #   invitation CRUD with Clerk-style auth validation
+├── supabase/
+│   └── migrations/
+│       └── 001_auth_system.sql         # Auth schema additions (applied)
+├── scripts/
+│   └── seed-dev.js                     # Create 6 X Spark dev users via Supabase Admin API
 ├── electron/
-│   ├── main.cjs                        # Electron main process
+│   ├── main.cjs                        # Electron main — beehive:// URL scheme + deep-link handler
 │   ├── preload.cjs                     # contextBridge — exposes electronAPI
 │   └── entitlements.mac.plist          # macOS hardened runtime entitlements
 ├── assets/
 │   └── icon.icns                       # macOS app icon
-├── livekit_supabase_schema.sql         # Full Supabase schema
+├── livekit_supabase_schema.sql         # Base Supabase schema
 ├── livekit_database_recommendation.md  # ADR: Supabase vs Firebase
-├── index.html                          # App shell + Roboto font
+├── index.html                          # App shell + Roboto font + --vh + zoom-to-fit
 ├── vite.config.ts                      # base: './' for Electron file:// compat
 ├── package.json                        # main: electron/main.cjs; build config
 └── .env                                # Local secrets (git-ignored)
@@ -322,17 +392,26 @@ beehive/
 
 ## Database Schema
 
+**Base tables** ([`livekit_supabase_schema.sql`](./livekit_supabase_schema.sql)):
+
 | Table | Purpose |
 |-------|---------|
-| `users` | User profiles (email, name, org) |
+| `users` | Legacy user profiles (email, name, org); bridged to auth via `auth_user_id` |
 | `rooms` | Meeting rooms with LiveKit room names |
-| `room_participants` | Real-time participant tracking (anon-safe) |
+| `room_participants` | Real-time participant tracking (anon-safe; `auth_user_id` set for authenticated users) |
 | `chat_messages` | In-meeting chat + file share notifications |
 | `recordings` | Recording metadata |
 | `usage` | Billing/analytics tracking |
-| `audit_logs` | Compliance + debugging |
+| `audit_logs` | Compliance + debugging (`auth_user_id` included) |
 
-Schema file: [`livekit_supabase_schema.sql`](./livekit_supabase_schema.sql)
+**Auth tables** ([`supabase/migrations/001_auth_system.sql`](./supabase/migrations/001_auth_system.sql)):
+
+| Table | Purpose |
+|-------|---------|
+| `profiles` | Canonical post-auth identity (`id = auth.users.id`); `full_name`, `avatar_url`; auto-created on signup via trigger |
+| `roles` | `admin` / `user` roles |
+| `user_roles` | User ↔ Role junction; default `user` role assigned on signup |
+| `invitations` | Tokenised invitations with expiry, status machine, and audit trail |
 
 ---
 
@@ -341,19 +420,24 @@ Schema file: [`livekit_supabase_schema.sql`](./livekit_supabase_schema.sql)
 ```
 React Frontend (Vite — default :5173)
         │
+        ├── AuthGate → AuthScreen (magic link / OTP via Supabase Auth)
+        │
         ├── Supabase (state, RLS, Realtime)
-        │         └── PostgreSQL — rooms, participants, chat, recordings
+        │         └── PostgreSQL — rooms, participants, chat, recordings,
+        │                          profiles, roles, user_roles, invitations
         │         └── Storage — shared-files bucket (file uploads)
         │
         └── /api/* → Node.js Backend (:3001)
                         ├── LiveKit Server SDK — token generation
                         │         └── LiveKit Cloud — media (WebRTC)
+                        ├── Invitation API — create / validate / redeem / revoke
                         └── Fathom API proxy — meeting intelligence
 
 Electron (desktop)
         ├── main.cjs — BrowserWindow + IPC handlers
         │         ├── shell.openPath()        — open presentation files natively
-        │         └── desktopCapturer         — enumerate windows for screen share
+        │         ├── desktopCapturer         — enumerate windows for screen share
+        │         └── beehive:// URL scheme   — intercept magic-link redirects
         └── preload.cjs — contextBridge → window.electronAPI
 ```
 
@@ -387,7 +471,19 @@ VITE_SUPABASE_ANON_KEY=your_anon_key
 VITE_LIVEKIT_URL=wss://your-project.livekit.cloud
 
 # App
+VITE_WEB_BASE_URL=https://beehive-fu8w.onrender.com   # Used for invite link generation in Electron
 PORT=3001
+```
+
+**Supabase Dashboard settings required:**
+- Authentication → URL Configuration → **Site URL**: `https://beehive-fu8w.onrender.com`
+- Authentication → URL Configuration → **Redirect URLs**: `https://beehive-fu8w.onrender.com/**`, `http://localhost:5173/**`
+
+**Seeding dev users (first-time setup):**
+```bash
+node scripts/seed-dev.js
+# Creates 6 X Spark team accounts (email_confirm=true — no verification email)
+# Promotes sapho@xspark.co.za to admin automatically
 ```
 
 ---
@@ -536,7 +632,10 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 
 ## Roadmap
 
-- [ ] Authentication (Supabase Auth email/password)
+- [x] Authentication — Magic Link + Email OTP (no passwords); AuthGate; frictionless `?room=` join; post-meeting register CTA with card-flip animation
+- [x] Invitation system — tokenised invitations, 7-day expiry, single-use, revocable; `InviteModal` in meeting controls
+- [x] User roles — `admin` / `user`; auto-assigned on signup; `is_admin()` RLS helper
+- [x] Electron deep-link — `beehive://` URL scheme intercepts magic-link redirects
 - [ ] Host role — host/co-host permissions
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled, renameable, group mute

@@ -230,6 +230,33 @@ end if`
 })
 
 // ---------------------------------------------------------------------------
+// beehive:// deep-link — intercept Supabase magic-link redirect in Electron
+// Supabase sends the user to beehive://auth/confirm#access_token=...
+// We parse the hash and navigate the renderer to /?auth=confirm&... so the
+// Supabase JS client picks up the session automatically.
+// ---------------------------------------------------------------------------
+app.setAsDefaultProtocolClient('beehive')
+
+function handleDeepLink(url) {
+  if (!mainWindow || !url) return
+  // url = beehive://auth/confirm#access_token=XXX&...
+  try {
+    const parsed = new URL(url)
+    const hash = parsed.hash.slice(1) // strip leading #
+    // Token must be in the hash so Supabase's detectSessionInUrl picks it up
+    mainWindow.webContents.loadURL(
+      isDev
+        ? `http://localhost:5173/?auth=confirm#${hash}`
+        : `file://${path.join(__dirname, '..', 'dist', 'index.html')}?auth=confirm#${hash}`
+    )
+    mainWindow.show()
+    mainWindow.focus()
+  } catch (e) {
+    console.warn('[deep-link] Failed to parse URL:', url, e.message)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Single-instance lock — must be checked before ANY app lifecycle code
 // If we don't get the lock, quit immediately and do nothing else
 // ---------------------------------------------------------------------------
@@ -239,13 +266,22 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // Only the first instance reaches here
-app.on('second-instance', () => {
-  // A second launch was attempted — bring our window to focus
-  if (mainWindow) {
+app.on('second-instance', (_event, argv) => {
+  // On Windows, the deep link URL arrives in argv
+  const deepLink = argv.find(arg => arg.startsWith('beehive://'))
+  if (deepLink) {
+    handleDeepLink(deepLink)
+  } else if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus()
   }
+})
+
+// macOS: deep-link arrives via 'open-url' event (single instance already running)
+app.on('open-url', (_event, url) => {
+  _event.preventDefault()
+  handleDeepLink(url)
 })
 
 // ---------------------------------------------------------------------------

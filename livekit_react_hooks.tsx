@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, Session, User } from '@supabase/supabase-js'
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -11,6 +11,141 @@ export const supabase = createClient(
 const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
   ? 'http://localhost:3001'
   : ''
+
+// ============================================================
+// AUTH TYPES
+// ============================================================
+
+export interface Profile {
+  id: string
+  full_name: string | null
+  avatar_url: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface InvitationRecord {
+  id: string
+  token: string
+  invited_email: string
+  invited_by: string
+  room_id: string | null
+  status: 'pending' | 'accepted' | 'expired' | 'revoked'
+  expires_at: string
+}
+
+// ============================================================
+// useAuth — session listener, magic link, OTP
+// ============================================================
+export function useAuth() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setUser(s?.user ?? null)
+      setLoading(false)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const signInWithMagicLink = useCallback(async (email: string) => {
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: isElectron
+          ? 'beehive://auth/confirm'
+          : `${window.location.origin}/?auth=confirm`,
+        shouldCreateUser: true,
+      },
+    })
+    return { error: error?.message ?? null }
+  }, [])
+
+  const signInWithOtp = useCallback(async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: true },
+    })
+    return { error: error?.message ?? null }
+  }, [])
+
+  const verifyOtp = useCallback(async (email: string, token: string) => {
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' })
+    return { error: error?.message ?? null }
+  }, [])
+
+  const signOut = useCallback(async () => { await supabase.auth.signOut() }, [])
+
+  return { session, user, loading, signInWithMagicLink, signInWithOtp, verifyOtp, signOut }
+}
+
+// ============================================================
+// useProfile — read + update own profile
+// ============================================================
+export function useProfile(userId: string | null) {
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!userId) { setProfile(null); return }
+    setLoading(true)
+    supabase.from('profiles').select('*').eq('id', userId).single()
+      .then(({ data }) => { setProfile(data ?? null); setLoading(false) })
+  }, [userId])
+
+  const updateProfile = useCallback(async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url'>>) => {
+    if (!userId) return { error: 'Not authenticated' }
+    const { error } = await supabase.from('profiles').update(updates).eq('id', userId)
+    if (!error) setProfile(prev => prev ? { ...prev, ...updates } : null)
+    return { error: error?.message ?? null }
+  }, [userId])
+
+  return { profile, loading, updateProfile }
+}
+
+// ============================================================
+// useIsAdmin — resolves the is_admin() DB function
+// ============================================================
+export function useIsAdmin(userId: string | null) {
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    if (!userId) { setIsAdmin(false); return }
+    supabase.rpc('is_admin').then(({ data }) => setIsAdmin(!!data))
+  }, [userId])
+
+  return isAdmin
+}
+
+// ============================================================
+// useInvitation — validate a token via backend
+// ============================================================
+export function useInvitation(token: string | null) {
+  const [invitation, setInvitation] = useState<InvitationRecord | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    const base = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+      ? 'http://localhost:3001' : ''
+    fetch(`${base}/api/invitations/validate/${token}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { setError(data.error); setInvitation(null) }
+        else setInvitation(data as InvitationRecord)
+      })
+      .catch(() => setError('Could not validate invitation'))
+      .finally(() => setLoading(false))
+  }, [token])
+
+  return { invitation, loading, error }
+}
 
 // ============================================================
 // TYPES

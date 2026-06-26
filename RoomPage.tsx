@@ -39,6 +39,8 @@ import {
   useChat,
   useRecordings,
   useRoomInfo,
+  useAuth,
+  useProfile,
   supabase,
 } from './livekit_react_hooks'
 
@@ -66,6 +68,9 @@ import {
 } from './components/roomUtils'
 
 export default function RoomPage() {
+  const { user } = useAuth()
+  const { profile } = useProfile(user?.id ?? null)
+
   const [view, setView] = useState<'lobby' | 'room'>('lobby')
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
   const [activeRoomName, setActiveRoomName] = useState<string | null>(null)
@@ -74,6 +79,17 @@ export default function RoomPage() {
   const [displayName, setDisplayName] = useState('')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(null)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
+  const [showProfileSetup, setShowProfileSetup] = useState(false)
+
+  // Derive display name from auth profile or email prefix
+  useEffect(() => {
+    if (displayName) return  // user has typed something, leave it
+    if (profile?.full_name) {
+      setDisplayName(profile.full_name)
+    } else if (user?.email) {
+      setDisplayName(user.email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))
+    }
+  }, [profile?.full_name, user?.email])
 
   const { createRoom, loading: creating } = useCreateRoom()
   const { joinRoom, loading: joining } = useJoinRoom()
@@ -123,6 +139,8 @@ export default function RoomPage() {
     setActiveRoomName(null)
     setLivekitRoomName(null)
     setToken(null)
+    // Prompt unauthenticated users (frictionless room join) to register after the meeting
+    if (!user) setShowProfileSetup(true)
   }
 
   if (view === 'room' && token && activeRoomId && livekitRoomName) {
@@ -156,6 +174,9 @@ export default function RoomPage() {
       inviteRoom={inviteRoom}
       subtext={subtext}
       onSubtextChange={setSubtext}
+      user={user}
+      showRegister={showProfileSetup}
+      onDismissRegister={() => setShowProfileSetup(false)}
     />
   )
 }

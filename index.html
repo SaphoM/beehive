@@ -13,6 +13,8 @@
       body { font-family: 'Roboto', sans-serif; background: #0a0a0a; color: #fff; }
       #root { width: 100%; overflow-x: hidden; }
       @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 100% { opacity:0; transform:translateY(-120px) scale(1.4); } }
+      @keyframes pillFloat { 0% { opacity:0; transform:translateX(-50%) translateY(0) scale(0.92); } 12% { opacity:1; transform:translateX(-50%) translateY(-18px) scale(1); } 75% { opacity:1; } 100% { opacity:0; transform:translateX(-50%) translateY(-170px) scale(1); } }
+      @keyframes composerIn { 0% { opacity:0; transform:translateY(10px) scale(0.94); } 100% { opacity:1; transform:translateY(0) scale(1); } }
       @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
       .controls-bar::-webkit-scrollbar { display: none; }
 

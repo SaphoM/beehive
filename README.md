@@ -162,7 +162,9 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 #### In-meeting Features
 - 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)
 - 🖱️ **Apple Dock magnification** (desktop) — hovering the controls bar magnifies icons with a Gaussian bell-curve wave; a two-pass cumulative X-shift pushes neighbours apart so gaps between icons are always preserved at any zoom level; spring-pop entry, fast cursor-tracking, and a micro-bounce settle on leave; `transform-origin: center` keeps click hit-areas aligned with visuals at all scales
-- 😊 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥); triggered by `Smile` button
+- 😊 **Emoji reactions** — two modes triggered by the `Smile` button:
+  - **Quick tap**: emoji floats up immediately (👍 ❤️ 😂 🎉 👏 🔥); visible to all participants via Supabase Realtime
+  - **Long-press / right-click**: opens a composer popover anchored above the emoji — pre-filled with a smart editable sentence (`Sapho agrees.`, `Sapho loves this.` etc.); 50-char limit; Enter sends, Esc cancels, click-away closes; message broadcasts to all as a glassmorphism floating pill; 5 s rate-limit cooldown per sender
 - ✋ **Raise hand** — `Hand` button broadcasts your name to all participants via Supabase Realtime (`hands:{roomId}`); raised hands appear as floating chips in the top-right of the video area showing ✋ + name; any participant can tap × to lower an individual hand, or "Lower all" to clear all at once; the broadcaster's own state stays in sync
 - 🔇 **Speaker mute** — `Volume2` / `VolumeX` button silences all `<audio>` elements in the page (mutes remote audio output without affecting the microphone); red border when active
 - 🔗 Invite link — opens a share modal showing the plain `?room=ROOM_ID` link; anyone can copy and share it; recipients join directly with no account required

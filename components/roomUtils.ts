@@ -1,4 +1,17 @@
 export const REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '🔥']
+
+const REACTION_TEMPLATES: Record<string, (name: string) => string> = {
+  '👍': name => `${name} agrees.`,
+  '❤️': name => `${name} loves this.`,
+  '😂': name => `${name} found this hilarious.`,
+  '🎉': name => `${name} is celebrating!`,
+  '👏': name => `${name} applauds this.`,
+  '🔥': name => `${name} thinks this is 🔥`,
+}
+
+export function getReactionTemplate(emoji: string, name: string): string {
+  return REACTION_TEMPLATES[emoji]?.(name) ?? `${name} reacted.`
+}
 export const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
 export const APP_NAME = 'BeeHive'
 export const SUBTEXTS = ['Meet', 'Sting'] as const

@@ -53,6 +53,7 @@ import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
 import { ScreenShareBar } from './components/ScreenShareBar'
 import { ElectronWindowPicker } from './components/ElectronWindowPicker'
+import { ReactionComposer } from './components/ReactionComposer'
 import { s } from './components/roomStyles'
 import {
   WEB_BASE,
@@ -62,6 +63,7 @@ import {
   isPresentationFile,
   presentationApp,
   formatBytes,
+  getReactionTemplate,
   fileIcon,
   ensureMediaPipe,
   drawVirtualScene,
@@ -226,12 +228,22 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const [participantsDocked, setParticipantsDocked] = useState(false)
   const [showQuality, setShowQuality] = useState(false)
   const [quality, setQuality] = useState('Medium (720p)')
-  const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string }[]>([])
+  const [floatingReactions, setFloatingReactions] = useState<{
+    id: number; emoji: string; message?: string; senderName?: string; x: number
+  }[]>([])
+  const [reactionComposer, setReactionComposer] = useState<{
+    emoji: string; text: string; anchor: { x: number; y: number; width: number }
+  } | null>(null)
   const [copied, setCopied] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
+  const reactionChannelRef = useRef<any>(null)
+  const lastReactionAt = useRef(0)
+  const emojiLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const emojiLongPressed = useRef(false)
   const dockRafRef = useRef<number>(0)
   const controlsBarRef = useRef<HTMLDivElement>(null)
+  const REACTION_COOLDOWN_MS = 5000
 
   const [dragOver, setDragOver] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
@@ -606,6 +618,24 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
       })
       .subscribe()
     handsChannelRef.current = channel
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId])
+
+  // Reactions channel — self:true so the sender sees their own reaction
+  useEffect(() => {
+    const channel = supabase.channel(`reactions:${roomId}`, { config: { broadcast: { self: true } } })
+    channel.on('broadcast', { event: 'reaction' }, ({ payload }: any) => {
+      const id = reactionId.current++
+      const x = Math.round((Math.random() - 0.5) * 280) // random horizontal drift -140…+140 px
+      const ttl = payload.message ? 3500 : 2500
+      setFloatingReactions(prev => [...prev, {
+        id, emoji: payload.emoji, message: payload.message || undefined,
+        senderName: payload.senderName, x,
+      }])
+      setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), ttl)
+    })
+    channel.subscribe()
+    reactionChannelRef.current = channel
     return () => { supabase.removeChannel(channel) }
   }, [roomId])
 
@@ -1196,10 +1226,50 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     setFileRecipients('all')
   }
 
-  const sendReaction = (emoji: string) => {
-    const id = reactionId.current++
-    setFloatingReactions(prev => [...prev, { id, emoji }])
-    setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), 2500)
+  const sendReaction = (emoji: string, message?: string) => {
+    const now = Date.now()
+    if (now - lastReactionAt.current < REACTION_COOLDOWN_MS) return
+    lastReactionAt.current = now
+    reactionChannelRef.current?.send({
+      type: 'broadcast', event: 'reaction',
+      payload: { emoji, message: message ?? '', senderName: displayName },
+    })
+  }
+
+  const openComposer = (emoji: string, btn: HTMLElement) => {
+    const rect = btn.getBoundingClientRect()
+    setReactionComposer({
+      emoji,
+      text: getReactionTemplate(emoji, displayName),
+      anchor: { x: rect.left, y: rect.top, width: rect.width },
+    })
+  }
+
+  const handleEmojiPointerDown = (emoji: string, e: React.PointerEvent<HTMLButtonElement>) => {
+    emojiLongPressed.current = false
+    emojiLongPressTimer.current = setTimeout(() => {
+      emojiLongPressed.current = true
+      openComposer(emoji, e.currentTarget)
+    }, 450)
+  }
+
+  const cancelEmojiLongPress = () => {
+    if (emojiLongPressTimer.current) {
+      clearTimeout(emojiLongPressTimer.current)
+      emojiLongPressTimer.current = null
+    }
+  }
+
+  const handleEmojiClick = (emoji: string, closePicker: () => void) => {
+    if (emojiLongPressed.current) { emojiLongPressed.current = false; return }
+    sendReaction(emoji)
+    closePicker()
+  }
+
+  const handleEmojiContextMenu = (emoji: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
+    cancelEmojiLongPress()
+    openComposer(emoji, e.currentTarget)
   }
 
   const toggleSpeaker = () => {
@@ -1450,10 +1520,49 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             </div>
           ))}
 
-          {/* Floating Reactions */}
+          {/* Floating Reactions — emoji-only column (original behaviour) */}
           <div style={s.reactionFloat}>
-            {floatingReactions.map(r => (
+            {floatingReactions.filter(r => !r.message).map(r => (
               <span key={r.id} style={s.floatingEmoji}>{r.emoji}</span>
+            ))}
+          </div>
+
+          {/* Floating Reaction Pills — glassmorphism, individually positioned */}
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 20, overflow: 'hidden' }} aria-live="polite">
+            {floatingReactions.filter(r => !!r.message).map(r => (
+              <div
+                key={r.id}
+                role="status"
+                aria-label={`${r.senderName} reacted: ${r.message}`}
+                style={{
+                  position: 'absolute',
+                  bottom: 90,
+                  left: `calc(50% + ${r.x}px)`,
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(16,16,16,0.86)',
+                  backdropFilter: 'blur(18px)',
+                  WebkitBackdropFilter: 'blur(18px)',
+                  border: '1px solid rgba(255,255,255,0.09)',
+                  borderRadius: 28,
+                  padding: '9px 16px 9px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  maxWidth: 320,
+                  boxShadow: '0 6px 28px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04) inset',
+                  animation: 'pillFloat 3.2s ease-out forwards',
+                  fontFamily: "'Roboto', sans-serif",
+                  fontSize: 13,
+                  fontWeight: 300,
+                  color: '#ddd',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                <span style={{ fontSize: 19, lineHeight: 1, flexShrink: 0 }}>{r.emoji}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.message}</span>
+              </div>
             ))}
           </div>
 
@@ -1500,7 +1609,18 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                   {showMobileEmoji && (
                     <div style={{ position: 'absolute', bottom: btnSize + 24, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4, background: 'rgba(10,10,10,0.92)', backdropFilter: 'blur(14px)', borderRadius: 30, padding: '6px 10px', border: '1px solid #2a2a2a', maxWidth: 'calc(100vw - 40px)', justifyContent: 'center', zIndex: 20 }}>
                       {REACTIONS.map(e => (
-                        <button key={e} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', padding: '2px 4px', borderRadius: 8 }} onClick={() => { sendReaction(e); setShowMobileEmoji(false) }}>{e}</button>
+                        <button
+                          key={e}
+                          style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', padding: '2px 4px', borderRadius: 8 }}
+                          aria-label={`React with ${e}`}
+                          onPointerDown={ev => handleEmojiPointerDown(e, ev)}
+                          onPointerUp={cancelEmojiLongPress}
+                          onPointerCancel={cancelEmojiLongPress}
+                          onClick={() => handleEmojiClick(e, () => setShowMobileEmoji(false))}
+                          onContextMenu={ev => { handleEmojiContextMenu(e, ev); setShowMobileEmoji(false) }}
+                        >
+                          {e}
+                        </button>
                       ))}
                     </div>
                   )}
@@ -1767,7 +1887,19 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                 {showReactions && (
                   <div style={s.reactionBar}>
                     {REACTIONS.map(e => (
-                      <button key={e} style={s.emojiBtn} onClick={() => { sendReaction(e); setShowReactions(false) }}>{e}</button>
+                      <button
+                        key={e}
+                        style={s.emojiBtn}
+                        title={`${e}  ·  hold for message`}
+                        aria-label={`React with ${e}`}
+                        onPointerDown={ev => handleEmojiPointerDown(e, ev)}
+                        onPointerUp={cancelEmojiLongPress}
+                        onPointerCancel={cancelEmojiLongPress}
+                        onClick={() => handleEmojiClick(e, () => setShowReactions(false))}
+                        onContextMenu={ev => { handleEmojiContextMenu(e, ev); setShowReactions(false) }}
+                      >
+                        {e}
+                      </button>
                     ))}
                   </div>
                 )}
@@ -2292,6 +2424,18 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
         <InviteModal
           roomId={roomId}
           onClose={() => setShowInviteModal(false)}
+        />
+      )}
+
+      {reactionComposer && (
+        <ReactionComposer
+          emoji={reactionComposer.emoji}
+          defaultText={reactionComposer.text}
+          anchor={reactionComposer.anchor}
+          onSend={(emoji, message) => sendReaction(emoji, message || undefined)}
+          onClose={() => setReactionComposer(null)}
+          lastReactionAt={lastReactionAt}
+          cooldownMs={REACTION_COOLDOWN_MS}
         />
       )}
     </div>

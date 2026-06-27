@@ -321,33 +321,58 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     const paint = (mouseX: number, phase: string, atRest: boolean) => {
       const bar = controlsBarRef.current
       if (!bar) return
-      const btns = bar.querySelectorAll<HTMLElement>('.bhv-btn')
-      btns.forEach(btn => {
-        if (atRest) {
+      const btns = Array.from(bar.querySelectorAll<HTMLElement>('.bhv-btn'))
+
+      if (atRest) {
+        btns.forEach(btn => {
           btn.style.transition = phase
           btn.style.transform  = ''
           btn.style.filter     = ''
-          return
-        }
-        const r  = btn.getBoundingClientRect()
-        const cx = r.left + r.width / 2
-        const dx = mouseX - cx // horizontal distance only — Dock-style
+        })
+        return
+      }
 
+      // First pass — compute per-button values
+      const W = 48 // layout button width (px)
+      const data = btns.map(btn => {
+        const r     = btn.getBoundingClientRect()
+        const cx    = r.left + r.width / 2
+        const dx    = mouseX - cx
         const gauss = Math.exp(-(dx * dx) / (2 * SIGMA * SIGMA))
         const scale = 1 + (MAX_SCALE - 1) * gauss
         const lift  = gauss * MAX_LIFT
-        // With transform-origin:center, scale(S) also pushes the button DOWN
-        // by (S-1)*halfHeight. Compensate so the visual bottom stays exactly
-        // `lift` px above its resting position — replicating the dock-floor lift.
-        const upShift = lift + (scale - 1) * 24
+        // transform-origin:center pushes the button down by (scale-1)*halfHeight;
+        // upShift compensates so the visual bottom lifts cleanly off the dock floor.
+        const upShift = lift + (scale - 1) * (W / 2)
+        return { btn, cx, gauss, scale, lift, upShift }
+      })
 
+      // Second pass — cumulative X shifts to keep gaps between icons
+      // The gap between buttons i and i+1 grows by (scale_i + scale_{i+1} - 2) * W/2
+      // when both scale from center. Accumulate outward from the peak button.
+      const peakIdx = data.reduce((best, d, i) =>
+        Math.abs(d.cx - mouseX) < Math.abs(data[best].cx - mouseX) ? i : best, 0)
+
+      const xShifts = new Array(data.length).fill(0)
+      for (let i = peakIdx - 1; i >= 0; i--) {
+        const extra = (data[i].scale + data[i + 1].scale - 2) * W / 2
+        xShifts[i] = xShifts[i + 1] - extra
+      }
+      for (let i = peakIdx + 1; i < data.length; i++) {
+        const extra = (data[i].scale + data[i - 1].scale - 2) * W / 2
+        xShifts[i] = xShifts[i - 1] + extra
+      }
+
+      // Apply
+      data.forEach(({ btn, gauss, scale, lift, upShift }, i) => {
         const shadowY     = lift * 0.5
         const shadowBlur  = lift * 1.8
         const shadowAlpha = (0.06 + gauss * 0.28).toFixed(2)
         const brightness  = (1 + gauss * 0.07).toFixed(3)
 
         btn.style.transition = phase
-        btn.style.transform  = `translateY(-${upShift.toFixed(2)}px) scale(${scale.toFixed(4)})`
+        btn.style.transform  =
+          `translateX(${xShifts[i].toFixed(2)}px) translateY(-${upShift.toFixed(2)}px) scale(${scale.toFixed(4)})`
         btn.style.filter = gauss > 0.01
           ? `brightness(${brightness}) drop-shadow(0 ${shadowY.toFixed(1)}px ${shadowBlur.toFixed(1)}px rgba(0,0,0,${shadowAlpha}))`
           : ''

@@ -231,6 +231,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
   const dockRafRef = useRef<number>(0)
+  const controlsBarRef = useRef<HTMLDivElement>(null)
 
   const [dragOver, setDragOver] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
@@ -295,102 +296,113 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // Desktop dock magnification — full Apple Dock behaviour:
-  //   Three distinct easing phases driven entirely by transform/filter (no layout shift):
-  //   SPRING_T  — first frame after mouseenter: overshoot curve so icons spring up
-  //   TRACK_T   — subsequent mousemove frames: fast ease-out tracks cursor without jitter
-  //   SETTLE_T  — mouseleave: long spring curve, icons float back with a micro-bounce landing
-  //
-  //   Gaussian falloff (σ=100px) spreads the wave across ~4 neighbours each side.
-  //   translateY lift (max 12px) lifts the icon bottom off the dock floor.
-  //   drop-shadow grows proportionally, selling the 3D elevation.
+  // Desktop dock magnification — macOS-Dock-accurate, built to be bulletproof:
+  //   • Listener is on WINDOW (mousemove always fires) — not on the bar node, so it
+  //     can never be missed because of a stale querySelector ref or an intercepting
+  //     overlay. The bar comes from a React ref (controlsBarRef) → always the live DOM.
+  //   • Magnification is driven by HORIZONTAL cursor distance only (exactly how the
+  //     real Dock works) and gated by vertical proximity. Horizontal-only also avoids
+  //     getBoundingClientRect feedback wobble, since center-origin scaling doesn't
+  //     move a button's x-centre.
+  //   • Gaussian falloff spreads the Mexican wave across neighbours; translateY lifts
+  //     the icon off the floor; drop-shadow grows with the lift for 3D depth.
   useEffect(() => {
     if (isMobile) return
 
-    const bar = document.querySelector<HTMLElement>('.controls-bar')
-    if (!bar) return
+    const MAX_SCALE = 1.70 // peak magnification directly under the cursor
+    const SIGMA     = 95   // Gaussian width (px) — how far the wave spreads sideways
+    const MAX_LIFT  = 26   // px (~7 mm) the hovered icon rises off the dock floor
+    const V_GATE    = 70   // px above/below the bar within which the dock "engages"
 
-    const MAX_SCALE = 1.75 // peak magnification at cursor
-    const SIGMA     = 100  // Gaussian width in px — wider = more Mexican wave spread
-    const MAX_LIFT  = 28   // px ≈ 7 mm @ 96dpi — well above the 0.5 cm floor requirement
+    // Spring entry: slight overshoot on first engage → that satisfying Dock pop
+    const SPRING = 'transform 0.24s cubic-bezier(0.34,1.56,0.64,1), filter 0.24s ease'
+    // Tracking: short ease-out so icons follow the cursor crisply, no lag
+    const TRACK  = 'transform 0.12s cubic-bezier(0.22,1,0.36,1),    filter 0.12s ease'
+    // Settle: long spring back down to the floor when the cursor leaves
+    const SETTLE = 'transform 0.55s cubic-bezier(0.34,1.18,0.5,1),  filter 0.45s ease'
 
-    // Three transition strings — switched based on interaction phase
-    // Spring entry: overshoots scale/lift target, bounces back (dock snap-in feel)
-    const SPRING_T = 'transform 0.22s cubic-bezier(0.34,1.56,0.64,1), filter 0.22s cubic-bezier(0.23,1,0.32,1)'
-    // Tracking: fast ease-out tracks cursor frame-by-frame without oscillation
-    const TRACK_T  = 'transform 0.12s cubic-bezier(0.23,1,0.32,1),  filter 0.12s cubic-bezier(0.23,1,0.32,1)'
-    // Settle: longer spring — icons drift back with a subtle micro-bounce landing
-    const SETTLE_T = 'transform 0.50s cubic-bezier(0.34,1.04,0.64,1), filter 0.50s cubic-bezier(0.23,1,0.32,1)'
+    let engaged = false
 
-    let isFirstMove = true // flips to false after the first rAF inside the bar
-
-    const applyDock = (mouseX: number, mouseY: number) => {
-      // First frame after entry → spring-in; all subsequent frames → tracking
-      const t = isFirstMove ? SPRING_T : TRACK_T
-      isFirstMove = false
-
-      bar.querySelectorAll<HTMLElement>('.bhv-btn').forEach(btn => {
+    const paint = (mouseX: number, phase: string, atRest: boolean) => {
+      const bar = controlsBarRef.current
+      if (!bar) return
+      const btns = bar.querySelectorAll<HTMLElement>('.bhv-btn')
+      btns.forEach(btn => {
+        if (atRest) {
+          btn.style.transition = phase
+          btn.style.transform  = ''
+          btn.style.filter     = ''
+          return
+        }
         const r = btn.getBoundingClientRect()
         const cx = r.left + r.width / 2
-        const cy = r.top + r.height / 2
-        const dist = Math.hypot(mouseX - cx, mouseY - cy)
+        const dx = mouseX - cx // horizontal distance only — Dock-style
 
-        // Gaussian bell — natural falloff, same shape Apple's Dock uses.
-        // σ=100px: neighbor at 56px gets ≈0.855 (scale 1.56×); at 112px ≈0.535 (1.35×)
-        const gauss = Math.exp(-(dist * dist) / (2 * SIGMA * SIGMA))
+        const gauss = Math.exp(-(dx * dx) / (2 * SIGMA * SIGMA))
         const scale = 1 + (MAX_SCALE - 1) * gauss
+        const lift  = gauss * MAX_LIFT
 
-        // Icon lifts off dock floor; bottom leaves the baseline at full magnification
-        const lift = gauss * MAX_LIFT
-
-        // Shadow depth and spread grow with lift → reinforces 3D floating
-        const shadowY    = lift * 0.50
-        const shadowBlur = lift * 1.5
-        const shadowAlpha = (0.06 + gauss * 0.24).toFixed(2)
+        const shadowY     = lift * 0.5
+        const shadowBlur  = lift * 1.5
+        const shadowAlpha = (0.06 + gauss * 0.26).toFixed(2)
         const brightness  = (1 + gauss * 0.06).toFixed(3)
 
-        btn.style.transition = t
+        btn.style.transition = phase
         btn.style.transform  = `translateY(-${lift.toFixed(2)}px) scale(${scale.toFixed(4)})`
-        btn.style.filter = gauss > 0.004
+        btn.style.filter = gauss > 0.01
           ? `brightness(${brightness}) drop-shadow(0 ${shadowY.toFixed(1)}px ${shadowBlur.toFixed(1)}px rgba(0,0,0,${shadowAlpha}))`
           : ''
       })
     }
 
-    const resetDock = () => {
-      // Switch to SETTLE_T *before* clearing values — browser starts the spring
-      // transition from the current animated position, not from the final value
-      bar.querySelectorAll<HTMLElement>('.bhv-btn').forEach(btn => {
-        btn.style.transition = SETTLE_T
-        btn.style.transform  = ''
-        btn.style.filter     = ''
+    const onMove = (e: MouseEvent) => {
+      const bar = controlsBarRef.current
+      if (!bar) return
+      const rect = bar.getBoundingClientRect()
+      // Vertical gate: are we close enough (above/below) for the dock to react?
+      const near =
+        e.clientY >= rect.top - V_GATE &&
+        e.clientY <= rect.bottom + V_GATE &&
+        e.clientX >= rect.left - SIGMA * 2 &&
+        e.clientX <= rect.right + SIGMA * 2
+
+      // Cheap early-out: cursor is away and icons already rest → nothing to do
+      if (!near && !engaged) return
+
+      cancelAnimationFrame(dockRafRef.current)
+      const x = e.clientX
+      dockRafRef.current = requestAnimationFrame(() => {
+        if (near) {
+          const phase = engaged ? TRACK : SPRING // first engaged frame springs in
+          engaged = true
+          paint(x, phase, false)
+        } else {
+          engaged = false
+          paint(x, SETTLE, true) // settle gracefully back to the floor
+        }
       })
     }
 
-    const onEnter = () => { isFirstMove = true }  // arm the spring-in for next mousemove
-
-    const onMove = (e: MouseEvent) => {
+    // Cursor leaves the window entirely → settle back to rest
+    const onWindowOut = () => {
+      if (!engaged) return
+      engaged = false
       cancelAnimationFrame(dockRafRef.current)
-      dockRafRef.current = requestAnimationFrame(() => applyDock(e.clientX, e.clientY))
+      paint(0, SETTLE, true)
     }
 
-    const onLeave = () => {
-      cancelAnimationFrame(dockRafRef.current)
-      resetDock()
-    }
-
-    bar.addEventListener('mouseenter', onEnter)
-    bar.addEventListener('mousemove',  onMove)
-    bar.addEventListener('mouseleave', onLeave)
+    window.addEventListener('mousemove', onMove, { passive: true })
+    window.addEventListener('blur', onWindowOut)
+    document.addEventListener('mouseleave', onWindowOut)
 
     return () => {
-      bar.removeEventListener('mouseenter', onEnter)
-      bar.removeEventListener('mousemove',  onMove)
-      bar.removeEventListener('mouseleave', onLeave)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('blur', onWindowOut)
+      document.removeEventListener('mouseleave', onWindowOut)
       cancelAnimationFrame(dockRafRef.current)
-      resetDock()
+      paint(0, SETTLE, true)
     }
-  }, [isMobile, overlayMode])
+  }, [isMobile])
 
   // Window-level drag listeners — child <video> elements swallow React div-level events
   useEffect(() => {
@@ -1654,7 +1666,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                 transition: transform 0.07s ease, filter 0.07s ease !important;
               }
             `}</style>
-            <div style={{ ...s.controls, overflow: 'visible' }} className="controls-bar">
+            <div ref={controlsBarRef} style={{ ...s.controls, overflow: 'visible' }} className="controls-bar">
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon />
               <button className="bhv-btn"
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}

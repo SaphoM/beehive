@@ -1822,6 +1822,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                 filter: brightness(0.82) !important;
                 transition: transform 0.07s ease, filter 0.07s ease !important;
               }
+              .bhv-emoji:hover { filter: none !important; }
             `}</style>
             <div ref={controlsBarRef} style={{ ...s.controls, overflow: 'visible' }} className="controls-bar">
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon />
@@ -1889,6 +1890,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                     {REACTIONS.map(e => (
                       <button
                         key={e}
+                        className="bhv-emoji"
                         style={s.emojiBtn}
                         title={`${e}  ·  hold for message`}
                         aria-label={`React with ${e}`}

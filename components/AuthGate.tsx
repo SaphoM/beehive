@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { ReactNode, useState } from 'react'
 import { useAuth } from '../livekit_react_hooks'
 import { AuthScreen } from './AuthScreen'
 
@@ -17,32 +17,34 @@ function isAuthCallback(): boolean {
     hash.includes('type=magiclink')
 }
 
+const spinner = (
+  <div style={{
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: '100%', height: 'var(--vh, 100vh)', background: '#0a0a0a',
+  }}>
+    <span style={{ color: '#444', fontSize: 13, letterSpacing: 2 }}>LOADING…</span>
+  </div>
+)
+
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  // Capture once on mount — URL will be cleaned by Supabase SDK after processing,
+  // so re-reading window.location on every render would give stale results anyway.
+  const [wasCallback] = useState(isAuthCallback)
 
-  // Supabase processes the magic link token automatically via onAuthStateChange;
-  // while that is happening, show nothing (avoids flash of auth screen).
-  if (loading || isAuthCallback()) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        width: '100%', height: 'var(--vh, 100vh)', background: '#0a0a0a',
-      }}>
-        <span style={{ color: '#444', fontSize: 13, letterSpacing: 2 }}>LOADING…</span>
-      </div>
-    )
-  }
+  // User is resolved — render immediately regardless of URL state.
+  // Supabase may not have cleaned the hash yet, but the session is valid.
+  if (!loading && user) return <>{children}</>
+
+  // Waiting for the initial session to be determined
+  if (loading) return spinner
+
+  // Magic-link callback in progress — Supabase is still processing the token
+  if (wasCallback) return spinner
 
   // Frictionless join: ?room= links skip auth entirely
-  if (!user && hasRoomParam()) {
-    return <>{children}</>
-  }
+  if (hasRoomParam()) return <>{children}</>
 
-  // Not authenticated and no room param → show auth screen
-  if (!user) {
-    return <AuthScreen />
-  }
-
-  // Authenticated
-  return <>{children}</>
+  // Not authenticated → show sign-in screen
+  return <AuthScreen />
 }

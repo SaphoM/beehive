@@ -245,11 +245,11 @@ export function useJoinRoom() {
     setLoading(true)
     setError(null)
 
-    const { data: room, error: roomError } = await supabase
-      .from('rooms')
-      .select('livekit_room_name, name')
-      .eq('id', roomId)
-      .single()
+    // Fetch room info and local session in parallel — no dependency between them
+    const [{ data: room, error: roomError }, { data: { session } }] = await Promise.all([
+      supabase.from('rooms').select('livekit_room_name, name').eq('id', roomId).single(),
+      supabase.auth.getSession(), // local cache — no server roundtrip
+    ])
 
     if (roomError || !room) {
       setError('Room not found')
@@ -257,35 +257,36 @@ export function useJoinRoom() {
       return null
     }
 
-    // Clear any stale active records for this name in this room before inserting fresh one
-    const { data: { user } } = await supabase.auth.getUser()
+    // Deactivate any stale active records for this display name in this room
     await supabase.from('room_participants')
       .update({ is_active: false })
       .eq('room_id', roomId)
       .eq('display_name', displayName)
 
-    // Insert a fresh active row — always insert so joined_at is current
-    await supabase.from('room_participants').insert({
-      room_id: roomId,
-      user_id: user?.id ?? null,
-      display_name: displayName,
-      is_active: true,
-      joined_at: new Date().toISOString(),
-    })
+    // Insert fresh participant row and fetch LiveKit token in parallel —
+    // the token only needs roomName + displayName, not the participant row ID
+    const [, tokenRes] = await Promise.all([
+      supabase.from('room_participants').insert({
+        room_id: roomId,
+        user_id: session?.user?.id ?? null,
+        display_name: displayName,
+        is_active: true,
+        joined_at: new Date().toISOString(),
+      }),
+      fetch(`${API_BASE}/api/livekit/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName }),
+      }),
+    ])
 
-    const res = await fetch(`${API_BASE}/api/livekit/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomName: room.livekit_room_name, displayName }),
-    })
-
-    if (!res.ok) {
+    if (!tokenRes.ok) {
       setError('Failed to get access token')
       setLoading(false)
       return null
     }
 
-    const { token } = await res.json()
+    const { token } = await tokenRes.json()
     setLoading(false)
     return { token, livekitRoomName: room.livekit_room_name, roomName: room.name }
   }, [])
@@ -366,11 +367,12 @@ export function useChat(roomId: string) {
 
   const sendMessage = useCallback(async (message: string, displayName: string) => {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    // getSession() reads from local storage — no server roundtrip needed for a chat insert
+    const { data: { session } } = await supabase.auth.getSession()
 
     await supabase.from('chat_messages').insert({
       room_id: roomId,
-      user_id: user?.id,
+      user_id: session?.user?.id,
       display_name: displayName,
       message,
     })

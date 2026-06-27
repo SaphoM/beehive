@@ -230,6 +230,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const [copied, setCopied] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
+  const dockRafRef = useRef<number>(0)
 
   const [dragOver, setDragOver] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
@@ -293,6 +294,79 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  // Desktop dock magnification — authentic Apple Dock feel:
+  //   Gaussian falloff → natural bell curve that spreads the wave across neighbours
+  //   translateY lift  → icon bottom rises off the dock floor as it magnifies
+  //   drop-shadow      → shadow grows with lift, reinforcing the 3D elevation
+  // Re-runs when isMobile or overlayMode changes so it always finds the live controls bar.
+  useEffect(() => {
+    if (isMobile) return
+
+    const bar = document.querySelector<HTMLElement>('.controls-bar')
+    if (!bar) return
+
+    const MAX_SCALE = 1.85 // peak magnification at cursor centre
+    const SIGMA = 80       // Gaussian width (px) — tighter = snappier wave, wider = more spread
+    const MAX_LIFT = 22    // px — how far the icon's bottom lifts off the dock floor at full mag
+
+    const applyDock = (mouseX: number, mouseY: number) => {
+      bar.querySelectorAll<HTMLElement>('.bhv-btn').forEach(btn => {
+        const r = btn.getBoundingClientRect()
+        const cx = r.left + r.width / 2
+        const cy = r.top + r.height / 2
+        const dist = Math.hypot(mouseX - cx, mouseY - cy)
+
+        // Gaussian bell curve — the same natural falloff Apple uses in the Dock.
+        // At dist=0 → gauss=1 (full mag); at dist=SIGMA → gauss≈0.61; at 2×SIGMA → 0.14
+        const gauss = Math.exp(-(dist * dist) / (2 * SIGMA * SIGMA))
+        const scale = 1 + (MAX_SCALE - 1) * gauss
+
+        // Lift icon off the dock floor — bottom rises, top lifts higher (grows upward)
+        const lift = gauss * MAX_LIFT
+
+        // Shadow depth grows with lift to sell the 3D elevation
+        const shadowY   = lift * 0.55
+        const shadowBlur = lift * 1.6
+        const shadowAlpha = (0.10 + gauss * 0.32).toFixed(2)
+
+        // Gentle brightness peak at cursor (avoid blown-out look)
+        const brightness = (1 + gauss * 0.08).toFixed(3)
+
+        btn.style.transform = `translateY(-${lift.toFixed(2)}px) scale(${scale.toFixed(4)})`
+        btn.style.filter = gauss > 0.004
+          ? `brightness(${brightness}) drop-shadow(0 ${shadowY.toFixed(1)}px ${shadowBlur.toFixed(1)}px rgba(0,0,0,${shadowAlpha}))`
+          : ''
+      })
+    }
+
+    const resetDock = () => {
+      bar.querySelectorAll<HTMLElement>('.bhv-btn').forEach(btn => {
+        btn.style.transform = ''
+        btn.style.filter = ''
+      })
+    }
+
+    const onMove = (e: MouseEvent) => {
+      cancelAnimationFrame(dockRafRef.current)
+      dockRafRef.current = requestAnimationFrame(() => applyDock(e.clientX, e.clientY))
+    }
+
+    const onLeave = () => {
+      cancelAnimationFrame(dockRafRef.current)
+      resetDock()
+    }
+
+    bar.addEventListener('mousemove', onMove)
+    bar.addEventListener('mouseleave', onLeave)
+
+    return () => {
+      bar.removeEventListener('mousemove', onMove)
+      bar.removeEventListener('mouseleave', onLeave)
+      cancelAnimationFrame(dockRafRef.current)
+      resetDock()
+    }
+  }, [isMobile, overlayMode])
 
   // Window-level drag listeners — child <video> elements swallow React div-level events
   useEffect(() => {
@@ -1540,7 +1614,23 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
           ) : overlayMode !== 'hidden' ? (
             /* ── Desktop: full controls bar ──────────────────────────────── */
             <>
-            <style>{`.bhv-btn{transition:transform .12s ease,filter .12s ease}.bhv-btn:hover{transform:scale(1.18);filter:brightness(1.15)}.bhv-btn:active{transform:scale(0.92)}`}</style>
+            <style>{`
+              .bhv-btn {
+                /* JS sets transform + filter inline; CSS smooths between each rAF value.
+                   ease-out-quint: instant response, silky settle — matches Apple Dock feel. */
+                transition: transform 0.16s cubic-bezier(0.23, 1, 0.32, 1),
+                            filter   0.16s cubic-bezier(0.23, 1, 0.32, 1);
+                will-change: transform, filter;
+                /* Grow upward from the dock floor, not outward from centre */
+                transform-origin: bottom center;
+              }
+              /* !important beats inline style — collapses lift+scale on click */
+              .bhv-btn:active {
+                transform: translateY(0) scale(0.88) !important;
+                filter: brightness(0.85) !important;
+                transition: transform 0.07s ease, filter 0.07s ease !important;
+              }
+            `}</style>
             <div style={s.controls} className="controls-bar">
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon />
               <button className="bhv-btn"

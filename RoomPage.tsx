@@ -295,45 +295,62 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // Desktop dock magnification — authentic Apple Dock feel:
-  //   Gaussian falloff → natural bell curve that spreads the wave across neighbours
-  //   translateY lift  → icon bottom rises off the dock floor as it magnifies
-  //   drop-shadow      → shadow grows with lift, reinforcing the 3D elevation
-  // Re-runs when isMobile or overlayMode changes so it always finds the live controls bar.
+  // Desktop dock magnification — full Apple Dock behaviour:
+  //   Three distinct easing phases driven entirely by transform/filter (no layout shift):
+  //   SPRING_T  — first frame after mouseenter: overshoot curve so icons spring up
+  //   TRACK_T   — subsequent mousemove frames: fast ease-out tracks cursor without jitter
+  //   SETTLE_T  — mouseleave: long spring curve, icons float back with a micro-bounce landing
+  //
+  //   Gaussian falloff (σ=100px) spreads the wave across ~4 neighbours each side.
+  //   translateY lift (max 12px) lifts the icon bottom off the dock floor.
+  //   drop-shadow grows proportionally, selling the 3D elevation.
   useEffect(() => {
     if (isMobile) return
 
     const bar = document.querySelector<HTMLElement>('.controls-bar')
     if (!bar) return
 
-    const MAX_SCALE = 1.85 // peak magnification at cursor centre
-    const SIGMA = 80       // Gaussian width (px) — tighter = snappier wave, wider = more spread
-    const MAX_LIFT = 22    // px — how far the icon's bottom lifts off the dock floor at full mag
+    const MAX_SCALE = 1.65 // peak at cursor — "1.50× or more" per spec
+    const SIGMA     = 100  // Gaussian width in px — wider = more Mexican wave spread
+    const MAX_LIFT  = 12   // px — lift range (-8 to -12px per spec)
+
+    // Three transition strings — switched based on interaction phase
+    // Spring entry: overshoots scale/lift target, bounces back (dock snap-in feel)
+    const SPRING_T = 'transform 0.22s cubic-bezier(0.34,1.56,0.64,1), filter 0.22s cubic-bezier(0.23,1,0.32,1)'
+    // Tracking: fast ease-out tracks cursor frame-by-frame without oscillation
+    const TRACK_T  = 'transform 0.12s cubic-bezier(0.23,1,0.32,1),  filter 0.12s cubic-bezier(0.23,1,0.32,1)'
+    // Settle: longer spring — icons drift back with a subtle micro-bounce landing
+    const SETTLE_T = 'transform 0.50s cubic-bezier(0.34,1.04,0.64,1), filter 0.50s cubic-bezier(0.23,1,0.32,1)'
+
+    let isFirstMove = true // flips to false after the first rAF inside the bar
 
     const applyDock = (mouseX: number, mouseY: number) => {
+      // First frame after entry → spring-in; all subsequent frames → tracking
+      const t = isFirstMove ? SPRING_T : TRACK_T
+      isFirstMove = false
+
       bar.querySelectorAll<HTMLElement>('.bhv-btn').forEach(btn => {
         const r = btn.getBoundingClientRect()
         const cx = r.left + r.width / 2
         const cy = r.top + r.height / 2
         const dist = Math.hypot(mouseX - cx, mouseY - cy)
 
-        // Gaussian bell curve — the same natural falloff Apple uses in the Dock.
-        // At dist=0 → gauss=1 (full mag); at dist=SIGMA → gauss≈0.61; at 2×SIGMA → 0.14
+        // Gaussian bell — natural falloff, same shape Apple's Dock uses.
+        // σ=100px: neighbor at 56px gets ≈0.855 (scale 1.56×); at 112px ≈0.535 (1.35×)
         const gauss = Math.exp(-(dist * dist) / (2 * SIGMA * SIGMA))
         const scale = 1 + (MAX_SCALE - 1) * gauss
 
-        // Lift icon off the dock floor — bottom rises, top lifts higher (grows upward)
+        // Icon lifts off dock floor; bottom leaves the baseline at full magnification
         const lift = gauss * MAX_LIFT
 
-        // Shadow depth grows with lift to sell the 3D elevation
-        const shadowY   = lift * 0.55
-        const shadowBlur = lift * 1.6
-        const shadowAlpha = (0.10 + gauss * 0.32).toFixed(2)
+        // Shadow depth and spread grow with lift → reinforces 3D floating
+        const shadowY    = lift * 0.50
+        const shadowBlur = lift * 1.5
+        const shadowAlpha = (0.06 + gauss * 0.24).toFixed(2)
+        const brightness  = (1 + gauss * 0.06).toFixed(3)
 
-        // Gentle brightness peak at cursor (avoid blown-out look)
-        const brightness = (1 + gauss * 0.08).toFixed(3)
-
-        btn.style.transform = `translateY(-${lift.toFixed(2)}px) scale(${scale.toFixed(4)})`
+        btn.style.transition = t
+        btn.style.transform  = `translateY(-${lift.toFixed(2)}px) scale(${scale.toFixed(4)})`
         btn.style.filter = gauss > 0.004
           ? `brightness(${brightness}) drop-shadow(0 ${shadowY.toFixed(1)}px ${shadowBlur.toFixed(1)}px rgba(0,0,0,${shadowAlpha}))`
           : ''
@@ -341,11 +358,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     }
 
     const resetDock = () => {
+      // Switch to SETTLE_T *before* clearing values — browser starts the spring
+      // transition from the current animated position, not from the final value
       bar.querySelectorAll<HTMLElement>('.bhv-btn').forEach(btn => {
-        btn.style.transform = ''
-        btn.style.filter = ''
+        btn.style.transition = SETTLE_T
+        btn.style.transform  = ''
+        btn.style.filter     = ''
       })
     }
+
+    const onEnter = () => { isFirstMove = true }  // arm the spring-in for next mousemove
 
     const onMove = (e: MouseEvent) => {
       cancelAnimationFrame(dockRafRef.current)
@@ -357,11 +379,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
       resetDock()
     }
 
-    bar.addEventListener('mousemove', onMove)
+    bar.addEventListener('mouseenter', onEnter)
+    bar.addEventListener('mousemove',  onMove)
     bar.addEventListener('mouseleave', onLeave)
 
     return () => {
-      bar.removeEventListener('mousemove', onMove)
+      bar.removeEventListener('mouseenter', onEnter)
+      bar.removeEventListener('mousemove',  onMove)
       bar.removeEventListener('mouseleave', onLeave)
       cancelAnimationFrame(dockRafRef.current)
       resetDock()
@@ -1616,18 +1640,16 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             <>
             <style>{`
               .bhv-btn {
-                /* JS sets transform + filter inline; CSS smooths between each rAF value.
-                   ease-out-quint: instant response, silky settle — matches Apple Dock feel. */
-                transition: transform 0.16s cubic-bezier(0.23, 1, 0.32, 1),
-                            filter   0.16s cubic-bezier(0.23, 1, 0.32, 1);
+                /* JS sets transition + transform + filter inline on every rAF frame.
+                   Static base: GPU layer promotion and bottom-up growth origin only. */
                 will-change: transform, filter;
-                /* Grow upward from the dock floor, not outward from centre */
                 transform-origin: bottom center;
               }
-              /* !important beats inline style — collapses lift+scale on click */
+              /* !important wins over inline style — snap-collapse on click regardless
+                 of whichever JS transition phase is currently active.             */
               .bhv-btn:active {
                 transform: translateY(0) scale(0.88) !important;
-                filter: brightness(0.85) !important;
+                filter: brightness(0.82) !important;
                 transition: transform 0.07s ease, filter 0.07s ease !important;
               }
             `}</style>

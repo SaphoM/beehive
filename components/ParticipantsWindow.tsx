@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Mic, MicOff, Video, VideoOff } from 'lucide-react'
+import { X, Mic, MicOff, Video, VideoOff, MessageSquare } from 'lucide-react'
 import { ParticipantTile, useTracks, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
 
-export function ParticipantsWindow({ onClose, onDock }: { onClose: () => void; onDock: () => void }) {
+export function ParticipantsWindow({ onClose, onDock, onDirectChat }: { onClose: () => void; onDock: () => void; onDirectChat?: (name: string) => void }) {
   const lkParticipants = useLiveKitParticipants()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
   const [pos, setPos] = useState({ x: 24, y: 24 })
@@ -74,6 +74,17 @@ export function ParticipantsWindow({ onClose, onDock }: { onClose: () => void; o
                     <div style={s.pwIcons}>
                       {isMuted ? <MicOff size={12} color="#e53e3e" /> : <Mic size={12} color="#48bb78" />}
                       {isCamOff ? <VideoOff size={12} color="#e53e3e" /> : <Video size={12} color="#48bb78" />}
+                      {onDirectChat && (
+                        <button
+                          onClick={() => onDirectChat(participant.name || participant.identity)}
+                          title={`Message ${participant.name || participant.identity}`}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', display: 'flex', alignItems: 'center', padding: 0, transition: 'color 0.12s' }}
+                          onMouseEnter={e => (e.currentTarget.style.color = '#5b5ef4')}
+                          onMouseLeave={e => (e.currentTarget.style.color = '#555')}
+                        >
+                          <MessageSquare size={12} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

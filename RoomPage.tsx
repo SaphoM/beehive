@@ -255,6 +255,36 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const [showReactions, setShowReactions] = useState(false)
   const [speakerMuted, setSpeakerMuted] = useState(false)
 
+  // Direct messages — open DM cards keyed by participant name
+  const [openDms, setOpenDms] = useState<Set<string>>(new Set())
+  const [expandedDms, setExpandedDms] = useState<Set<string>>(new Set())
+  const [dmInputs, setDmInputs] = useState<Record<string, string>>({})
+  const [dmUnread, setDmUnread] = useState<Set<string>>(new Set())
+
+  const openDm = (name: string) => {
+    setOpenDms(prev => new Set([...prev, name]))
+    setExpandedDms(prev => new Set([...prev, name]))
+    setDmUnread(prev => { const n = new Set(prev); n.delete(name); return n })
+    if (!showChat) { /* sidebar opens automatically below */ }
+  }
+  const closeDm = (name: string) => {
+    setOpenDms(prev => { const n = new Set(prev); n.delete(name); return n })
+    setExpandedDms(prev => { const n = new Set(prev); n.delete(name); return n })
+  }
+  const toggleDm = (name: string) => {
+    setExpandedDms(prev => {
+      const n = new Set(prev)
+      if (n.has(name)) { n.delete(name) } else { n.add(name); setDmUnread(u => { const nu = new Set(u); nu.delete(name); return nu }) }
+      return n
+    })
+  }
+  const sendDm = (to: string) => {
+    const text = (dmInputs[to] || '').trim()
+    if (!text) return
+    sendMessage(`__DM__${JSON.stringify({ from: displayName, to, text })}`, displayName)
+    setDmInputs(prev => ({ ...prev, [to]: '' }))
+  }
+
   useEffect(() => {
     const onResize = () => {
       setIsMobile(window.innerWidth <= 640)
@@ -799,6 +829,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Mark incoming DMs as unread when the card isn't expanded
+    const last = messages[messages.length - 1]
+    if (!last?.message.startsWith('__DM__')) return
+    try {
+      const { from, to } = JSON.parse(last.message.slice(6))
+      const peer = from === displayName ? to : from
+      if (from !== displayName && (to === displayName)) {
+        setDmUnread(prev => expandedDms.has(peer) ? prev : new Set([...prev, peer]))
+        setOpenDms(prev => new Set([...prev, peer]))
+      }
+    } catch { /* ignore malformed */ }
   }, [messages])
 
   const handleSend = async () => {
@@ -1115,6 +1156,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
           <ParticipantsWindow
             onClose={() => setShowParticipants(false)}
             onDock={() => setParticipantsDocked(true)}
+            onDirectChat={name => { openDm(name); setShowChat(true) }}
           />
         )}
 
@@ -1497,20 +1539,22 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             </div>
           ) : overlayMode !== 'hidden' ? (
             /* ── Desktop: full controls bar ──────────────────────────────── */
+            <>
+            <style>{`.bhv-btn{transition:transform .12s ease,filter .12s ease}.bhv-btn:hover{transform:scale(1.18);filter:brightness(1.15)}.bhv-btn:active{transform:scale(0.92)}`}</style>
             <div style={s.controls} className="controls-bar">
-              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
-              <button
+              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon />
+              <button className="bhv-btn"
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
                 onClick={toggleSpeaker}
                 title={speakerMuted ? 'Unmute speaker' : 'Mute speaker'}
               >
                 {speakerMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
               </button>
-              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
+              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} className="bhv-btn" showIcon />
 
               {/* Background Effects */}
               <div style={{ position: 'relative' }}>
-                <button
+                <button className="bhv-btn"
                   style={{ ...s.controlBtn, ...(bgActive ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
                   onClick={() => setBgMenuOpen(v => !v)}
                   title="Background effects"
@@ -1530,7 +1574,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
               {/* Auto Cam */}
               <div style={{ position: 'relative' }}>
-                <button
+                <button className="bhv-btn"
                   style={{ ...s.controlBtn, ...(autoCamMode ? { background: '#1a2e4a', border: '1px solid #4299e1' } : {}) }}
                   onClick={() => { if (autoCamMode) { setAutoCamMode(null); setShowAutoCamMenu(false) } else setShowAutoCamMenu(v => !v) }}
                   title="Auto cam"
@@ -1555,7 +1599,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
               {/* Reactions */}
               <div style={{ position: 'relative' }}>
-                <button style={{ ...s.controlBtn, ...(showReactions ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }} title="Reactions" onClick={() => setShowReactions(v => !v)}>
+                <button className="bhv-btn" style={{ ...s.controlBtn, ...(showReactions ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }} title="Reactions" onClick={() => setShowReactions(v => !v)}>
                   <Smile size={20} />
                 </button>
                 {showReactions && (
@@ -1568,7 +1612,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
               </div>
 
               {/* Raise Hand */}
-              <button
+              <button className="bhv-btn"
                 style={{ ...s.controlBtn, ...(myHandRaised ? { background: '#2a3a1a', border: '1px solid #68d391' } : {}) }}
                 onClick={toggleRaiseHand}
                 title={myHandRaised ? 'Lower hand' : 'Raise hand'}
@@ -1577,13 +1621,13 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
               </button>
 
               {/* Invite Link */}
-              <button style={s.controlBtn} onClick={handleInviteBtn} title="Copy invite link">
+              <button className="bhv-btn" style={s.controlBtn} onClick={handleInviteBtn} title="Copy invite link">
                 {copied ? <Link2Off size={20} /> : <Link size={20} />}
               </button>
 
               {/* Video Quality */}
               <div style={{ position: 'relative' }}>
-                <button style={s.controlBtn} onClick={() => setShowQuality(v => !v)} title="Video quality">
+                <button className="bhv-btn" style={s.controlBtn} onClick={() => setShowQuality(v => !v)} title="Video quality">
                   <Film size={20} />
                   <span style={s.hdBadge}>HD</span>
                 </button>
@@ -1599,7 +1643,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
               {/* Screen Share */}
               <div style={{ position: 'relative' }}>
-                <button
+                <button className="bhv-btn"
                   style={{ ...s.controlBtn, ...(isSharing ? { background: '#276127', border: '1px solid #48bb78' } : {}) }}
                   onClick={() => isSharing ? stopShare() : setShareMenu(v => !v)}
                   title={isSharing ? 'Stop sharing' : 'Share screen'}
@@ -1632,7 +1676,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
               </div>
 
               {isSharing && (
-                <button
+                <button className="bhv-btn"
                   style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#c53030', border: 'none', borderRadius: 24, color: '#fff', padding: '0 16px', height: 48, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'Roboto', sans-serif", whiteSpace: 'nowrap' }}
                   onClick={stopShare} title="Stop sharing"
                 >
@@ -1640,18 +1684,19 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                 </button>
               )}
 
-              <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
+              <button className="bhv-btn" style={{ ...s.controlBtn, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
                 <PhoneOff size={20} />
               </button>
 
               {isPresenting && (
                 <>
                   <div style={{ width: 1, height: 22, background: '#333' }} />
-                  <button onClick={() => setOverlayMode('minimized')} style={s.controlBtn} title="Minimise controls"><Minus size={18} /></button>
-                  <button onClick={() => setOverlayMode('hidden')} style={s.controlBtn} title="Hide from presentation screen"><EyeOff size={18} /></button>
+                  <button className="bhv-btn" onClick={() => setOverlayMode('minimized')} style={s.controlBtn} title="Minimise controls"><Minus size={18} /></button>
+                  <button className="bhv-btn" onClick={() => setOverlayMode('hidden')} style={s.controlBtn} title="Hide from presentation screen"><EyeOff size={18} /></button>
                 </>
               )}
             </div>
+            </>
           ) : null}
         </div>
 
@@ -1659,13 +1704,110 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
         {showChat && (
           <div style={s.sidebar}>
             <div style={s.sidebarTitle}>Chat</div>
+
+            {/* ── DM wallet cards ─────────────────────────────────── */}
+            {openDms.size > 0 && (() => {
+              const DM_COLORS = ['#5b5ef4','#f5a623','#48bb78','#ed64a6','#9f7aea','#4299e1']
+              const dmColor = (name: string) => DM_COLORS[name.charCodeAt(0) % DM_COLORS.length]
+              const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+              return (
+                <div style={{ borderBottom: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {[...openDms].map(peer => {
+                    const isExpanded = expandedDms.has(peer)
+                    const hasUnread = dmUnread.has(peer)
+                    const color = dmColor(peer)
+                    const thread = messages.filter(m => {
+                      if (!m.message.startsWith('__DM__')) return false
+                      try {
+                        const d = JSON.parse(m.message.slice(6))
+                        return (d.from === displayName && d.to === peer) || (d.from === peer && d.to === displayName)
+                      } catch { return false }
+                    })
+                    const lastMsg = thread[thread.length - 1]
+                    const lastPreview = lastMsg ? (() => { try { return JSON.parse(lastMsg.message.slice(6)).text } catch { return '' } })() : ''
+
+                    return (
+                      <div key={peer} style={{ borderLeft: `3px solid ${color}`, background: '#0e0e0e', marginBottom: 1 }}>
+                        {/* Card header — always visible */}
+                        <div
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer', userSelect: 'none' as const }}
+                          onClick={() => toggleDm(peer)}
+                        >
+                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#000', flexShrink: 0, fontFamily: "'Roboto', sans-serif" }}>
+                            {initials(peer)}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ color: '#ddd', fontSize: 12, fontWeight: 600, fontFamily: "'Roboto', sans-serif" }}>{peer}</span>
+                              {hasUnread && <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />}
+                            </div>
+                            {!isExpanded && lastPreview && (
+                              <span style={{ color: '#555', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, display: 'block' }}>{lastPreview}</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); closeDm(peer) }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', padding: 2 }}
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+
+                        {/* Expanded thread */}
+                        {isExpanded && (
+                          <>
+                            <div style={{ maxHeight: 180, overflowY: 'auto' as const, padding: '0 12px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {thread.length === 0 && (
+                                <p style={{ color: '#444', fontSize: 12, textAlign: 'center', margin: '8px 0' }}>Start the conversation</p>
+                              )}
+                              {thread.map(m => {
+                                let d: { from: string; text: string } | null = null
+                                try { d = JSON.parse(m.message.slice(6)) } catch { return null }
+                                if (!d) return null
+                                const isMine = d.from === displayName
+                                return (
+                                  <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', gap: 2 }}>
+                                    <div style={{ background: isMine ? color : '#1e1e1e', color: isMine ? '#000' : '#ddd', borderRadius: isMine ? '12px 12px 2px 12px' : '12px 12px 12px 2px', padding: '6px 10px', fontSize: 12, maxWidth: '85%', lineHeight: 1.4, fontFamily: "'Roboto', sans-serif" }}>
+                                      {d.text}
+                                    </div>
+                                    <span style={{ color: '#444', fontSize: 10 }}>
+                                      {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, padding: '6px 10px', borderTop: '1px solid #1a1a1a' }}>
+                              <input
+                                style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, color: '#fff', fontSize: 12, padding: '6px 10px', outline: 'none', fontFamily: "'Roboto', sans-serif" }}
+                                placeholder={`Message ${peer}…`}
+                                value={dmInputs[peer] || ''}
+                                onChange={e => setDmInputs(prev => ({ ...prev, [peer]: e.target.value }))}
+                                onKeyDown={e => e.key === 'Enter' && sendDm(peer)}
+                              />
+                              <button
+                                onClick={() => sendDm(peer)}
+                                style={{ background: color, color: '#000', border: 'none', borderRadius: 8, width: 30, fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              >↑</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+
+            {/* ── Group chat ──────────────────────────────────────── */}
             <div style={s.messages}>
-              {messages.length === 0 && (
+              {messages.filter(m => !m.message.startsWith('__DM__')).length === 0 && openDms.size === 0 && (
                 <p style={{ color: '#555', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
                   No messages yet
                 </p>
               )}
               {messages.map(m => {
+                if (m.message.startsWith('__DM__')) return null
                 if (m.message.startsWith('__JOIN__') || m.message.startsWith('__LEAVE__')) {
                   const isJoin = m.message.startsWith('__JOIN__')
                   const name = m.message.slice(8)
@@ -1716,7 +1858,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             <div style={s.chatInputRow}>
               <input
                 style={{ ...s.input, flex: 1, margin: 0 }}
-                placeholder="Message…"
+                placeholder="Message everyone…"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}

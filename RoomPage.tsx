@@ -19,7 +19,7 @@ declare global {
 }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Link2Off, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Plus, Smile, Volume2, VolumeX } from 'lucide-react'
+import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -56,7 +56,6 @@ import { ElectronWindowPicker } from './components/ElectronWindowPicker'
 import { ReactionComposer } from './components/ReactionComposer'
 import { s } from './components/roomStyles'
 import {
-  WEB_BASE,
   APP_NAME,
   REACTIONS,
   QUALITY_OPTIONS,
@@ -71,12 +70,11 @@ import {
 } from './components/roomUtils'
 
 export default function RoomPage() {
-  const { user, session } = useAuth()
+  const { user } = useAuth()
   const { profile } = useProfile(user?.id ?? null)
 
   const [view, setView] = useState<'lobby' | 'room'>('lobby')
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
-  const [activeRoomName, setActiveRoomName] = useState<string | null>(null)
   const [livekitRoomName, setLivekitRoomName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState('')
@@ -117,7 +115,6 @@ export default function RoomPage() {
     if (!result) return alert('Failed to get access token')
     window.history.pushState({}, '', `?room=${room.id}`)
     setActiveRoomId(room.id)
-    setActiveRoomName(room.name)
     setLivekitRoomName(result.livekitRoomName)
     setToken(result.token)
     setView('room')
@@ -129,7 +126,6 @@ export default function RoomPage() {
     const result = await joinRoom(joinRoomId, displayName)
     if (!result) return alert('Failed to join room — link may be invalid')
     setActiveRoomId(joinRoomId)
-    setActiveRoomName(result.roomName)
     setLivekitRoomName(result.livekitRoomName)
     setToken(result.token)
     setView('room')
@@ -139,7 +135,6 @@ export default function RoomPage() {
     window.history.pushState({}, '', '/')
     setView('lobby')
     setActiveRoomId(null)
-    setActiveRoomName(null)
     setLivekitRoomName(null)
     setToken(null)
     // Prompt unauthenticated users (frictionless room join) to register after the meeting
@@ -157,10 +152,8 @@ export default function RoomPage() {
       >
         <MeetingRoom
           roomId={activeRoomId}
-          roomName={activeRoomName ?? ''}
           displayName={displayName}
           onLeave={handleLeave}
-          session={session}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
@@ -188,9 +181,8 @@ export default function RoomPage() {
 // ============================================================
 // MEETING ROOM
 // ============================================================
-function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
-  roomId: string; roomName: string; displayName: string; onLeave: () => void
-  session?: import('@supabase/supabase-js').Session | null
+function MeetingRoom({ roomId, displayName, onLeave }: {
+  roomId: string; displayName: string; onLeave: () => void
 }) {
   const [showInviteModal, setShowInviteModal] = useState(false)
   const allTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
@@ -234,7 +226,6 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const [reactionComposer, setReactionComposer] = useState<{
     emoji: string; text: string; anchor: { x: number; y: number; width: number }
   } | null>(null)
-  const [copied, setCopied] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const reactionId = useRef(0)
   const reactionChannelRef = useRef<any>(null)
@@ -264,8 +255,6 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 640)
   const [isSmallPhone, setIsSmallPhone] = useState(() => window.innerWidth <= 430)
   const [showMobileEmoji, setShowMobileEmoji] = useState(false)
-  const [emojiTrigger, setEmojiTrigger] = useState<'hand' | 'smile'>('hand')
-  const [showMoreMobile, setShowMoreMobile] = useState(false)
   const [showReactions, setShowReactions] = useState(false)
   const [speakerMuted, setSpeakerMuted] = useState(false)
 
@@ -279,7 +268,6 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     setOpenDms(prev => new Set([...prev, name]))
     setExpandedDms(prev => new Set([...prev, name]))
     setDmUnread(prev => { const n = new Set(prev); n.delete(name); return n })
-    if (!showChat) { /* sidebar opens automatically below */ }
   }
   const closeDm = (name: string) => {
     setOpenDms(prev => { const n = new Set(prev); n.delete(name); return n })
@@ -1099,8 +1087,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
       setPresentAppName(presentationApp(pendingFile.name))
       const filePath = window.electronAPI.getFilePath(pendingFile)
       if (filePath) {
-        const err = await window.electronAPI.openFile(filePath)
-        if (err) console.warn('[electron] openFile error:', err)
+        await window.electronAPI.openFile(filePath)
       }
       await new Promise(r => setTimeout(r, 1200))
       setPresentStep('waiting')
@@ -1151,8 +1138,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
       setShareLabel(rawTrack.label || 'Presentation')
       setIsSharing(true)
       rawTrack.addEventListener('ended', () => stopShareRef.current?.())
-    } catch (e) {
-      console.error('[electron] shareDesktopSource error:', e)
+    } catch {
       alert('Could not capture screen. Make sure BeeHive has Screen Recording permission in System Settings → Privacy & Security → Screen Recording.')
     }
   }, [localParticipant, checkScreenPermission])
@@ -1192,8 +1178,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     if (!window.electronAPI) return
     const filePath = window.electronAPI.getFilePath(file)
     if (filePath) {
-      const err = await window.electronAPI.openFile(filePath)
-      if (err) console.warn('[electron] openFile error:', err)
+      await window.electronAPI.openFile(filePath)
     }
     await new Promise(r => setTimeout(r, 1200))
     const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
@@ -1710,7 +1695,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                       </button>
                       {/* Invite link */}
                       <button style={mb} onClick={handleInviteBtn} title="Invite link">
-                        {copied ? <Link2Off size={isSmallPhone ? 16 : 18} /> : <Link size={isSmallPhone ? 16 : 18} />}
+                        <Link size={isSmallPhone ? 16 : 18} />
                       </button>
                       {/* Raise Hand */}
                       <button
@@ -1918,7 +1903,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
               {/* Invite Link */}
               <button className="bhv-btn" style={s.controlBtn} onClick={handleInviteBtn} title="Copy invite link">
-                {copied ? <Link2Off size={20} /> : <Link size={20} />}
+                <Link size={20} />
               </button>
 
               {/* Video Quality */}

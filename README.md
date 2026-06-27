@@ -118,7 +118,7 @@ Compact single-row header; timer and secondary controls move elsewhere to save s
 | **BEE**HIVE wordmark | Smaller font (12 px, letterSpacing 2); `whiteSpace: nowrap`; left side shrinks before right |
 | Participant count pill | Shows full `N participant(s)` on phones > 430 px; shows count number only (e.g. `3`) on ≤ 430 px to prevent overflow |
 | Leave | Compact red button (`flexShrink: 0`); always fully visible |
-| Chat, Stop Sharing | Hidden from header — Chat accessible via `+` More panel |
+| Chat, Stop Sharing | Hidden from header — Chat accessible via scrollable controls bar |
 | **Meeting timer** | Floating pill overlaid at the top-centre of the video area (not in the header) |
 
 Header flex is `minWidth: 0` / `flexShrink: 1` on the left group and `flexShrink: 0` on the right — left content compresses, Leave button stays whole on every screen size.
@@ -127,10 +127,12 @@ Header flex is `minWidth: 0` / `flexShrink: 1` on the left group and `flexShrink
 | Control | Icon | Notes |
 |---------|------|-------|
 | Mic | `TrackToggle` | LiveKit-managed; mute/unmute |
+| Speaker | `Volume2` / `VolumeX` | Mutes/unmutes all remote audio output; red when muted |
 | Camera | `TrackToggle` | LiveKit-managed; on/off |
 | Background | `Layers` | Opens background effects menu; amber when active |
 | Auto Cam | `Aperture` | Opens cam mode menu; blue when active |
-| Reactions | `Hand` | Click to toggle emoji picker above bar; floating animations |
+| Reactions | `Smile` | Click to toggle emoji picker above bar; floating animations |
+| Raise Hand | `Hand` | Broadcasts a raised-hand chip to all participants; green when active; click again to lower |
 | Invite Link | `Link` / `Link2Off` | Copies `?room=ROOM_ID`; icon changes on copy |
 | Video Quality | `Film` + HD badge | Low 360p / Medium 720p / High 1080p dropdown |
 | Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active; click again to stop |
@@ -138,35 +140,32 @@ Header flex is `minWidth: 0` / `flexShrink: 1` on the left group and `flexShrink
 | Leave | `PhoneOff` | Red; disconnects and returns to lobby |
 
 #### Controls Bar — Mobile (≤ 640 px)
-Two rows stack above each other; emoji panel floats above the More row.
+A **single horizontally scrollable row** at the bottom of the screen — all controls are always reachable by swiping; no hidden "More" panel. The scrollbar is hidden via `::-webkit-scrollbar { display: none }` and `scrollbarWidth: none`. Dropdown menus (Background, AutoCam, Quality, Share) render outside the overflow container (sibling divs in the bottom overlay) so they float upward without being clipped.
 
-**Primary row** (always visible, centered, full-width safe area):
 | Control | Icon | Notes |
 |---------|------|-------|
 | Mic | `TrackToggle` | Mute/unmute |
+| Speaker | `Volume2` / `VolumeX` | Silence/restore remote audio; red when muted |
 | Camera | `TrackToggle` | Camera on/off |
-| Reactions | `Hand` | Toggle emoji panel (amber when open) |
-| Invite Link | `Link` | Copy room link |
-| Leave | `PhoneOff` | Red; end call |
-| More | `Plus` | Toggle the More row (grey when open) |
-
-Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider mobile screens. Gap and padding reduce proportionally so the row always fits within the device width.
-
-**More row** (appears above primary row when `+` tapped, spans full screen width):
-| Control | Icon | Notes |
-|---------|------|-------|
-| Background | `Layers` | Background effects |
+| Reactions | `Smile` | Toggle emoji panel above bar (amber when open) |
+| Invite Link | `Link` | Copy room link / open InviteModal |
+| Raise Hand | `Hand` | Raise hand; green when active |
+| Background | `Layers` | Background effects menu (floats above bar) |
 | Auto Cam | `Aperture` | Auto centre / 2-in-1 |
 | Quality | `Film` + HD | Video quality selector |
-| Screen Share | `Monitor` | Share screen (web picker) |
+| Screen Share | `Monitor` | Share screen |
 | Chat | `MessageSquare` | Toggle chat sidebar (blue when open) |
-| Reactions | `Smile` | Toggle emoji panel above the More row (amber when open) |
+| Leave | `PhoneOff` | Red; end call |
 
-**Emoji panel** appears above whichever row triggered it; tapping any emoji sends it and closes the panel.
+Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider mobile screens.
+
+**Emoji panel** appears as an absolute chip above the scroll row; tapping any emoji sends it and closes the panel.
 
 #### In-meeting Features
 - 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)
-- 👋 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥)
+- 😊 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥); triggered by `Smile` button
+- ✋ **Raise hand** — `Hand` button broadcasts your name to all participants via Supabase Realtime (`hands:{roomId}`); raised hands appear as floating chips in the top-right of the video area showing ✋ + name; any participant can tap × to lower an individual hand, or "Lower all" to clear all at once; the broadcaster's own state stays in sync
+- 🔇 **Speaker mute** — `Volume2` / `VolumeX` button silences all `<audio>` elements in the page (mutes remote audio output without affecting the microphone); red border when active
 - 🔗 Invite link — authenticated users open `InviteModal` (creates a tokenised invitation); anonymous guests copy the plain `?room=ROOM_ID` URL
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
 - 🎨 Background Effects (`Layers` button, amber when active) — uses **MediaPipe Selfie Segmentation**; four modes:

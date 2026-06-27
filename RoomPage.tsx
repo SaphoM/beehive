@@ -318,6 +318,23 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
     let engaged = false
 
+    const W   = 48  // button layout width (px)
+    const GAP = 12  // CSS gap between buttons (px)
+
+    // Abramowitz & Stegun erf approximation (max error ±1.5e-7).
+    // Used to compute the smooth integral of the gaussian wave, giving each
+    // button a continuously-differentiable X-shift so there is no jump when
+    // the cursor crosses a button boundary.
+    const erf = (x: number): number => {
+      const sign = x >= 0 ? 1 : -1
+      const a = Math.abs(x)
+      const t = 1 / (1 + 0.3275911 * a)
+      const p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))))
+      return sign * (1 - p * Math.exp(-a * a))
+    }
+    const ERF_COEFF = (W / (W + GAP)) * (MAX_SCALE - 1) * SIGMA * Math.sqrt(Math.PI / 2)
+    const SIGMA_SQRT2 = SIGMA * Math.SQRT2
+
     const paint = (mouseX: number, phase: string, atRest: boolean) => {
       const bar = controlsBarRef.current
       if (!bar) return
@@ -332,39 +349,35 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
         return
       }
 
-      // First pass — compute per-button values
-      const W = 48 // layout button width (px)
-      const data = btns.map(btn => {
-        const r     = btn.getBoundingClientRect()
-        const cx    = r.left + r.width / 2
+      // Read the bar's screen position once — bar has no animation so this is stable.
+      const barLeft = bar.getBoundingClientRect().left
+
+      btns.forEach(btn => {
+        // Walk the offsetParent chain (which only sees layout, never CSS transforms)
+        // to get each button's natural centre in viewport coords.  This prevents the
+        // feedback loop where a previously applied translateX corrupts the next frame.
+        let naturalLeft = btn.offsetWidth / 2
+        let el: HTMLElement | null = btn
+        while (el && el !== bar) {
+          naturalLeft += el.offsetLeft
+          el = el.offsetParent as HTMLElement | null
+        }
+        const cx = barLeft + naturalLeft
+
         const dx    = mouseX - cx
         const gauss = Math.exp(-(dx * dx) / (2 * SIGMA * SIGMA))
         const scale = 1 + (MAX_SCALE - 1) * gauss
         const lift  = gauss * MAX_LIFT
-        // transform-origin:center pushes the button down by (scale-1)*halfHeight;
-        // upShift compensates so the visual bottom lifts cleanly off the dock floor.
+        // transform-origin:center grows the button symmetrically, pushing it down
+        // by (scale-1)*halfHeight. upShift compensates so the visual bottom lifts
+        // cleanly off the dock floor without the hit-area drifting.
         const upShift = lift + (scale - 1) * (W / 2)
-        return { btn, cx, gauss, scale, lift, upShift }
-      })
 
-      // Second pass — cumulative X shifts to keep gaps between icons
-      // The gap between buttons i and i+1 grows by (scale_i + scale_{i+1} - 2) * W/2
-      // when both scale from center. Accumulate outward from the peak button.
-      const peakIdx = data.reduce((best, d, i) =>
-        Math.abs(d.cx - mouseX) < Math.abs(data[best].cx - mouseX) ? i : best, 0)
+        // Continuous X-shift: integral of the gaussian from cursor to this button.
+        // ∫_{mouseX}^{cx} (MAX_SCALE-1)·exp(-t²/2σ²) dt = ERF_COEFF · erf(dx_signed/σ√2)
+        // Positive d = button is right of cursor → shifts right; negative → shifts left.
+        const xShift = ERF_COEFF * erf((cx - mouseX) / SIGMA_SQRT2)
 
-      const xShifts = new Array(data.length).fill(0)
-      for (let i = peakIdx - 1; i >= 0; i--) {
-        const extra = (data[i].scale + data[i + 1].scale - 2) * W / 2
-        xShifts[i] = xShifts[i + 1] - extra
-      }
-      for (let i = peakIdx + 1; i < data.length; i++) {
-        const extra = (data[i].scale + data[i - 1].scale - 2) * W / 2
-        xShifts[i] = xShifts[i - 1] + extra
-      }
-
-      // Apply
-      data.forEach(({ btn, gauss, scale, lift, upShift }, i) => {
         const shadowY     = lift * 0.5
         const shadowBlur  = lift * 1.8
         const shadowAlpha = (0.06 + gauss * 0.28).toFixed(2)
@@ -372,7 +385,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
 
         btn.style.transition = phase
         btn.style.transform  =
-          `translateX(${xShifts[i].toFixed(2)}px) translateY(-${upShift.toFixed(2)}px) scale(${scale.toFixed(4)})`
+          `translateX(${xShift.toFixed(2)}px) translateY(-${upShift.toFixed(2)}px) scale(${scale.toFixed(4)})`
         btn.style.filter = gauss > 0.01
           ? `brightness(${brightness}) drop-shadow(0 ${shadowY.toFixed(1)}px ${shadowBlur.toFixed(1)}px rgba(0,0,0,${shadowAlpha}))`
           : ''

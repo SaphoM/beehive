@@ -163,6 +163,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 
 #### In-meeting Features
 - 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)
+- 🖱️ **Apple Dock magnification** (desktop) — hovering the controls bar magnifies icons with a Gaussian wave, spring-pop entry, and lateral spreading so gaps between icons are always preserved; settles with a spring-bounce on leave
 - 😊 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥); triggered by `Smile` button
 - ✋ **Raise hand** — `Hand` button broadcasts your name to all participants via Supabase Realtime (`hands:{roomId}`); raised hands appear as floating chips in the top-right of the video area showing ✋ + name; any participant can tap × to lower an individual hand, or "Lower all" to clear all at once; the broadcaster's own state stays in sync
 - 🔇 **Speaker mute** — `Volume2` / `VolumeX` button silences all `<audio>` elements in the page (mutes remote audio output without affecting the microphone); red border when active

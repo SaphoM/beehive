@@ -297,44 +297,62 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   }, [])
 
   // Desktop dock magnification — macOS-Dock-accurate, built to be bulletproof:
-  //   • Listener is on WINDOW (mousemove always fires) — not on the bar node, so it
-  //     can never be missed because of a stale querySelector ref or an intercepting
-  //     overlay. The bar comes from a React ref (controlsBarRef) → always the live DOM.
-  //   • Magnification is driven by HORIZONTAL cursor distance only (exactly how the
-  //     real Dock works) and gated by vertical proximity. Horizontal-only also avoids
-  //     getBoundingClientRect feedback wobble, since center-origin scaling doesn't
-  //     move a button's x-centre.
-  //   • Gaussian falloff spreads the Mexican wave across neighbours; translateY lifts
-  //     the icon off the floor; drop-shadow grows with the lift for 3D depth.
+  //   • Listener is on WINDOW — not on the bar node, so it never goes stale.
+  //   • bar is read through controlsBarRef → always the live DOM element.
+  //   • paint() iterates the bar's DIRECT FLEX CHILDREN (not just .bhv-btn) so that
+  //     dynamic marginLeft/marginRight physically push siblings apart, maintaining
+  //     visible gaps between icons as they magnify — matching real Dock behaviour.
+  //   • Horizontal-only Gaussian distance; vertical proximity gate.
   useEffect(() => {
     if (isMobile) return
 
-    const MAX_SCALE = 1.70 // peak magnification directly under the cursor
-    const SIGMA     = 95   // Gaussian width (px) — how far the wave spreads sideways
-    const MAX_LIFT  = 26   // px (~7 mm) the hovered icon rises off the dock floor
+    const MAX_SCALE = 1.90 // peak magnification directly under the cursor
+    const SIGMA     = 95   // Gaussian width (px) — how far the wave spreads
+    const MAX_LIFT  = 12   // px — subtle lift; magnification does the heavy lifting
     const V_GATE    = 70   // px above/below the bar within which the dock "engages"
+    // Each icon pushes its neighbours this fraction of its extra visual width
+    const SPREAD    = 0.38
 
-    // Spring entry: slight overshoot on first engage → that satisfying Dock pop
+    // Spring entry: slight overshoot on first engage → satisfying Dock pop
     const SPRING = 'transform 0.24s cubic-bezier(0.34,1.56,0.64,1), filter 0.24s ease'
-    // Tracking: short ease-out so icons follow the cursor crisply, no lag
-    const TRACK  = 'transform 0.12s cubic-bezier(0.22,1,0.36,1),    filter 0.12s ease'
-    // Settle: long spring back down to the floor when the cursor leaves
-    const SETTLE = 'transform 0.55s cubic-bezier(0.34,1.18,0.5,1),  filter 0.45s ease'
+    // Tracking: fast ease-out — icons follow the cursor without lag
+    const TRACK  = 'transform 0.12s cubic-bezier(0.22,1,0.36,1), filter 0.12s ease'
+    // Settle: long spring — icons float back with a micro-bounce landing
+    const SETTLE = 'transform 0.55s cubic-bezier(0.34,1.18,0.5,1), filter 0.45s ease'
+    // Margin transitions match their transform counterparts
+    const MARGIN_TRACK  = 'margin-left 0.12s ease, margin-right 0.12s ease'
+    const MARGIN_SETTLE = 'margin-left 0.55s cubic-bezier(0.34,1.18,0.5,1), margin-right 0.55s cubic-bezier(0.34,1.18,0.5,1)'
 
     let engaged = false
 
     const paint = (mouseX: number, phase: string, atRest: boolean) => {
       const bar = controlsBarRef.current
       if (!bar) return
-      const btns = bar.querySelectorAll<HTMLElement>('.bhv-btn')
-      btns.forEach(btn => {
+      // Operate on DIRECT FLEX CHILDREN so margins affect siblings in layout
+      const flexItems = Array.from(bar.children) as HTMLElement[]
+
+      flexItems.forEach(item => {
+        // The .bhv-btn may be the item itself (direct button) or inside a wrapper div
+        const btn = item.classList.contains('bhv-btn')
+          ? item
+          : item.querySelector<HTMLElement>('.bhv-btn')
+
         if (atRest) {
-          btn.style.transition = phase
-          btn.style.transform  = ''
-          btn.style.filter     = ''
+          // Animate margins back to zero so the bar contracts smoothly
+          item.style.transition  = MARGIN_SETTLE
+          item.style.marginLeft  = '0px'
+          item.style.marginRight = '0px'
+          if (btn) {
+            btn.style.transition = phase
+            btn.style.transform  = ''
+            btn.style.filter     = ''
+          }
           return
         }
-        const r = btn.getBoundingClientRect()
+
+        if (!btn) return // dividers, etc. — only reset margins above
+
+        const r  = btn.getBoundingClientRect()
         const cx = r.left + r.width / 2
         const dx = mouseX - cx // horizontal distance only — Dock-style
 
@@ -342,10 +360,17 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
         const scale = 1 + (MAX_SCALE - 1) * gauss
         const lift  = gauss * MAX_LIFT
 
+        // Lateral expansion: each icon pushes its flex neighbours apart
+        // so there is always a visible gap between them while magnified.
+        const extraMargin = (scale - 1) * 48 * SPREAD
+        item.style.transition  = MARGIN_TRACK
+        item.style.marginLeft  = `${extraMargin.toFixed(1)}px`
+        item.style.marginRight = `${extraMargin.toFixed(1)}px`
+
         const shadowY     = lift * 0.5
-        const shadowBlur  = lift * 1.5
-        const shadowAlpha = (0.06 + gauss * 0.26).toFixed(2)
-        const brightness  = (1 + gauss * 0.06).toFixed(3)
+        const shadowBlur  = lift * 1.8
+        const shadowAlpha = (0.06 + gauss * 0.28).toFixed(2)
+        const brightness  = (1 + gauss * 0.07).toFixed(3)
 
         btn.style.transition = phase
         btn.style.transform  = `translateY(-${lift.toFixed(2)}px) scale(${scale.toFixed(4)})`

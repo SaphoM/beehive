@@ -310,9 +310,9 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
     const bar = document.querySelector<HTMLElement>('.controls-bar')
     if (!bar) return
 
-    const MAX_SCALE = 1.65 // peak at cursor — "1.50× or more" per spec
+    const MAX_SCALE = 1.75 // peak magnification at cursor
     const SIGMA     = 100  // Gaussian width in px — wider = more Mexican wave spread
-    const MAX_LIFT  = 12   // px — lift range (-8 to -12px per spec)
+    const MAX_LIFT  = 28   // px ≈ 7 mm @ 96dpi — well above the 0.5 cm floor requirement
 
     // Three transition strings — switched based on interaction phase
     // Spring entry: overshoots scale/lift target, bounces back (dock snap-in feel)
@@ -1640,10 +1640,11 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             <>
             <style>{`
               .bhv-btn {
-                /* JS sets transition + transform + filter inline on every rAF frame.
-                   Static base: GPU layer promotion and bottom-up growth origin only. */
-                will-change: transform, filter;
+                /* Scale from the dock floor upward, not from the button centre. */
                 transform-origin: bottom center;
+                /* No will-change here — browsers GPU-accelerate transform by default.
+                   will-change creates a separate composited layer that can be clipped
+                   by a backdrop-filter ancestor stacking context (Safari bug). */
               }
               /* !important wins over inline style — snap-collapse on click regardless
                  of whichever JS transition phase is currently active.             */
@@ -1653,7 +1654,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
                 transition: transform 0.07s ease, filter 0.07s ease !important;
               }
             `}</style>
-            <div style={s.controls} className="controls-bar">
+            <div style={{ ...s.controls, overflow: 'visible' }} className="controls-bar">
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon />
               <button className="bhv-btn"
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}

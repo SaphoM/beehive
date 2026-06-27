@@ -336,6 +336,10 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
         const gauss = Math.exp(-(dx * dx) / (2 * SIGMA * SIGMA))
         const scale = 1 + (MAX_SCALE - 1) * gauss
         const lift  = gauss * MAX_LIFT
+        // With transform-origin:center, scale(S) also pushes the button DOWN
+        // by (S-1)*halfHeight. Compensate so the visual bottom stays exactly
+        // `lift` px above its resting position — replicating the dock-floor lift.
+        const upShift = lift + (scale - 1) * 24
 
         const shadowY     = lift * 0.5
         const shadowBlur  = lift * 1.8
@@ -343,7 +347,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
         const brightness  = (1 + gauss * 0.07).toFixed(3)
 
         btn.style.transition = phase
-        btn.style.transform  = `translateY(-${lift.toFixed(2)}px) scale(${scale.toFixed(4)})`
+        btn.style.transform  = `translateY(-${upShift.toFixed(2)}px) scale(${scale.toFixed(4)})`
         btn.style.filter = gauss > 0.01
           ? `brightness(${brightness}) drop-shadow(0 ${shadowY.toFixed(1)}px ${shadowBlur.toFixed(1)}px rgba(0,0,0,${shadowAlpha}))`
           : ''
@@ -1647,16 +1651,14 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             <>
             <style>{`
               .bhv-btn {
-                /* Scale from the dock floor upward, not from the button centre. */
-                transform-origin: bottom center;
-                /* No will-change here — browsers GPU-accelerate transform by default.
-                   will-change creates a separate composited layer that can be clipped
-                   by a backdrop-filter ancestor stacking context (Safari bug). */
+                /* transform-origin: center (the CSS default) keeps the visual centre
+                   of the button aligned with its pointer-event hit area at every
+                   scale value. bottom-center origin shifts the visual up while the
+                   hit box stays at the original y, causing misses on all non-Leave
+                   buttons. Never change this back to bottom center.               */
               }
-              /* !important wins over inline style — snap-collapse on click regardless
-                 of whichever JS transition phase is currently active.             */
               .bhv-btn:active {
-                transform: translateY(0) scale(0.88) !important;
+                transform: scale(0.88) !important;
                 filter: brightness(0.82) !important;
                 transition: transform 0.07s ease, filter 0.07s ease !important;
               }

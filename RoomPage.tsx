@@ -1209,15 +1209,7 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
   }
 
   const handleInviteBtn = () => {
-    if (session) {
-      // Authenticated: open modal to create a proper invitation with token
-      setShowInviteModal(true)
-    } else {
-      // Anonymous (frictionless join): just copy the plain room link
-      navigator.clipboard.writeText(`${WEB_BASE}?room=${roomId}`)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
+    setShowInviteModal(true)
   }
 
   const activeCount = liveKitParticipants.length

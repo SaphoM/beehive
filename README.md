@@ -72,17 +72,15 @@ Admin role is assigned automatically by the seed script. New self-registered use
 
 ### Invitations
 
-Authenticated users can invite colleagues to a meeting from inside the meeting room (Link button in the controls bar).
+Anyone in a meeting can invite anyone else — no account required on either side.
 
 **Flow:**
-1. Click **Link** (🔗) in controls bar → `InviteModal` opens
-2. Enter colleague's email → **Send invitation**
-3. Backend generates a secure 32-byte random token, stores it in `invitations` table (7-day expiry), returns the full invite link
-4. Copy `?room=ROOM_ID&invite=TOKEN` and share it
+1. Click **Link** (🔗) in the controls bar → `InviteModal` opens
+2. The plain `?room=ROOM_ID` link is shown — click the link box or **Copy link** to copy it
+3. Share the link with anyone (chat, email, Slack, etc.)
+4. Recipient clicks it → goes straight to the lobby; no account required to join
 
-**Token lifecycle:** `pending` → `accepted` (on redemption) / `expired` (auto on read) / `revoked` (manual)
-
-> **Anonymous guests** (no session): clicking the Link button copies the plain `?room=ID` link as before.
+> The same `?room=ROOM_ID` link is used whether the host is authenticated or a guest.
 
 ---
 
@@ -133,7 +131,7 @@ Header flex is `minWidth: 0` / `flexShrink: 1` on the left group and `flexShrink
 | Auto Cam | `Aperture` | Opens cam mode menu; blue when active |
 | Reactions | `Smile` | Click to toggle emoji picker above bar; floating animations |
 | Raise Hand | `Hand` | Broadcasts a raised-hand chip to all participants; green when active; click again to lower |
-| Invite Link | `Link` / `Link2Off` | Copies `?room=ROOM_ID`; icon changes on copy |
+| Invite Link | `Link` | Opens share modal — copy `?room=ROOM_ID` link to share with anyone |
 | Video Quality | `Film` + HD badge | Low 360p / Medium 720p / High 1080p dropdown |
 | Screen Share | `Monitor` / `MonitorOff` | Opens pre-share menu; green when active; click again to stop |
 | **Stop Sharing** | `MonitorOff` + label | Red pill — appears in controls bar **and** in the header when actively sharing |
@@ -167,7 +165,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 - 😊 Emoji reactions — floating animations (👍 ❤️ 😂 🎉 👏 🔥); triggered by `Smile` button
 - ✋ **Raise hand** — `Hand` button broadcasts your name to all participants via Supabase Realtime (`hands:{roomId}`); raised hands appear as floating chips in the top-right of the video area showing ✋ + name; any participant can tap × to lower an individual hand, or "Lower all" to clear all at once; the broadcaster's own state stays in sync
 - 🔇 **Speaker mute** — `Volume2` / `VolumeX` button silences all `<audio>` elements in the page (mutes remote audio output without affecting the microphone); red border when active
-- 🔗 Invite link — authenticated users open `InviteModal` (creates a tokenised invitation); anonymous guests copy the plain `?room=ROOM_ID` URL
+- 🔗 Invite link — opens a share modal showing the plain `?room=ROOM_ID` link; anyone can copy and share it; recipients join directly with no account required
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
 - 🎨 Background Effects (`Layers` button, amber when active) — uses **MediaPipe Selfie Segmentation**; four modes:
   - **None** — restores original camera track

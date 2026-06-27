@@ -1689,11 +1689,21 @@ function MeetingRoom({ roomId, roomName, displayName, onLeave, session }: {
             <>
             <style>{`
               .bhv-btn {
-                /* transform-origin: center (the CSS default) keeps the visual centre
-                   of the button aligned with its pointer-event hit area at every
-                   scale value. bottom-center origin shifts the visual up while the
-                   hit box stays at the original y, causing misses on all non-Leave
-                   buttons. Never change this back to bottom center.               */
+                /* transform-origin: center keeps the pointer-event hit-area centred
+                   on the visual at every scale. Never revert to bottom-center.    */
+                position: relative;
+              }
+              .bhv-btn::before {
+                /* Transparent overlay that extends the click zone beyond the visual
+                   circle — 18 px extra on top and sides, 10 px on the bottom.
+                   Especially important when the button is lifted and magnified: the
+                   top half of the enlarged icon is the natural click target and needs
+                   a generous hit area. The pseudo-element scales with the button's
+                   CSS transform, so the expanded zone grows with the icon. */
+                content: '';
+                position: absolute;
+                inset: -18px -18px -10px -18px;
+                border-radius: 50%;
               }
               .bhv-btn:active {
                 transform: scale(0.88) !important;

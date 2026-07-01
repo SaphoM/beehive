@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { X, Copy, Check, Link } from 'lucide-react'
-
-const WEB_BASE = (import.meta.env.VITE_WEB_BASE_URL as string | undefined)?.replace(/\/$/, '')
-  ?? window.location.origin
+import { WEB_BASE } from './roomUtils'
 
 interface Props {
   roomId: string | null
@@ -12,6 +10,9 @@ interface Props {
 export function InviteModal({ roomId, onClose }: Props) {
   const [copied, setCopied] = useState(false)
 
+  // WEB_BASE is the deployed web URL (VITE_WEB_BASE_URL), with a same-origin fallback
+  // for the web. It intentionally resolves to '' under Electron's file:// origin so we
+  // never generate an un-shareable file:// invite link.
   const link = roomId ? `${WEB_BASE}/?room=${roomId}` : WEB_BASE
 
   async function copyLink() {

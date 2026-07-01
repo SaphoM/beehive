@@ -801,6 +801,10 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
 
   const [shareMenu, setShareMenu] = useState(false)
   const [isSharing, setIsSharing] = useState(false)
+  // True when sharing the WHOLE screen (vs. a single window). The presenter's own
+  // local preview must be suppressed in this mode, otherwise the app window — which
+  // is on the captured screen — mirrors itself into infinity (hall-of-mirrors echo).
+  const [sharingEntireScreen, setSharingEntireScreen] = useState(false)
   const [localShareStream, setLocalShareStream] = useState<MediaStream | null>(null)
   const [clearBeforeShare, setClearBeforeShare] = useState(false)
   const [shareLabel, setShareLabel] = useState('')
@@ -823,6 +827,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     setSecondaryStream(null)
     setLocalShareStream(null)
     setIsSharing(false)
+    setSharingEntireScreen(false)
     setShareLabel('')
     setActiveSlot('primary')
   }, [localParticipant, secondaryStream, localShareStream])
@@ -844,6 +849,9 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
       if (mediaTrack) {
         const stream = new MediaStream([mediaTrack])
         setLocalShareStream(stream)
+        // If the user chose a whole monitor in the native dialog, the preview
+        // would echo — suppress it (see sharingEntireScreen).
+        setSharingEntireScreen(mediaTrack.getSettings().displaySurface === 'monitor')
         mediaTrack.addEventListener('ended', () => stopShareRef.current?.())
       }
       setShareLabel(label)
@@ -1110,7 +1118,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     return true
   }, [])
 
-  const shareDesktopSource = useCallback(async (sourceId: string) => {
+  const shareDesktopSource = useCallback(async (sourceId: string, isEntireScreen = false) => {
     setShowWindowPicker(false)
     if (!(await checkScreenPermission())) return
     try {
@@ -1137,6 +1145,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
       setLocalShareStream(stream)
       setShareLabel(rawTrack.label || 'Presentation')
       setIsSharing(true)
+      setSharingEntireScreen(isEntireScreen)
       rawTrack.addEventListener('ended', () => stopShareRef.current?.())
     } catch {
       alert('Could not capture screen. Make sure BeeHive has Screen Recording permission in System Settings → Privacy & Security → Screen Recording.')
@@ -1162,7 +1171,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
         const bi = parseInt(b.display_id || '9999', 10)
         return ai - bi
       })
-      await shareDesktopSource(sorted[0].id)
+      await shareDesktopSource(sorted[0].id, true)
     } else {
       // Web path: bypass LiveKit's setScreenShareEnabled so we can pass
       // displaySurface:'monitor' — the standard hook doesn't forward constraints.
@@ -1184,6 +1193,8 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
         setLocalShareStream(stream)
         setShareLabel(rawTrack.label || 'Your screen')
         setIsSharing(true)
+        // Monitor capture on the same display echoes; suppress the local preview.
+        setSharingEntireScreen((rawTrack.getSettings().displaySurface ?? 'monitor') === 'monitor')
         setShareMenu(false)
         rawTrack.addEventListener('ended', () => stopShareRef.current?.())
       } catch {
@@ -1433,7 +1444,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
             />
           ) : isSharing ? (
             <div style={{ width: '100%', height: '100%', position: 'relative', background: '#060606' }}>
-              {localShareStream ? (
+              {localShareStream && !sharingEntireScreen ? (
                 <video
                   ref={el => { if (el && el.srcObject !== localShareStream) { el.srcObject = localShareStream; el.play().catch(() => {}) } }}
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
@@ -1443,8 +1454,15 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                 />
               ) : (
                 <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
-                  <Monitor size={26} color="#48bb78" />
-                  <p style={{ color: '#48bb78', fontSize: 14, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0 }}>Broadcasting…</p>
+                  <Monitor size={30} color="#48bb78" />
+                  <p style={{ color: '#48bb78', fontSize: 15, fontWeight: 400, fontFamily: "'Roboto', sans-serif", margin: 0 }}>
+                    {sharingEntireScreen ? 'Sharing your entire screen' : 'Broadcasting…'}
+                  </p>
+                  {sharingEntireScreen && (
+                    <p style={{ color: '#666', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", margin: 0, textAlign: 'center', maxWidth: 320 }}>
+                      Preview hidden here to prevent a mirror loop — everyone else sees your screen normally.
+                    </p>
+                  )}
                 </div>
               )}
               <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)', border: '1px solid #48bb78', borderRadius: 20, padding: '4px 10px' }}>
@@ -1478,8 +1496,10 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                   <Crosshair size={17} />
                 </button>
               )}
-              {/* Pop-out presentation — desktop only */}
-              {!isMobile && (hasRemoteScreenShare || isSharing) && (
+              {/* Pop-out presentation — desktop only. Hidden for a local entire-screen
+                  share (no remote share to show): a pop-out window would itself be
+                  captured and echo. Remote shares are always safe to pop out. */}
+              {!isMobile && (hasRemoteScreenShare || (isSharing && !sharingEntireScreen)) && (
                 <button
                   onClick={handlePopOut}
                   title={isPoppedOut ? 'Pop-out window is open — click to focus' : 'Pop out presentation to a separate window'}

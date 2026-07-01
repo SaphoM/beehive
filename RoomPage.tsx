@@ -1143,6 +1143,55 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     }
   }, [localParticipant, checkScreenPermission])
 
+  // Share the primary/entire screen:
+  //   • Electron — resolves the primary display via display_id sort and captures
+  //     it directly via the desktop capturer path (no OS picker shown).
+  //   • Web — calls getDisplayMedia with displaySurface:'monitor' so the browser
+  //     native picker opens with the full-screen option pre-selected, not tabs.
+  const shareEntireScreen = useCallback(async () => {
+    if (window.electronAPI) {
+      if (!(await checkScreenPermission())) return
+      const sources = await window.electronAPI.getDesktopSources({
+        types: ['screen'],
+        thumbnailSize: { width: 320, height: 180 },
+      })
+      if (sources.length === 0) return
+      // Primary display has the lowest numeric display_id on both macOS and Windows.
+      const sorted = [...sources].sort((a, b) => {
+        const ai = parseInt(a.display_id || '9999', 10)
+        const bi = parseInt(b.display_id || '9999', 10)
+        return ai - bi
+      })
+      await shareDesktopSource(sorted[0].id)
+    } else {
+      // Web path: bypass LiveKit's setScreenShareEnabled so we can pass
+      // displaySurface:'monitor' — the standard hook doesn't forward constraints.
+      const shouldHide = clearBeforeShare
+      if (shouldHide) {
+        setRoomHidden(true)
+        await new Promise(r => setTimeout(r, 400))
+      }
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { displaySurface: 'monitor' } as any,
+          audio: false,
+        })
+        if (shouldHide) setRoomHidden(false)
+        const [rawTrack] = stream.getVideoTracks()
+        if (!rawTrack) { stream.getTracks().forEach(t => t.stop()); return }
+        const livekitTrack = new LocalVideoTrack(rawTrack, undefined, false)
+        await localParticipant.publishTrack(livekitTrack, { source: Track.Source.ScreenShare })
+        setLocalShareStream(stream)
+        setShareLabel(rawTrack.label || 'Your screen')
+        setIsSharing(true)
+        setShareMenu(false)
+        rawTrack.addEventListener('ended', () => stopShareRef.current?.())
+      } catch {
+        if (shouldHide) setRoomHidden(false)
+      }
+    }
+  }, [checkScreenPermission, shareDesktopSource, clearBeforeShare, localParticipant])
+
   const sharePresentationWindow = useCallback(async () => {
     if (!window.electronAPI) return
     if (!(await checkScreenPermission())) return
@@ -1646,14 +1695,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                     <ScreenShareMenu
                       clearBeforeShare={clearBeforeShare}
                       onToggleClear={() => setClearBeforeShare(v => !v)}
-                      onEntireScreen={async () => {
-                        setShareMenu(false)
-                        if (window.electronAPI) {
-                          if (!(await checkScreenPermission())) return
-                          const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
-                          if (sources.length > 0) await shareDesktopSource(sources[0].id)
-                        } else { await startShare() }
-                      }}
+                      onEntireScreen={async () => { setShareMenu(false); await shareEntireScreen() }}
                       onSelectWindow={async () => {
                         setShareMenu(false)
                         if (window.electronAPI) {
@@ -1935,14 +1977,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                   <ScreenShareMenu
                     clearBeforeShare={clearBeforeShare}
                     onToggleClear={() => setClearBeforeShare(v => !v)}
-                    onEntireScreen={async () => {
-                      setShareMenu(false)
-                      if (window.electronAPI) {
-                        if (!(await checkScreenPermission())) return
-                        const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 320, height: 180 } })
-                        if (sources.length > 0) await shareDesktopSource(sources[0].id)
-                      } else { await startShare() }
-                    }}
+                    onEntireScreen={async () => { setShareMenu(false); await shareEntireScreen() }}
                     onSelectWindow={async () => {
                       setShareMenu(false)
                       if (window.electronAPI) {

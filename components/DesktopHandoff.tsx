@@ -33,12 +33,18 @@ export function canOfferDesktopHandoff(): boolean {
 // Tokens live in the URL *hash* so they are never sent to a server or captured
 // in server access logs — same reasoning as the web auth-callback flow.
 export function buildDesktopHandoffUrl(session: Session): string {
-  const hash = new URLSearchParams({
+  // Carry the full token set so the desktop's Supabase detectSessionInUrl can
+  // consume the hash natively; AuthGate also sets the session explicitly as a
+  // fallback. Mirrors the shape of Supabase's own implicit-flow callback hash.
+  const params: Record<string, string> = {
     access_token: session.access_token,
     refresh_token: session.refresh_token,
+    token_type: session.token_type ?? 'bearer',
     type: 'magiclink',
-  }).toString()
-  return `beehive://auth/confirm#${hash}`
+  }
+  if (session.expires_in != null) params.expires_in = String(session.expires_in)
+  if (session.expires_at != null) params.expires_at = String(session.expires_at)
+  return `beehive://auth/confirm#${new URLSearchParams(params).toString()}`
 }
 
 // Launch the desktop app. With a session, the app opens signed in; without one

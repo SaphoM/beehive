@@ -43,7 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     end: () => ipcRenderer.invoke('control-end'),
     move: (nx, ny) => ipcRenderer.invoke('control-move', nx, ny),
     click: (nx, ny, opts) => ipcRenderer.invoke('control-click', nx, ny, opts),
-    scroll: (dx, dy) => ipcRenderer.invoke('control-scroll', dx, dy),
+    scroll: (nx, ny, dx, dy) => ipcRenderer.invoke('control-scroll', nx, ny, dx, dy),
     type: (text) => ipcRenderer.invoke('control-type', text),
     key: (key, modifiers) => ipcRenderer.invoke('control-key', key, modifiers),
     accessibility: (prompt) => ipcRenderer.invoke('control-accessibility', prompt),

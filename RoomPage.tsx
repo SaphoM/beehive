@@ -20,7 +20,7 @@ declare global {
         end: () => Promise<{ ok: boolean }>
         move: (nx: number, ny: number) => Promise<void>
         click: (nx: number, ny: number, opts?: { button?: 'left' | 'right' | 'middle'; double?: boolean }) => Promise<void>
-        scroll: (dx: number, dy: number) => Promise<void>
+        scroll: (nx: number, ny: number, dx: number, dy: number) => Promise<void>
         type: (text: string) => Promise<void>
         key: (key: string, modifiers?: string[]) => Promise<void>
         accessibility: (prompt: boolean) => Promise<boolean>
@@ -827,7 +827,6 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   // Interactive control of the shared window from the main-area preview (desktop).
   const [controlMode, setControlMode] = useState(false)
   const shareVideoRef = useRef<HTMLVideoElement | null>(null)
-  const controlMoveThrottle = useRef(0)
   // The shared window's real OS title (desktopCapturer source name) — used to
   // locate the window for control. The media-track label is generic, so we keep
   // the source name here when a specific window is shared.
@@ -1544,16 +1543,9 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                 <div
                   tabIndex={0}
                   ref={el => el?.focus()}
-                  onPointerMove={e => {
-                    const now = performance.now()
-                    if (now - controlMoveThrottle.current < 33) return
-                    controlMoveThrottle.current = now
-                    const c = toShareCoords(e)
-                    if (c) window.electronAPI?.control?.move(c.nx, c.ny)
-                  }}
                   onClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny) }}
                   onContextMenu={e => { e.preventDefault(); const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { button: 'right' }) }}
-                  onWheel={e => { window.electronAPI?.control?.scroll(e.deltaX, e.deltaY) }}
+                  onWheel={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.scroll(c.nx, c.ny, e.deltaX, e.deltaY) }}
                   onKeyDown={e => {
                     e.preventDefault()
                     const mods: string[] = []

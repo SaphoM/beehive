@@ -91,28 +91,41 @@ function toPoint(nx, ny) {
   return new Point(x, y)
 }
 
-async function move(nx, ny) {
-  if (!target) return
+// There is only ONE physical cursor. To let the presenter keep their pointer in
+// the BeeHive preview (rather than having it yanked onto the shared window), we
+// warp to the target only for the instant of the action, then restore the cursor
+// to where it was. No continuous move-on-hover.
+async function withCursorAt(point, fn) {
   const { mouse } = loadNut()
-  await mouse.setPosition(toPoint(nx, ny))
+  const prev = await mouse.getPosition()
+  await mouse.setPosition(point)
+  await fn()
+  await mouse.setPosition(prev)
 }
+
+// Kept for API compatibility; a no-op so hovering never steals the cursor.
+async function move() { /* intentionally does nothing — see withCursorAt */ }
 
 async function click(nx, ny, opts = {}) {
   if (!target) return
   const { mouse, Button } = loadNut()
-  await mouse.setPosition(toPoint(nx, ny))
   const button = opts.button === 'right' ? Button.RIGHT : opts.button === 'middle' ? Button.MIDDLE : Button.LEFT
-  if (opts.double) await mouse.doubleClick(button)
-  else await mouse.click(button)
+  await withCursorAt(toPoint(nx, ny), async () => {
+    if (opts.double) await mouse.doubleClick(button)
+    else await mouse.click(button)
+  })
 }
 
-// Wheel deltas → discrete scroll steps. Positive dy scrolls content down.
-async function scroll(dx, dy) {
+// Wheel deltas → discrete scroll steps at the pointed-at location. Positive dy
+// scrolls content down. Cursor is restored afterwards.
+async function scroll(nx, ny, dx, dy) {
   if (!target) return
   const { mouse } = loadNut()
   const steps = d => Math.max(1, Math.min(12, Math.round(Math.abs(d) / 40)))
-  if (dy) { if (dy > 0) await mouse.scrollDown(steps(dy)); else await mouse.scrollUp(steps(dy)) }
-  if (dx) { if (dx > 0) await mouse.scrollRight(steps(dx)); else await mouse.scrollLeft(steps(dx)) }
+  await withCursorAt(toPoint(nx, ny), async () => {
+    if (dy) { if (dy > 0) await mouse.scrollDown(steps(dy)); else await mouse.scrollUp(steps(dy)) }
+    if (dx) { if (dx > 0) await mouse.scrollRight(steps(dx)); else await mouse.scrollLeft(steps(dx)) }
+  })
 }
 
 async function typeText(text) {

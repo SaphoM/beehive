@@ -24,6 +24,7 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 |-------|-----------|
 | Frontend | React 19 + Vite 8 |
 | Video/Audio | LiveKit Cloud |
+| Noise suppression | Krisp (`@livekit/krisp-noise-filter`) — background-noise filtering on the mic, lazy-loaded |
 | Database | Supabase (PostgreSQL) |
 | Real-time | Supabase Realtime subscriptions |
 | Auth | Supabase Auth — Magic Link + Email OTP (no passwords) |
@@ -72,6 +73,11 @@ Admin role is assigned automatically by the seed script. New self-registered use
 - Only rendered in a real browser — it never appears inside the Electron app itself (`canOfferDesktopHandoff()` checks for `window.electronAPI`)
 - Fully optional: a web-only user can simply ignore the button and keep using the web app
 
+**Download the desktop app:** directly beneath the button, a small OS-aware **"Don't have it? Download for macOS / Windows"** link is shown to visitors on a real Mac or Windows desktop browser:
+- OS is detected via `detectDesktopOS()` — checks `navigator.platform`/`userAgent`, and excludes touch-primary devices (`matchMedia('(pointer: coarse)')`) so phones and tablets never see a desktop-app download link — this specifically also excludes **iPadOS**, which reports `navigator.platform` as `"MacIntel"` when the device requests the desktop site, and would otherwise be misidentified as a Mac
+- Link target is `VITE_DESKTOP_DOWNLOAD_MAC_URL` / `VITE_DESKTOP_DOWNLOAD_WIN_URL` if set, otherwise falls back to the repo's [GitHub Releases page](https://github.com/SaphoM/beehive/releases/latest)
+- **Note:** this only builds the download *link* — it does not itself build, sign, or publish installers. Producing real downloadable artifacts is a separate, deliberate step: run `npm run electron:build:mac` / `electron:build:win` locally, then publish the resulting `release/*.dmg` / `release/*.exe` to a GitHub Release (or wherever `VITE_DESKTOP_DOWNLOAD_*_URL` points)
+
 **Supabase URL configuration (required for production):**
 - Site URL → `https://beehive-fu8w.onrender.com`
 - Redirect URLs → `https://beehive-fu8w.onrender.com/**`, `http://localhost:5173/**`
@@ -103,7 +109,7 @@ Anyone in a meeting can invite anyone else — no account required on either sid
 - **Post-meeting register** — guests who joined via room link are prompted to register when they return to the lobby after a meeting ends (same card-flip animation)
 - **User strip** — authenticated users see their name and a Sign out button at the top of the lobby card
 - **Recent meetings** — expandable Fathom panel showing AI-summarised past meetings
-- **Open in desktop app** — web-only button below "Recent meetings"; hands off the signed-in session to the BeeHive desktop app via the `beehive://` deep link (see [Authentication](#authentication))
+- **Open in desktop app** — web-only button below "Recent meetings"; hands off the signed-in session to the BeeHive desktop app via the `beehive://` deep link, with an OS-aware "Download for macOS/Windows" fallback link for visitors who don't have it installed (see [Authentication](#authentication))
 
 ### In Meeting
 
@@ -176,6 +182,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - **Long-press / right-click**: opens a composer popover anchored above the emoji — pre-filled with a smart editable sentence (`Sapho agrees.`, `Sapho loves this.` etc.); 50-char limit; Enter sends, Esc cancels, click-away closes; message broadcasts to all as a glassmorphism floating pill; 5 s rate-limit cooldown per sender
 - ✋ **Raise hand** — `Hand` button broadcasts your name to all participants via Supabase Realtime (`hands:{roomId}`); raised hands appear as floating chips in the top-right of the video area showing ✋ + name; any participant can tap × to lower an individual hand, or "Lower all" to clear all at once; the broadcaster's own state stays in sync
 - 🔇 **Speaker mute** — `Volume2` / `VolumeX` button silences all `<audio>` elements in the page (mutes remote audio output without affecting the microphone); red border when active
+- 🎙️ **Background-noise suppression** — the mic is automatically run through LiveKit's Krisp noise-filter processor, which filters ambient/background noise and isolates the speaker's voice; applied to every mic track this participant publishes (including after toggling the mic off and back on, which creates a fresh track); the ~5–6 MB Krisp WASM/ML payload is **lazy-loaded** on first mic publish via dynamic `import()` — it never bloats the initial page load; silently skipped on unsupported browsers/platforms, so it never blocks the mic
 - 🔗 Invite link — opens a share modal showing the plain `?room=ROOM_ID` link; anyone can copy and share it; recipients join directly with no account required
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
 - 🎨 Background Effects (`Layers` button, amber when active) — uses **MediaPipe Selfie Segmentation**; four modes:
@@ -380,7 +387,7 @@ beehive/
 │   ├── ScreenShareBar.tsx              #   active-share bar
 │   ├── ElectronWindowPicker.tsx        #   desktop window picker
 │   ├── ReactionComposer.tsx            #   long-press emoji reaction composer popover
-│   ├── DesktopHandoff.tsx              #   web → desktop sign-in handoff (beehive:// deep link)
+│   ├── DesktopHandoff.tsx              #   web → desktop sign-in handoff + OS-aware download link
 │   ├── roomUtils.ts                    #   constants, helpers, drawVirtualScene
 │   └── roomStyles.ts                   #   shared `s` styles object
 ├── livekit_react_hooks.tsx             # Hooks: useAuth, useProfile, useCreateRoom,
@@ -496,6 +503,11 @@ VITE_LIVEKIT_URL=wss://your-project.livekit.cloud
 # App
 VITE_WEB_BASE_URL=https://beehive-fu8w.onrender.com   # Used for invite link generation in Electron
 PORT=3001
+
+# Desktop app download links (optional — both default to the GitHub Releases
+# page if unset; see "Download the desktop app" under Authentication)
+VITE_DESKTOP_DOWNLOAD_MAC_URL=https://github.com/SaphoM/beehive/releases/latest
+VITE_DESKTOP_DOWNLOAD_WIN_URL=https://github.com/SaphoM/beehive/releases/latest
 ```
 
 **Supabase Dashboard settings required:**
@@ -660,6 +672,8 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] User roles — `admin` / `user`; auto-assigned on signup; `is_admin()` RLS helper
 - [x] Electron deep-link — `beehive://` URL scheme intercepts magic-link redirects
 - [x] Web → desktop sign-in handoff — "Open in desktop app" button on the web lobby hands off the live session via `beehive://` (web-only, optional)
+- [x] Desktop app download link — OS-aware "Download for macOS/Windows" fallback beneath the handoff button (excludes touch devices, incl. iPadOS); link target configurable via env, defaults to GitHub Releases
+- [x] Background-noise suppression — Krisp noise filter on the mic (lazy-loaded, ~5–6 MB payload split into its own chunk so it never affects initial page load)
 - [ ] Host role — host/co-host permissions
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled, renameable, group mute

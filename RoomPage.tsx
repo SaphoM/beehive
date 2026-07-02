@@ -56,7 +56,10 @@ import {
   TrackToggle,
   useParticipants as useLiveKitParticipants,
 } from '@livekit/components-react'
-import { Track, LocalVideoTrack } from 'livekit-client'
+import { Track, LocalVideoTrack, ParticipantEvent, type LocalTrackPublication } from 'livekit-client'
+// Krisp ships a multi-MB WASM/ML payload — loaded lazily (see the noise-filter
+// effect below) so it never bloats the initial page load for users who haven't
+// published a mic track yet.
 import '@livekit/components-styles'
 import {
   useCreateRoom,
@@ -214,6 +217,29 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   const allTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
   const { localParticipant } = useLocalParticipant()
   const liveKitParticipants = useLiveKitParticipants()
+
+  // Background-noise suppression on the mic — filters ambient noise and
+  // isolates the speaker's voice (Krisp, via LiveKit's official track
+  // processor). Applied automatically to every mic track this participant
+  // publishes, including after toggling mic off/on (which creates a new
+  // track). Silently skipped where unsupported — never blocks the mic.
+  useEffect(() => {
+    let cancelled = false
+    const applyFilter = async (pub: LocalTrackPublication) => {
+      if (pub.source !== Track.Source.Microphone) return
+      const track = pub.track
+      if (!track || track.kind !== Track.Kind.Audio) return
+      try {
+        const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import('@livekit/krisp-noise-filter')
+        if (cancelled || !isKrispNoiseFilterSupported()) return
+        await track.setProcessor(KrispNoiseFilter())
+      } catch { /* best-effort — never block the mic on a filter failure */ }
+    }
+    const existing = localParticipant.getTrackPublication(Track.Source.Microphone)
+    if (existing) applyFilter(existing as LocalTrackPublication)
+    localParticipant.on(ParticipantEvent.LocalTrackPublished, applyFilter)
+    return () => { cancelled = true; localParticipant.off(ParticipantEvent.LocalTrackPublished, applyFilter) }
+  }, [localParticipant])
 
   const tracks = allTracks.filter(t =>
     !(t.participant.identity === localParticipant.identity && t.source === Track.Source.ScreenShare)

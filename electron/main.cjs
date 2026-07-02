@@ -253,7 +253,12 @@ function createDockWindow() {
   if (dockWindow && !dockWindow.isDestroyed()) return dockWindow
 
   const display = screen.getPrimaryDisplay()
-  const width = 620, height = 56
+  // Comfortably fits every control (timer, sharing label + Stop, mic/cam/hand,
+  // slide nav, speaking name + quality dot, chat/participants, leave) without
+  // clipping. Clamped to the screen width as a second safety net — the dock's
+  // own CSS also scrolls horizontally if content is ever wider than this.
+  const height = 56
+  const width = Math.min(860, display.workArea.width - 40)
   const x = Math.round(display.workArea.x + (display.workArea.width - width) / 2)
   const y = Math.round(display.workArea.y + display.workArea.height - height - 28)
 

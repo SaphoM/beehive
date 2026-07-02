@@ -41,14 +41,24 @@ async function begin(title) {
   try {
     const windows = await getWindows()
     const titled = await Promise.all(
-      windows.map(async w => ({ w, t: await w.getTitle().catch(() => '') }))
+      windows.map(async w => ({ w, t: (await w.getTitle().catch(() => '')) || '' }))
     )
-    const wanted = (title || '').trim()
+    // Normalise: lowercase, trim, drop macOS "— Edited"/"– Edited" doc suffixes.
+    const norm = s => s.toLowerCase().trim().replace(/\s*[—–-]\s*edited\s*$/i, '').trim()
+    const wanted = norm(title || '')
+    const candidates = titled.filter(x => x.t) // ignore untitled windows
     let match =
-      titled.find(x => x.t === wanted) ||
-      (wanted && titled.find(x => x.t.includes(wanted))) ||
-      (wanted && titled.find(x => wanted.includes(x.t) && x.t.length > 2))
-    if (!match) return { ok: false, reason: 'window-not-found' }
+      candidates.find(x => norm(x.t) === wanted) ||
+      (wanted && candidates.find(x => norm(x.t).includes(wanted) || wanted.includes(norm(x.t)))) ||
+      // Loose token overlap fallback: share the first meaningful word.
+      (wanted && candidates.find(x => {
+        const a = norm(x.t).split(/[\s|—–-]+/).filter(w => w.length > 2)
+        const b = wanted.split(/[\s|—–-]+/).filter(w => w.length > 2)
+        return a.length && b.length && a[0] === b[0]
+      }))
+    if (!match) {
+      return { ok: false, reason: 'window-not-found', titles: candidates.map(x => x.t).slice(0, 25) }
+    }
     const region = await match.w.getRegion()
     target = { window: match.w, region }
     return { ok: true, title: match.t, region }

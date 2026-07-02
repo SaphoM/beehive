@@ -15,7 +15,7 @@ declare global {
       getFullscreen: () => Promise<boolean>
       onFullscreenChange: (cb: (v: boolean) => void) => () => void
       control?: {
-        begin: (title: string) => Promise<{ ok: boolean; reason?: string; message?: string; title?: string; region?: { left: number; top: number; width: number; height: number } }>
+        begin: (title: string) => Promise<{ ok: boolean; reason?: string; message?: string; title?: string; titles?: string[]; region?: { left: number; top: number; width: number; height: number } }>
         refresh: () => Promise<{ ok: boolean }>
         end: () => Promise<{ ok: boolean }>
         move: (nx: number, ny: number) => Promise<void>
@@ -828,6 +828,10 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   const [controlMode, setControlMode] = useState(false)
   const shareVideoRef = useRef<HTMLVideoElement | null>(null)
   const controlMoveThrottle = useRef(0)
+  // The shared window's real OS title (desktopCapturer source name) — used to
+  // locate the window for control. The media-track label is generic, so we keep
+  // the source name here when a specific window is shared.
+  const controlWindowTitleRef = useRef('')
   const canControlShare = !isMobile && !!window.electronAPI?.control && isSharing && !sharingEntireScreen && !!localShareStream
 
   // Map a pointer event over the preview <video> (object-fit: contain) to
@@ -851,12 +855,14 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
       window.electronAPI?.control?.end()
       return
     }
-    const res = await window.electronAPI?.control?.begin(shareLabel)
+    const res = await window.electronAPI?.control?.begin(controlWindowTitleRef.current || shareLabel)
     if (!res?.ok) {
       if (res?.reason === 'accessibility') {
         alert('To control your shared window from here, enable Accessibility for BeeHive:\n\nSystem Settings → Privacy & Security → Accessibility → enable BeeHive, then try again.')
       } else if (res?.reason === 'window-not-found') {
-        alert('Could not locate the shared window to control. Make sure it is still open, then try again.')
+        const seen = (res as { titles?: string[] }).titles
+        const list = seen && seen.length ? `\n\nWindows detected:\n• ${seen.join('\n• ')}` : '\n\n(No windows were detected — Accessibility may still be initialising; try again in a moment.)'
+        alert(`Could not match the shared window "${controlWindowTitleRef.current || shareLabel}" to control.${list}`)
       } else {
         alert('Could not start control of the shared window.')
       }
@@ -1178,8 +1184,9 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     return true
   }, [])
 
-  const shareDesktopSource = useCallback(async (sourceId: string, isEntireScreen = false) => {
+  const shareDesktopSource = useCallback(async (sourceId: string, isEntireScreen = false, windowTitle = '') => {
     setShowWindowPicker(false)
+    controlWindowTitleRef.current = windowTitle
     if (!(await checkScreenPermission())) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1203,7 +1210,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
       await localParticipant.publishTrack(livekitTrack, { source: Track.Source.ScreenShare })
 
       setLocalShareStream(stream)
-      setShareLabel(rawTrack.label || 'Presentation')
+      setShareLabel(windowTitle || rawTrack.label || 'Presentation')
       setIsSharing(true)
       setSharingEntireScreen(isEntireScreen)
       rawTrack.addEventListener('ended', () => stopShareRef.current?.())
@@ -1290,8 +1297,9 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     setPendingFile(null)
     setPresentStep('idle')
     const id = pendingSource.id
+    const name = pendingSource.name
     setPendingSource(null)
-    await shareDesktopSource(id)
+    await shareDesktopSource(id, false, name)
   }, [pendingSource, shareDesktopSource])
 
   const openQueuedFile = useCallback(async (file: File) => {
@@ -2562,7 +2570,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
             if (pendingFile) {
               setPendingSource({ id: src.id, name: src.name, thumbnail: src.thumbnail })
             } else {
-              await shareDesktopSource(src.id)
+              await shareDesktopSource(src.id, false, src.name)
             }
           }}
           onClose={() => setShowWindowPicker(false)}

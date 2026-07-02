@@ -1,7 +1,6 @@
 import { ReactNode, useState } from 'react'
 import { useAuth } from '../livekit_react_hooks'
 import { AuthScreen } from './AuthScreen'
-import { DesktopHandoffPrompt } from './DesktopHandoff'
 
 // URL params that bypass auth (frictionless room join)
 function hasRoomParam(): boolean {
@@ -28,16 +27,14 @@ const spinner = (
 )
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, session, loading } = useAuth()
+  const { user, loading } = useAuth()
   // Capture once on mount — URL will be cleaned by Supabase SDK after processing,
   // so re-reading window.location on every render would give stale results anyway.
   const [wasCallback] = useState(isAuthCallback)
 
   // User is resolved — render immediately regardless of URL state.
   // Supabase may not have cleaned the hash yet, but the session is valid.
-  // DesktopHandoffPrompt is a disabled stub today (renders null); it will offer
-  // web users the option to continue in the desktop app once activated.
-  if (!loading && user) return <>{children}<DesktopHandoffPrompt session={session} /></>
+  if (!loading && user) return <>{children}</>
 
   // Waiting for the initial session to be determined
   if (loading) return spinner

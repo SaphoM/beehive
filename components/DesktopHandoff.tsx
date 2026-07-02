@@ -1,34 +1,27 @@
 // ============================================================
-// DESKTOP HANDOFF — web → desktop app sign-in bridge  (STUB)
+// DESKTOP HANDOFF — web → desktop app sign-in bridge
 // ============================================================
-// Purpose: when a user completes sign-in on the WEB (via the Supabase magic
-// link) but also has the BeeHive desktop app installed, offer to continue in
-// the desktop app by handing the authenticated session across the `beehive://`
-// deep link (parsed by electron/main.cjs → handleDeepLink).
+// When a user is on the WEB but also has the BeeHive desktop app installed,
+// this offers a button to continue in the desktop app. If the user is signed
+// in on the web, the authenticated Supabase session is handed across the
+// `beehive://` deep link (parsed by electron/main.cjs → handleDeepLink) so the
+// desktop app opens already signed in. If not signed in, the app opens to its
+// own sign-in screen.
 //
-// STATUS: stubbed and DISABLED. Wire it up later by flipping ENABLE_DESKTOP_HANDOFF.
-// It is intentionally optional — a user who just wants the web keeps using the
-// web (see point 2 of the auth plan). Nothing here ever force-redirects.
-//
-// TODO (when activating):
-//   [ ] Decide how to *offer* the handoff — a manual "Open in BeeHive desktop"
-//       button is the reliable path; browsers cannot silently detect an installed
-//       app. Optionally remember a "prefers desktop" choice in localStorage.
-//   [ ] Confirm electron/main.cjs handleDeepLink consumes the token hash below and
-//       calls supabase.auth.setSession (or relies on detectSessionInUrl). Align the
-//       hash param names with whatever the desktop side reads.
-//   [ ] Register the beehive:// scheme handling end-to-end (already declared via
-//       app.setAsDefaultProtocolClient('beehive') in main.cjs).
-//   [ ] Add a short fallback timer: if the app doesn't take focus, stay on web.
-//   [ ] Gate production vs staging if the rollout should differ.
+// It is always optional — a web-only user simply ignores it (see point 2 of the
+// auth plan). Nothing here force-redirects, and the button never renders inside
+// the Electron renderer (there is no one to hand off to).
 
+import { useState } from 'react'
+import { Monitor } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
+import { useAuth } from '../livekit_react_hooks'
 
-// Master switch. Leave false until the flow above is finished and tested.
-export const ENABLE_DESKTOP_HANDOFF = false
+// Master switch. Set false to hide the handoff button everywhere.
+export const ENABLE_DESKTOP_HANDOFF = true
 
 // True only in a real browser (never inside the Electron renderer, which is
-// already the desktop app and has no one to hand off to).
+// already the desktop app).
 export function canOfferDesktopHandoff(): boolean {
   if (!ENABLE_DESKTOP_HANDOFF) return false
   if (typeof window === 'undefined') return false
@@ -48,19 +41,46 @@ export function buildDesktopHandoffUrl(session: Session): string {
   return `beehive://auth/confirm#${hash}`
 }
 
-// STUB trigger — no-op until enabled. Kept as the single entry point so callers
-// don't need to change when the flow is activated.
-export function openInDesktopApp(session: Session): void {
+// Launch the desktop app. With a session, the app opens signed in; without one
+// it opens to its own sign-in. If the app isn't installed the OS simply ignores
+// the beehive:// navigation, so this is safe to call unconditionally.
+export function openInDesktopApp(session: Session | null): void {
   if (!canOfferDesktopHandoff()) return
-  // TODO: window.location.href = buildDesktopHandoffUrl(session)
-  //       then start a fallback timer that clears any "opening…" UI.
+  window.location.href = session ? buildDesktopHandoffUrl(session) : 'beehive://'
 }
 
-// Post-login prompt shown on the web offering to continue in the desktop app.
-// Renders nothing while the feature is disabled, so it is safe to mount today.
-export function DesktopHandoffPrompt(_props: { session?: Session | null }): null {
+// Button offering to continue in the desktop app. Renders nothing on the desktop
+// app itself or when the feature is disabled, so it is safe to mount anywhere.
+export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties }) {
+  const { session } = useAuth()
+  const [opening, setOpening] = useState(false)
+
   if (!canOfferDesktopHandoff()) return null
-  // TODO: render a dismissible "Open in BeeHive desktop app" card that calls
-  //       openInDesktopApp(session). Until then this branch is unreachable.
-  return null
+
+  function handleOpen() {
+    setOpening(true)
+    openInDesktopApp(session)
+    // The desktop app takes focus on success; if it isn't installed nothing
+    // happens, so re-enable the button after a short delay either way.
+    setTimeout(() => setOpening(false), 4000)
+  }
+
+  return (
+    <button
+      onClick={handleOpen}
+      disabled={opening}
+      title="Continue in the BeeHive desktop app"
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        background: 'none', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
+        color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300,
+        padding: '10px 14px', cursor: opening ? 'default' : 'pointer', width: '100%',
+        transition: 'border-color 0.2s, color 0.2s',
+        ...style,
+      }}
+    >
+      <Monitor size={14} />
+      {opening ? 'Opening BeeHive…' : 'Open in desktop app'}
+    </button>
+  )
 }

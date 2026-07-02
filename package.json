@@ -23,7 +23,6 @@
   "dependencies": {
     "@livekit/components-react": "^2.9.21",
     "@livekit/components-styles": "^1.2.0",
-    "@nut-tree-fork/nut-js": "^4.2.6",
     "@supabase/supabase-js": "^2.108.2",
     "@vitejs/plugin-react": "^6.0.2",
     "dotenv": "^17.4.2",
@@ -48,9 +47,6 @@
       "electron/**",
       "livekit_node_backend.js",
       "node_modules/**"
-    ],
-    "asarUnpack": [
-      "node_modules/@nut-tree-fork/**"
     ],
     "extraResources": [
       {

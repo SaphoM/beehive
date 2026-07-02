@@ -35,17 +35,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.off('fullscreen-change', handler)
   },
 
-  // Drive the shared window's mouse/keyboard from the BeeHive preview.
-  // Coords are normalised [0,1] within the shared video's content area.
-  control: {
-    begin: (title) => ipcRenderer.invoke('control-begin', title),
-    refresh: () => ipcRenderer.invoke('control-refresh'),
-    end: () => ipcRenderer.invoke('control-end'),
-    move: (nx, ny) => ipcRenderer.invoke('control-move', nx, ny),
-    click: (nx, ny, opts) => ipcRenderer.invoke('control-click', nx, ny, opts),
-    scroll: (nx, ny, dx, dy) => ipcRenderer.invoke('control-scroll', nx, ny, dx, dy),
-    type: (text) => ipcRenderer.invoke('control-type', text),
-    key: (key, modifiers) => ipcRenderer.invoke('control-key', key, modifiers),
-    accessibility: (prompt) => ipcRenderer.invoke('control-accessibility', prompt),
+  // Bring the shared window's owning app to the foreground (native OS window
+  // activation — no input injection, no Accessibility permission). windowId is
+  // the CGWindowNumber parsed from the desktopCapturer source id.
+  activateSharedWindow: (windowId) => ipcRenderer.invoke('activate-shared-window', windowId),
+
+  // Floating Control Dock (separate always-on-top window, electron/dock.html):
+  // shown while presenting a window share so meeting controls stay reachable
+  // even when the shared app is in the foreground.
+  showDock: () => ipcRenderer.send('dock-show'),
+  hideDock: () => ipcRenderer.send('dock-hide'),
+  pushDockState: (state) => ipcRenderer.send('dock-state', state),
+  onDockAction: (cb) => {
+    const handler = (_, action) => cb(action)
+    ipcRenderer.on('dock-action', handler)
+    return () => ipcRenderer.off('dock-action', handler)
   },
 })

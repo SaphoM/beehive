@@ -1,11 +1,12 @@
-const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu, systemPreferences } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu, systemPreferences, screen } = require('electron')
 const path = require('path')
-const { existsSync, readFileSync } = require('fs')
-const { spawn, execFile } = require('child_process')
+const { existsSync, readFileSync, statSync, mkdirSync } = require('fs')
+const { spawn, execFile, execFileSync } = require('child_process')
 
 const isDev = !app.isPackaged
 
 let mainWindow
+let dockWindow
 let backendProcess
 
 // ---------------------------------------------------------------------------
@@ -201,19 +202,112 @@ ipcMain.handle('toggle-fullscreen', () => {
 ipcMain.handle('get-fullscreen', () => mainWindow?.isFullScreen() ?? false)
 
 // ---------------------------------------------------------------------------
-// IPC: screen control — drive the shared window's mouse/keyboard from the
-// BeeHive preview. Requires macOS Accessibility permission (input injection).
+// IPC: bring the shared window's owning app to the foreground. Native OS
+// window activation only (NSRunningApplication) — no input injection, so no
+// Accessibility permission is needed. Compiled on demand in dev; shipped via
+// extraResources in packaged builds.
 // ---------------------------------------------------------------------------
-const screenControl = require('./screenControl.cjs')
-ipcMain.handle('control-begin', (_, title) => screenControl.begin(title))
-ipcMain.handle('control-refresh', () => screenControl.refresh())
-ipcMain.handle('control-end', () => screenControl.end())
-ipcMain.handle('control-move', (_, nx, ny) => screenControl.move(nx, ny))
-ipcMain.handle('control-click', (_, nx, ny, opts) => screenControl.click(nx, ny, opts))
-ipcMain.handle('control-scroll', (_, nx, ny, dx, dy) => screenControl.scroll(nx, ny, dx, dy))
-ipcMain.handle('control-type', (_, text) => screenControl.typeText(text))
-ipcMain.handle('control-key', (_, key, modifiers) => screenControl.pressKey(key, modifiers))
-ipcMain.handle('control-accessibility', (_, prompt) => screenControl.isAccessibilityTrusted(prompt))
+function beehiveCtlPath() {
+  if (process.resourcesPath) {
+    const packaged = path.join(process.resourcesPath, 'beehive-ctl')
+    if (existsSync(packaged)) return packaged
+  }
+  const src = path.join(__dirname, 'beehive-ctl.m')
+  const bin = path.join(__dirname, 'bin', 'beehive-ctl')
+  try {
+    const stale = !existsSync(bin) || statSync(bin).mtimeMs < statSync(src).mtimeMs
+    if (stale) {
+      mkdirSync(path.dirname(bin), { recursive: true })
+      execFileSync('clang', ['-fobjc-arc', '-O2', '-framework', 'AppKit', '-framework', 'ApplicationServices', '-o', bin, src], { stdio: 'ignore' })
+    }
+  } catch (e) {
+    console.warn('[beehive-ctl] build failed:', e.message)
+  }
+  return existsSync(bin) ? bin : null
+}
+
+ipcMain.handle('activate-shared-window', (_, windowId) => {
+  return new Promise(resolve => {
+    if (process.platform !== 'darwin') { resolve({ ok: false, reason: 'unsupported-platform' }); return }
+    const bin = beehiveCtlPath()
+    if (!bin) { resolve({ ok: false, reason: 'helper-unavailable' }); return }
+    execFile(bin, ['activate-window', String(windowId)], (err, stdout) => {
+      try { resolve(JSON.parse((stdout || '').trim())) }
+      catch { resolve({ ok: false, reason: err ? 'error' : 'bad-output' }) }
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Floating Control Dock — a separate always-on-top window showing the core
+// meeting controls (mic, cam, hand, chat, participants, leave, stop-share,
+// slide nav) so the presenter never loses access to them while the shared
+// window/app is in the foreground and BeeHive's main window is backgrounded.
+//
+// It is a SEPARATE renderer process, so it cannot touch the LiveKit Room
+// object directly. Actions dispatched from the dock are relayed through this
+// main process to the main window's renderer (which owns the live Room
+// connection); state updates flow the same way in reverse.
+// ---------------------------------------------------------------------------
+function createDockWindow() {
+  if (dockWindow && !dockWindow.isDestroyed()) return dockWindow
+
+  const display = screen.getPrimaryDisplay()
+  const width = 620, height = 56
+  const x = Math.round(display.workArea.x + (display.workArea.width - width) / 2)
+  const y = Math.round(display.workArea.y + display.workArea.height - height - 28)
+
+  dockWindow = new BrowserWindow({
+    width, height, x, y,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'dockPreload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  dockWindow.setAlwaysOnTop(true, 'floating')
+  dockWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  dockWindow.loadFile(path.join(__dirname, 'dock.html'))
+  dockWindow.on('closed', () => { dockWindow = null })
+  return dockWindow
+}
+
+ipcMain.on('dock-show', () => {
+  const w = createDockWindow()
+  w.showInactive() // visible without stealing focus from the shared app
+})
+
+ipcMain.on('dock-hide', () => {
+  if (dockWindow && !dockWindow.isDestroyed()) dockWindow.hide()
+})
+
+// Main window's renderer → dock window (mic/cam status, timer, sharing info…)
+ipcMain.on('dock-state', (_, state) => {
+  if (dockWindow && !dockWindow.isDestroyed()) dockWindow.webContents.send('dock-state', state)
+})
+
+// Dock window → main window's renderer (toggle-mic, leave, open-chat, …).
+// Actions that need the presenter to actually SEE something (chat,
+// participants, leaving) also bring BeeHive's main window forward; pure
+// background actions (mute, raise hand, stop share) don't steal focus so the
+// presenter can keep looking at the shared app.
+const FOCUS_ON_ACTION = new Set(['open-chat', 'open-participants', 'leave'])
+ipcMain.on('dock-action', (_, action) => {
+  if (FOCUS_ON_ACTION.has(action?.type) && mainWindow) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+  mainWindow?.webContents.send('dock-action', action)
+})
 
 // ---------------------------------------------------------------------------
 // IPC: drive the presenter's slideshow (next / previous slide).
@@ -328,6 +422,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   backendProcess?.kill()
+  if (dockWindow && !dockWindow.isDestroyed()) dockWindow.close()
   if (process.platform !== 'darwin') app.quit()
 })
 
@@ -337,4 +432,5 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   backendProcess?.kill()
+  if (dockWindow && !dockWindow.isDestroyed()) dockWindow.close()
 })

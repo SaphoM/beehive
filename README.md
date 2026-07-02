@@ -33,7 +33,7 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Meeting Intelligence | Fathom API |
 | Background AI | MediaPipe Selfie Segmentation |
 | Desktop | Electron 42 + electron-builder |
-| Input control | `beehive-ctl` native helper (CGEventPostToPid) + nut-js fallback — drive shared window from preview |
+| Window activation | `beehive-ctl` native helper (`NSRunningApplication`) — bring the shared window's app to the foreground |
 
 ---
 
@@ -188,14 +188,19 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - Share menu: `position: fixed; bottom: 84px` centered with `maxHeight: calc(100vh - 120px)` — never overflows on 13" displays
   - Controls bar: `maxWidth: 96vw; flexWrap: wrap` — all buttons remain accessible on narrow screens (13" MacBook)
   - Active share bar: source label, **Add Window**, **Switch** (live `replaceTrack`), **Stop Sharing**
-  - **Local share (presenter)**: main area shows live `<video>` preview of the shared stream with a pulsing **LIVE** badge — no mirror echo; fallback "Broadcasting…" shown while stream initialises
-  - 🖱️ **Interactive control of the shared window** (Electron desktop only, window share) — the presenter can drive the window they're sharing **directly from BeeHive's preview**, without switching back to it:
-    - Toggle the **cursor** button (top-right of the main area) to enter control mode; a blue **CONTROLLING** badge appears
-    - Hover / **click** / double-click / right-click / **scroll** and **type** in the preview → forwarded to the real window (mouse, wheel, keyboard incl. ⌘/⌃ combos)
-    - Events are posted **directly to the shared app's process** via the `beehive-ctl` native helper (`CGEventPostToPid`): the physical cursor never moves, the target responds even while behind the BeeHive window, and BeeHive keeps focus so meeting controls stay usable
-    - Coordinates are mapped from the preview (accounting for `object-fit: contain` letterboxing) to the window's live on-screen bounds (re-read per action, so moved windows stay accurate)
-    - Helper is compiled on demand in dev (clang) and shipped via `extraResources` in packaged builds; falls back to nut-js cursor injection if unavailable; requires macOS **Accessibility** permission (prompted on first use)
-    - Only available for a **window** share (not entire-screen, which would create a control feedback loop); auto-disables when sharing stops
+  - **Local share (presenter)**: main area shows live `<video>` preview of the shared stream — no mirror echo; fallback "Broadcasting…" shown while stream initialises
+  - 🖥️ **Persistent sharing indicator** — always visible while sharing (top-left of the preview): "You're sharing your entire screen" / "You're sharing '<window title>'", plus elapsed sharing time and a quick **Stop** button
+  - 🖱️ **Click-to-focus for window shares** (Electron desktop only) — clicking anywhere on the main-area preview brings the real shared window's owning app to the **foreground** instantly, via a native macOS window-activation call (`NSRunningApplication activateWithOptions:`) — **no input injection, no Accessibility permission required**:
+    - The exact window is identified by its `CGWindowNumber`, parsed directly from the `desktopCapturer` source id Electron already resolved when the window was picked — no fuzzy title matching
+    - BeeHive keeps running behind the activated window; switch back the normal way (Cmd-Tab, Dock, clicking BeeHive) — a subtle "Click to switch to this window" hint shows over the preview
+    - Only applies to **window** shares — entire-screen sharing behaviour is untouched (there's no single window to activate)
+    - Implemented by `electron/beehive-ctl.m`, a tiny one-shot native helper (compiled on demand in dev via `clang`, shipped via `extraResources` in packaged builds)
+  - 🧊 **Floating Control Dock** (Electron desktop only, window shares) — since click-to-focus backgrounds BeeHive's main window, a separate **always-on-top** window keeps the core meeting controls reachable above whatever app is now in front:
+    - Shows: mic mute/unmute, camera on/off, raise/lower hand, previous/next slide (when presenting Keynote/PowerPoint), chat (with unread-DM badge), participants (with live count), active-speaker name, a connection-quality dot, meeting + sharing elapsed timers, **Stop sharing**, and **Leave**
+    - A **separate `BrowserWindow`** (`electron/dock.html`, plain HTML/JS, no React) — it cannot touch the LiveKit `Room` object directly, so actions are relayed through the main process to the main window's renderer (which owns the live connection) and state flows back the same way; state is pushed once per second while the dock is visible
+    - Muting, raising a hand, or stopping the share act **without** stealing focus back to BeeHive, so the presenter can keep looking at the shared app; opening **Chat**, **Participants**, or clicking **Leave** brings BeeHive's main window forward first, since those need a visible UI
+    - Positioned bottom-centre of the primary display, draggable, `skipTaskbar`, visible even over fullscreen apps (`setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })`)
+    - Shown only while sharing a **window** (not entire-screen — no other app is in front to hide controls behind in that case)
   - **Remote share (viewer)**: takes full main area; cameras move to Participants window (auto-opens)
   - **Presentation overlay** — floats over the presentation on both web and desktop:
     - Controls bar, speaker video window, share bar, and Auto Cam all remain visible on top of the presentation
@@ -271,8 +276,7 @@ Non-presentation files dropped on the meeting area go through the standard file 
 - `shell.openPath(filePath)` — open file in native app; `File.path` (Electron-added property) gives the local path
 - `desktopCapturer.getSources()` — enumerate windows/screens with base64 thumbnails (main process, exposed via IPC)
 - `getUserMedia` with `chromeMediaSourceId` — capture a specific window without an OS dialog
-- `beehive-ctl` (`electron/beehive-ctl.m`) — native ObjC helper posting mouse/scroll/keyboard events straight to the shared app's process (`CGEventPostToPid`); driven over stdin/stdout JSON from `electron/screenControl.cjs`; nut-js (`asarUnpack`ed) remains as fallback
-- `systemPreferences.isTrustedAccessibilityClient(prompt)` — gate + prompt for macOS Accessibility permission before control
+- `beehive-ctl` (`electron/beehive-ctl.m`) — tiny one-shot native ObjC helper: given a `CGWindowNumber`, resolves the owning app's PID via `CGWindowListCopyWindowInfo` and brings it to the foreground via `NSRunningApplication activateWithOptions:`; invoked via `execFile`, no persistent process, no special permission required
 - `contextBridge.exposeInMainWorld('electronAPI', …)` — secure renderer bridge
 
 **Running the desktop app (dev):**
@@ -387,6 +391,9 @@ beehive/
 ├── electron/
 │   ├── main.cjs                        # Electron main — beehive:// URL scheme + deep-link handler
 │   ├── preload.cjs                     # contextBridge — exposes electronAPI
+│   ├── beehive-ctl.m                   # native helper — activate a window by CGWindowNumber
+│   ├── dock.html                       # Floating Control Dock UI (plain HTML/JS, separate window)
+│   ├── dockPreload.cjs                 # contextBridge — exposes window.dockAPI to dock.html
 │   └── entitlements.mac.plist          # macOS hardened runtime entitlements
 ├── assets/
 │   └── icon.icns                       # macOS app icon
@@ -655,6 +662,8 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Pop-out — detach the shared presentation into a separate window (web + desktop, viewer + presenter)
 - [x] Laser pointer — broadcast your cursor to all participants over Supabase Realtime
 - [x] Presenter slide control — drive Keynote / PowerPoint from the main area & fullscreen (macOS desktop, AppleScript)
+- [x] Click-to-focus for window shares — click the preview to bring the shared window forward (native window activation, no injection); persistent "You're sharing" indicator with elapsed time + Stop
+- [x] Floating always-on-top Control Dock — mic, camera, raise hand, slide nav, chat (unread badge), participants (count), stop sharing, leave, meeting/share timers, active-speaker name, connection-quality dot — visible above any foreground app while presenting a window
 - [x] Interactive shared-window control — click / scroll / type on the shared window from the preview (Electron desktop, nut-js + Accessibility permission)
 - [x] Meeting ended state — last-to-leave marks room ended; invite link shows summary card, blocks re-join
 - [x] Join / leave notifications in chat

@@ -14,20 +14,35 @@ declare global {
       toggleFullscreen: () => Promise<boolean>
       getFullscreen: () => Promise<boolean>
       onFullscreenChange: (cb: (v: boolean) => void) => () => void
-      control?: {
-        begin: (title: string) => Promise<{ ok: boolean; reason?: string; message?: string; title?: string; titles?: string[]; region?: { left: number; top: number; width: number; height: number } }>
-        refresh: () => Promise<{ ok: boolean }>
-        end: () => Promise<{ ok: boolean }>
-        move: (nx: number, ny: number) => Promise<void>
-        click: (nx: number, ny: number, opts?: { button?: 'left' | 'right' | 'middle'; double?: boolean }) => Promise<void>
-        scroll: (nx: number, ny: number, dx: number, dy: number) => Promise<void>
-        type: (text: string) => Promise<void>
-        key: (key: string, modifiers?: string[]) => Promise<void>
-        accessibility: (prompt: boolean) => Promise<boolean>
-      }
+      // Bring the shared window's owning app to the foreground (native OS window
+      // activation — no input injection, no Accessibility permission needed).
+      // windowId is the CGWindowNumber parsed from the desktopCapturer source id.
+      activateSharedWindow?: (windowId: number) => Promise<{ ok: boolean; reason?: string }>
+      // Floating Control Dock — always-on-top window with core meeting controls,
+      // shown while presenting a window share.
+      showDock?: () => void
+      hideDock?: () => void
+      pushDockState?: (state: DockState) => void
+      onDockAction?: (cb: (action: DockAction) => void) => () => void
     }
   }
 }
+
+interface DockState {
+  micOn: boolean
+  camOn: boolean
+  handRaised: boolean
+  chatUnread: number
+  participantCount: number
+  speakingName: string | null
+  connectionQuality: 'excellent' | 'good' | 'poor' | 'unknown'
+  shareLabel: string
+  shareElapsed: string
+  meetingElapsed: string
+  canControlSlides: boolean
+}
+type DockAction =
+  | { type: 'toggle-mic' | 'toggle-cam' | 'toggle-hand' | 'stop-share' | 'leave' | 'open-chat' | 'open-participants' }
 declare global { interface File { path?: string } }
 
 import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2 } from 'lucide-react'
@@ -824,81 +839,35 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   const [roomHidden, setRoomHidden] = useState(false)
   const stopShareRef = useRef<() => void>()
 
-  // Interactive control of the shared window from the main-area preview (desktop).
-  // Events are posted DIRECTLY to the shared app's process (beehive-ctl helper,
-  // CGEventPostToPid): the physical cursor never moves, the target responds even
-  // behind the BeeHive window, and the meeting controls stay fully usable.
-  const [controlMode, setControlMode] = useState(false)
-  const shareVideoRef = useRef<HTMLVideoElement | null>(null)
-  const controlMoveThrottle = useRef(0)
-  // The shared window's real OS title (desktopCapturer source name) — used to
-  // locate the window for control. The media-track label is generic, so we keep
-  // the source name here when a specific window is shared.
-  const controlWindowTitleRef = useRef('')
-  const canControlShare = !isMobile && !!window.electronAPI?.control && isSharing && !sharingEntireScreen && !!localShareStream
+  // Click-to-focus for window shares: clicking the main-area preview brings the
+  // real shared window (and its owning app) to the foreground via a native OS
+  // activation call (NSRunningApplication) — no input injection, no synthetic
+  // clicks, no Accessibility permission. BeeHive keeps running behind it; the
+  // presenter switches back the normal way (Cmd-Tab, Dock, or clicking BeeHive).
+  // Not used for entire-screen shares — there is no single window to activate,
+  // and the existing full-screen behaviour is left untouched per spec.
+  const controlWindowIdRef = useRef<number | null>(null)
+  const canFocusSharedWindow = !isMobile && !!window.electronAPI?.activateSharedWindow && isSharing && !sharingEntireScreen && controlWindowIdRef.current != null
 
-  // Map a pointer event over the preview <video> (object-fit: contain) to
-  // normalised [0,1] coords within the video content, accounting for the
-  // letterbox bars. Returns null if the pointer is over a bar.
-  const toShareCoords = (e: { clientX: number; clientY: number }): { nx: number; ny: number } | null => {
-    const v = shareVideoRef.current
-    if (!v || !v.videoWidth || !v.videoHeight) return null
-    const rect = v.getBoundingClientRect()
-    const scale = Math.min(rect.width / v.videoWidth, rect.height / v.videoHeight)
-    const cw = v.videoWidth * scale, ch = v.videoHeight * scale
-    const ox = (rect.width - cw) / 2, oy = (rect.height - ch) / 2
-    const cx = e.clientX - rect.left - ox, cy = e.clientY - rect.top - oy
-    if (cx < 0 || cy < 0 || cx > cw || cy > ch) return null
-    return { nx: cx / cw, ny: cy / ch }
-  }
+  const focusSharedWindow = useCallback(() => {
+    if (!canFocusSharedWindow || controlWindowIdRef.current == null) return
+    window.electronAPI?.activateSharedWindow?.(controlWindowIdRef.current)
+  }, [canFocusSharedWindow])
 
-  const toggleControlMode = useCallback(async () => {
-    if (controlMode) {
-      setControlMode(false)
-      window.electronAPI?.control?.end()
-      return
-    }
-    const res = await window.electronAPI?.control?.begin(controlWindowTitleRef.current || shareLabel)
-    if (!res?.ok) {
-      if (res?.reason === 'accessibility') {
-        alert('To control your shared window from here, enable Accessibility for BeeHive:\n\nSystem Settings → Privacy & Security → Accessibility → enable BeeHive, then try again.')
-      } else if (res?.reason === 'window-not-found') {
-        const seen = (res as { titles?: string[] }).titles
-        const list = seen && seen.length ? `\n\nWindows detected:\n• ${seen.join('\n• ')}` : '\n\n(No windows were detected — Accessibility may still be initialising; try again in a moment.)'
-        alert(`Could not match the shared window "${controlWindowTitleRef.current || shareLabel}" to control.${list}`)
-      } else {
-        alert('Could not start control of the shared window.')
-      }
-      return
-    }
-    setControlMode(true)
-  }, [controlMode, shareLabel])
-
-  // Drop control mode if sharing stops or the preview goes away.
+  // Elapsed sharing time, for the persistent "You are sharing" indicator.
+  const shareStartRef = useRef<number | null>(null)
+  const [shareElapsedDisplay, setShareElapsedDisplay] = useState('0:00')
   useEffect(() => {
-    if (controlMode && !canControlShare) {
-      setControlMode(false)
-      window.electronAPI?.control?.end()
-    }
-  }, [controlMode, canControlShare])
-
-  // Keyboard passthrough while controlling: forward keys to the shared window.
-  const handleControlKey = useCallback((e: React.KeyboardEvent) => {
-    const ctl = window.electronAPI?.control
-    if (!ctl) return
-    e.preventDefault()
-    const mods: string[] = []
-    if (e.metaKey) mods.push('cmd')
-    if (e.ctrlKey) mods.push('ctrl')
-    if (e.altKey) mods.push('alt')
-    if (e.shiftKey) mods.push('shift')
-    const special: Record<string, string> = { Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Escape: 'escape', Delete: 'delete', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown', ' ': 'space' }
-    if (special[e.key]) { ctl.key(special[e.key], mods); return }
-    if (e.key.length === 1) {
-      if (e.metaKey || e.ctrlKey || e.altKey) ctl.key(e.key, mods)
-      else ctl.type(e.key)
-    }
-  }, [])
+    if (!isSharing) { shareStartRef.current = null; return }
+    shareStartRef.current = Date.now()
+    setShareElapsedDisplay('0:00')
+    const t = setInterval(() => {
+      const sec = Math.floor((Date.now() - (shareStartRef.current ?? Date.now())) / 1000)
+      const m = Math.floor(sec / 60), s = sec % 60
+      setShareElapsedDisplay(`${m}:${String(s).padStart(2, '0')}`)
+    }, 1000)
+    return () => clearInterval(t)
+  }, [isSharing])
 
   const [overlayMode, setOverlayMode] = useState<'visible' | 'minimized' | 'hidden'>('visible')
   const isPresenting = isSharing || hasRemoteScreenShare
@@ -917,6 +886,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     setSharingEntireScreen(false)
     setShareLabel('')
     setActiveSlot('primary')
+    controlWindowIdRef.current = null
   }, [localParticipant, secondaryStream, localShareStream])
 
   useEffect(() => { stopShareRef.current = stopShare }, [stopShare])
@@ -1207,7 +1177,10 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
 
   const shareDesktopSource = useCallback(async (sourceId: string, isEntireScreen = false, windowTitle = '') => {
     setShowWindowPicker(false)
-    controlWindowTitleRef.current = windowTitle
+    // Electron's desktopCapturer id is "window:<CGWindowNumber>:0" for window
+    // sources on macOS — an exact native window ID, not a guessable title match.
+    const windowIdMatch = /^window:(\d+):/.exec(sourceId)
+    controlWindowIdRef.current = windowIdMatch ? parseInt(windowIdMatch[1], 10) : null
     if (!(await checkScreenPermission())) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1418,6 +1391,80 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
 
   const activeCount = liveKitParticipants.length
 
+  // ============================================================
+  // FLOATING CONTROL DOCK (desktop, window shares only)
+  // ============================================================
+  // Show the always-on-top Control Dock whenever the presenter is sharing a
+  // specific window — that's when clicking the main-area preview backgrounds
+  // BeeHive (see focusSharedWindow above), so the dock keeps the core meeting
+  // controls reachable without switching back. Entire-screen shares don't need
+  // this: there's no other-app foreground to lose BeeHive's controls behind.
+  const showingDock = !isMobile && !!window.electronAPI?.showDock && isSharing && !sharingEntireScreen
+  useEffect(() => {
+    if (showingDock) window.electronAPI?.showDock?.()
+    else window.electronAPI?.hideDock?.()
+  }, [showingDock])
+
+  // Currently-speaking participant (mirrors the logic SpeakingIndicator uses).
+  const speakingName = liveKitParticipants.find(p => p.isSpeaking && p.audioLevel > 0.015)?.name || null
+
+  // Connection quality — polled rather than relying on a specific hook
+  // re-render trigger, so it stays accurate regardless of internal event timing.
+  const [connectionQuality, setConnectionQuality] = useState<DockState['connectionQuality']>('unknown')
+  useEffect(() => {
+    if (!showingDock) return
+    const tick = () => {
+      const q = localParticipant.connectionQuality as string
+      setConnectionQuality(q === 'excellent' ? 'excellent' : q === 'good' ? 'good' : q === 'poor' ? 'poor' : 'unknown')
+    }
+    tick()
+    const t = setInterval(tick, 2000)
+    return () => clearInterval(t)
+  }, [showingDock, localParticipant])
+
+  // Push consolidated state to the dock every second while it's visible —
+  // simplest reliable approach given how many independent pieces of state feed it.
+  useEffect(() => {
+    if (!showingDock) return
+    const push = () => {
+      window.electronAPI?.pushDockState?.({
+        micOn: localParticipant.isMicrophoneEnabled,
+        camOn: localParticipant.isCameraEnabled,
+        handRaised: myHandRaised,
+        chatUnread: dmUnread.size,
+        participantCount: activeCount,
+        speakingName,
+        connectionQuality,
+        shareLabel: shareLabel || (sharingEntireScreen ? 'your entire screen' : 'a window'),
+        shareElapsed: shareElapsedDisplay,
+        meetingElapsed: elapsedDisplay,
+        canControlSlides,
+      })
+    }
+    push()
+    const t = setInterval(push, 1000)
+    return () => clearInterval(t)
+  }, [showingDock, localParticipant, myHandRaised, dmUnread, activeCount, speakingName, connectionQuality, shareLabel, sharingEntireScreen, shareElapsedDisplay, elapsedDisplay, canControlSlides])
+
+  // Actions dispatched from the dock — relayed here since only this renderer
+  // holds the live LiveKit Room connection. Re-subscribes whenever any handler
+  // changes (toggleRaiseHand isn't memoized) so the callback never closes over
+  // stale state like an outdated myHandRaised.
+  useEffect(() => {
+    if (!window.electronAPI?.onDockAction) return
+    return window.electronAPI.onDockAction((action) => {
+      switch (action.type) {
+        case 'toggle-mic': localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled); break
+        case 'toggle-cam': localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled); break
+        case 'toggle-hand': toggleRaiseHand(); break
+        case 'stop-share': stopShare(); break
+        case 'open-chat': setShowChat(true); break
+        case 'open-participants': setShowParticipants(true); break
+        case 'leave': leaveWithNotification(); break
+      }
+    })
+  }, [localParticipant, toggleRaiseHand, stopShare, leaveWithNotification, setShowChat, setShowParticipants])
+
   return (
     <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>
       {/* Header */}
@@ -1532,14 +1579,18 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
           ) : isSharing ? (
-            <div style={{ width: '100%', height: '100%', position: 'relative', background: '#060606' }}>
+            <div
+              style={{ width: '100%', height: '100%', position: 'relative', background: '#060606', cursor: canFocusSharedWindow ? 'pointer' : undefined }}
+              onClick={canFocusSharedWindow ? focusSharedWindow : undefined}
+              title={canFocusSharedWindow ? `Click to switch to ${shareLabel || 'the shared window'}` : undefined}
+            >
               {localShareStream && !sharingEntireScreen ? (
                 <video
-                  ref={el => { shareVideoRef.current = el; if (el && el.srcObject !== localShareStream) { el.srcObject = localShareStream; el.play().catch(() => {}) } }}
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   muted
                   playsInline
                   autoPlay
+                  ref={el => { if (el && el.srcObject !== localShareStream) { el.srcObject = localShareStream; el.play().catch(() => {}) } }}
                 />
               ) : (
                 <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
@@ -1554,37 +1605,29 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                   )}
                 </div>
               )}
-              <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)', border: '1px solid #48bb78', borderRadius: 20, padding: '4px 10px' }}>
-                <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48bb78', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                <span style={{ color: '#48bb78', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>LIVE</span>
+
+              {/* Persistent sharing indicator — "you are sharing" + what + elapsed
+                  time + quick Stop. Always visible while sharing, unobtrusive. */}
+              <div style={{ position: 'absolute', top: 14, left: 14, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)', border: '1px solid #48bb78', borderRadius: 20, padding: '5px 8px 5px 12px' }} onClick={e => e.stopPropagation()}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48bb78', animation: 'pulse 1.5s ease-in-out infinite', flexShrink: 0 }} />
+                <span style={{ color: '#48bb78', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
+                  You're sharing {sharingEntireScreen ? 'your entire screen' : shareLabel ? `“${shareLabel}”` : 'a window'}
+                </span>
+                <span style={{ color: '#48bb78', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", opacity: 0.75, whiteSpace: 'nowrap' }}>{shareElapsedDisplay}</span>
+                <button
+                  onClick={stopShare}
+                  title="Stop sharing"
+                  style={{ background: 'rgba(197,48,48,0.18)', border: '1px solid rgba(229,115,115,0.5)', borderRadius: 12, color: '#e57373', fontSize: 10, fontWeight: 600, fontFamily: "'Roboto', sans-serif", padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  Stop
+                </button>
               </div>
 
-              {/* Interactive control overlay — forwards click/scroll/keys to the
-                  shared window. Plain overlay (no pointer lock) so the meeting
-                  controls stay usable. */}
-              {controlMode && (
-                <div
-                  tabIndex={0}
-                  ref={el => el?.focus()}
-                  onPointerMove={e => {
-                    const now = performance.now()
-                    if (now - controlMoveThrottle.current < 33) return
-                    controlMoveThrottle.current = now
-                    const c = toShareCoords(e)
-                    if (c) window.electronAPI?.control?.move(c.nx, c.ny)
-                  }}
-                  onClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny) }}
-                  onDoubleClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { double: true }) }}
-                  onContextMenu={e => { e.preventDefault(); const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { button: 'right' }) }}
-                  onWheel={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.scroll(c.nx, c.ny, e.deltaX, e.deltaY) }}
-                  onKeyDown={handleControlKey}
-                  style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'crosshair', outline: 'none' }}
-                />
-              )}
-              {controlMode && (
-                <div style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(66,153,225,0.18)', backdropFilter: 'blur(6px)', border: '1px solid #4299e1', borderRadius: 20, padding: '4px 12px', zIndex: 21, pointerEvents: 'none' }}>
+              {/* Click-to-focus hint — window shares only; entire-screen is untouched. */}
+              {canFocusSharedWindow && (
+                <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(66,153,225,0.16)', backdropFilter: 'blur(6px)', border: '1px solid rgba(66,153,225,0.5)', borderRadius: 18, padding: '5px 12px', pointerEvents: 'none' }}>
                   <MousePointer2 size={12} color="#4299e1" />
-                  <span style={{ color: '#4299e1', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>CONTROLLING</span>
+                  <span style={{ color: '#9cc9f5', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif" }}>Click to switch to this window</span>
                 </div>
               )}
             </div>
@@ -1612,17 +1655,6 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                   style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: laserActive ? `${myColor}33` : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${laserActive ? myColor : '#333'}`, borderRadius: 8, color: laserActive ? myColor : '#ccc', cursor: 'pointer' }}
                 >
                   <Crosshair size={17} />
-                </button>
-              )}
-              {/* Control shared window — desktop only, while sharing a window.
-                  Forwards mouse/scroll/keyboard from this preview to the source. */}
-              {canControlShare && (
-                <button
-                  onClick={toggleControlMode}
-                  title={controlMode ? 'Stop controlling the shared window' : 'Control the shared window from here'}
-                  style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: controlMode ? 'rgba(66,153,225,0.25)' : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${controlMode ? '#4299e1' : '#333'}`, borderRadius: 8, color: controlMode ? '#4299e1' : '#ccc', cursor: 'pointer' }}
-                >
-                  <MousePointer2 size={17} />
                 </button>
               )}
               {/* Pop-out presentation — desktop only. Hidden for a local entire-screen

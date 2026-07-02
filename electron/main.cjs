@@ -201,6 +201,21 @@ ipcMain.handle('toggle-fullscreen', () => {
 ipcMain.handle('get-fullscreen', () => mainWindow?.isFullScreen() ?? false)
 
 // ---------------------------------------------------------------------------
+// IPC: screen control — drive the shared window's mouse/keyboard from the
+// BeeHive preview. Requires macOS Accessibility permission (input injection).
+// ---------------------------------------------------------------------------
+const screenControl = require('./screenControl.cjs')
+ipcMain.handle('control-begin', (_, title) => screenControl.begin(title))
+ipcMain.handle('control-refresh', () => screenControl.refresh())
+ipcMain.handle('control-end', () => screenControl.end())
+ipcMain.handle('control-move', (_, nx, ny) => screenControl.move(nx, ny))
+ipcMain.handle('control-click', (_, nx, ny, opts) => screenControl.click(nx, ny, opts))
+ipcMain.handle('control-scroll', (_, dx, dy) => screenControl.scroll(dx, dy))
+ipcMain.handle('control-type', (_, text) => screenControl.typeText(text))
+ipcMain.handle('control-key', (_, key, modifiers) => screenControl.pressKey(key, modifiers))
+ipcMain.handle('control-accessibility', (_, prompt) => screenControl.isAccessibilityTrusted(prompt))
+
+// ---------------------------------------------------------------------------
 // IPC: drive the presenter's slideshow (next / previous slide).
 // Uses AppleScript so it works even while BeeHive is the front window — no
 // native key-injection module required. Targets Keynote first, then

@@ -34,4 +34,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('fullscreen-change', handler)
     return () => ipcRenderer.off('fullscreen-change', handler)
   },
+
+  // Drive the shared window's mouse/keyboard from the BeeHive preview.
+  // Coords are normalised [0,1] within the shared video's content area.
+  control: {
+    begin: (title) => ipcRenderer.invoke('control-begin', title),
+    refresh: () => ipcRenderer.invoke('control-refresh'),
+    end: () => ipcRenderer.invoke('control-end'),
+    move: (nx, ny) => ipcRenderer.invoke('control-move', nx, ny),
+    click: (nx, ny, opts) => ipcRenderer.invoke('control-click', nx, ny, opts),
+    scroll: (dx, dy) => ipcRenderer.invoke('control-scroll', dx, dy),
+    type: (text) => ipcRenderer.invoke('control-type', text),
+    key: (key, modifiers) => ipcRenderer.invoke('control-key', key, modifiers),
+    accessibility: (prompt) => ipcRenderer.invoke('control-accessibility', prompt),
+  },
 })

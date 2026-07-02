@@ -33,6 +33,7 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Meeting Intelligence | Fathom API |
 | Background AI | MediaPipe Selfie Segmentation |
 | Desktop | Electron 42 + electron-builder |
+| Input control | nut-js (`@nut-tree-fork/nut-js`) — drive shared window from preview |
 
 ---
 
@@ -188,6 +189,12 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - Controls bar: `maxWidth: 96vw; flexWrap: wrap` — all buttons remain accessible on narrow screens (13" MacBook)
   - Active share bar: source label, **Add Window**, **Switch** (live `replaceTrack`), **Stop Sharing**
   - **Local share (presenter)**: main area shows live `<video>` preview of the shared stream with a pulsing **LIVE** badge — no mirror echo; fallback "Broadcasting…" shown while stream initialises
+  - 🖱️ **Interactive control of the shared window** (Electron desktop only, window share) — the presenter can drive the window they're sharing **directly from BeeHive's preview**, without switching back to it:
+    - Toggle the **cursor** button (top-right of the main area) to enter control mode; a blue **CONTROLLING** badge appears
+    - Move / **click** / right-click / **scroll** and **type** in the preview → forwarded to the real window (mouse, wheel, keyboard incl. ⌘/⌃ combos)
+    - Coordinates are mapped from the preview (accounting for `object-fit: contain` letterboxing) to the shared window's on-screen region, resolved via nut-js `getWindows()`
+    - Injected with `nut-js` in the Electron main process over IPC; requires macOS **Accessibility** permission (prompted on first use)
+    - Only available for a **window** share (not entire-screen, which would create a control feedback loop); auto-disables when sharing stops
   - **Remote share (viewer)**: takes full main area; cameras move to Participants window (auto-opens)
   - **Presentation overlay** — floats over the presentation on both web and desktop:
     - Controls bar, speaker video window, share bar, and Auto Cam all remain visible on top of the presentation
@@ -263,6 +270,8 @@ Non-presentation files dropped on the meeting area go through the standard file 
 - `shell.openPath(filePath)` — open file in native app; `File.path` (Electron-added property) gives the local path
 - `desktopCapturer.getSources()` — enumerate windows/screens with base64 thumbnails (main process, exposed via IPC)
 - `getUserMedia` with `chromeMediaSourceId` — capture a specific window without an OS dialog
+- `nut-js` (`getWindows`, `mouse`, `keyboard`) — inject mouse/scroll/keyboard into the shared window (`electron/screenControl.cjs`); native `.node` binaries are `asarUnpack`ed for packaged builds
+- `systemPreferences.isTrustedAccessibilityClient(prompt)` — gate + prompt for macOS Accessibility permission before control
 - `contextBridge.exposeInMainWorld('electronAPI', …)` — secure renderer bridge
 
 **Running the desktop app (dev):**
@@ -645,6 +654,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Pop-out — detach the shared presentation into a separate window (web + desktop, viewer + presenter)
 - [x] Laser pointer — broadcast your cursor to all participants over Supabase Realtime
 - [x] Presenter slide control — drive Keynote / PowerPoint from the main area & fullscreen (macOS desktop, AppleScript)
+- [x] Interactive shared-window control — click / scroll / type on the shared window from the preview (Electron desktop, nut-js + Accessibility permission)
 - [x] Meeting ended state — last-to-leave marks room ended; invite link shows summary card, blocks re-join
 - [x] Join / leave notifications in chat
 - [x] Auto-end when alone for 10 minutes (countdown banner with Stay option)

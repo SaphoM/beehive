@@ -14,12 +14,23 @@ declare global {
       toggleFullscreen: () => Promise<boolean>
       getFullscreen: () => Promise<boolean>
       onFullscreenChange: (cb: (v: boolean) => void) => () => void
+      control?: {
+        begin: (title: string) => Promise<{ ok: boolean; reason?: string; message?: string; title?: string; region?: { left: number; top: number; width: number; height: number } }>
+        refresh: () => Promise<{ ok: boolean }>
+        end: () => Promise<{ ok: boolean }>
+        move: (nx: number, ny: number) => Promise<void>
+        click: (nx: number, ny: number, opts?: { button?: 'left' | 'right' | 'middle'; double?: boolean }) => Promise<void>
+        scroll: (dx: number, dy: number) => Promise<void>
+        type: (text: string) => Promise<void>
+        key: (key: string, modifiers?: string[]) => Promise<void>
+        accessibility: (prompt: boolean) => Promise<boolean>
+      }
     }
   }
 }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX } from 'lucide-react'
+import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2 } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -813,6 +824,55 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   const [roomHidden, setRoomHidden] = useState(false)
   const stopShareRef = useRef<() => void>()
 
+  // Interactive control of the shared window from the main-area preview (desktop).
+  const [controlMode, setControlMode] = useState(false)
+  const shareVideoRef = useRef<HTMLVideoElement | null>(null)
+  const controlMoveThrottle = useRef(0)
+  const canControlShare = !isMobile && !!window.electronAPI?.control && isSharing && !sharingEntireScreen && !!localShareStream
+
+  // Map a pointer event over the preview <video> (object-fit: contain) to
+  // normalised [0,1] coords within the actual video content, accounting for the
+  // letterbox bars. Returns null if the pointer is over a bar (outside content).
+  const toShareCoords = (e: { clientX: number; clientY: number }): { nx: number; ny: number } | null => {
+    const v = shareVideoRef.current
+    if (!v || !v.videoWidth || !v.videoHeight) return null
+    const rect = v.getBoundingClientRect()
+    const scale = Math.min(rect.width / v.videoWidth, rect.height / v.videoHeight)
+    const cw = v.videoWidth * scale, ch = v.videoHeight * scale
+    const ox = (rect.width - cw) / 2, oy = (rect.height - ch) / 2
+    const cx = e.clientX - rect.left - ox, cy = e.clientY - rect.top - oy
+    if (cx < 0 || cy < 0 || cx > cw || cy > ch) return null
+    return { nx: cx / cw, ny: cy / ch }
+  }
+
+  const toggleControlMode = useCallback(async () => {
+    if (controlMode) {
+      setControlMode(false)
+      window.electronAPI?.control?.end()
+      return
+    }
+    const res = await window.electronAPI?.control?.begin(shareLabel)
+    if (!res?.ok) {
+      if (res?.reason === 'accessibility') {
+        alert('To control your shared window from here, enable Accessibility for BeeHive:\n\nSystem Settings → Privacy & Security → Accessibility → enable BeeHive, then try again.')
+      } else if (res?.reason === 'window-not-found') {
+        alert('Could not locate the shared window to control. Make sure it is still open, then try again.')
+      } else {
+        alert('Could not start control of the shared window.')
+      }
+      return
+    }
+    setControlMode(true)
+  }, [controlMode, shareLabel])
+
+  // Drop control mode if sharing stops or the preview goes away.
+  useEffect(() => {
+    if (controlMode && !canControlShare) {
+      setControlMode(false)
+      window.electronAPI?.control?.end()
+    }
+  }, [controlMode, canControlShare])
+
   const [overlayMode, setOverlayMode] = useState<'visible' | 'minimized' | 'hidden'>('visible')
   const isPresenting = isSharing || hasRemoteScreenShare
 
@@ -1446,7 +1506,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
             <div style={{ width: '100%', height: '100%', position: 'relative', background: '#060606' }}>
               {localShareStream && !sharingEntireScreen ? (
                 <video
-                  ref={el => { if (el && el.srcObject !== localShareStream) { el.srcObject = localShareStream; el.play().catch(() => {}) } }}
+                  ref={el => { shareVideoRef.current = el; if (el && el.srcObject !== localShareStream) { el.srcObject = localShareStream; el.play().catch(() => {}) } }}
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   muted
                   playsInline
@@ -1469,6 +1529,46 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                 <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48bb78', animation: 'pulse 1.5s ease-in-out infinite' }} />
                 <span style={{ color: '#48bb78', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>LIVE</span>
               </div>
+
+              {/* Interactive control overlay — forwards mouse/scroll/keyboard to the
+                  shared window so the presenter can drive it from here (desktop). */}
+              {controlMode && (
+                <div
+                  tabIndex={0}
+                  ref={el => el?.focus()}
+                  onPointerMove={e => {
+                    const now = performance.now()
+                    if (now - controlMoveThrottle.current < 33) return
+                    controlMoveThrottle.current = now
+                    const c = toShareCoords(e)
+                    if (c) window.electronAPI?.control?.move(c.nx, c.ny)
+                  }}
+                  onClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny) }}
+                  onContextMenu={e => { e.preventDefault(); const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { button: 'right' }) }}
+                  onWheel={e => { window.electronAPI?.control?.scroll(e.deltaX, e.deltaY) }}
+                  onKeyDown={e => {
+                    e.preventDefault()
+                    const mods: string[] = []
+                    if (e.metaKey) mods.push('cmd')
+                    if (e.ctrlKey) mods.push('ctrl')
+                    if (e.altKey) mods.push('alt')
+                    if (e.shiftKey) mods.push('shift')
+                    const special: Record<string, string> = { Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Escape: 'escape', Delete: 'delete', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown', ' ': 'space' }
+                    if (special[e.key]) { window.electronAPI?.control?.key(special[e.key], mods); return }
+                    if (e.key.length === 1) {
+                      if (e.metaKey || e.ctrlKey || e.altKey) window.electronAPI?.control?.key(e.key, mods)
+                      else window.electronAPI?.control?.type(e.key)
+                    }
+                  }}
+                  style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'crosshair', outline: 'none' }}
+                />
+              )}
+              {controlMode && (
+                <div style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(66,153,225,0.18)', backdropFilter: 'blur(6px)', border: '1px solid #4299e1', borderRadius: 20, padding: '4px 12px', zIndex: 21, pointerEvents: 'none' }}>
+                  <MousePointer2 size={12} color="#4299e1" />
+                  <span style={{ color: '#4299e1', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>CONTROLLING</span>
+                </div>
+              )}
             </div>
           ) : (
             <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
@@ -1494,6 +1594,17 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                   style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: laserActive ? `${myColor}33` : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${laserActive ? myColor : '#333'}`, borderRadius: 8, color: laserActive ? myColor : '#ccc', cursor: 'pointer' }}
                 >
                   <Crosshair size={17} />
+                </button>
+              )}
+              {/* Control shared window — desktop only, while sharing a window.
+                  Forwards mouse/scroll/keyboard from this preview to the source. */}
+              {canControlShare && (
+                <button
+                  onClick={toggleControlMode}
+                  title={controlMode ? 'Stop controlling the shared window' : 'Control the shared window from here'}
+                  style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: controlMode ? 'rgba(66,153,225,0.25)' : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${controlMode ? '#4299e1' : '#333'}`, borderRadius: 8, color: controlMode ? '#4299e1' : '#ccc', cursor: 'pointer' }}
+                >
+                  <MousePointer2 size={17} />
                 </button>
               )}
               {/* Pop-out presentation — desktop only. Hidden for a local entire-screen

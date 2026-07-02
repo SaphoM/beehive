@@ -11,7 +11,8 @@
     "dev:frontend": "vite",
     "dev": "vite",
     "electron:dev": "concurrently --kill-others \"npm run dev:backend\" \"npm run dev:frontend\" \"electron .\"",
-    "electron:build:mac": "vite build && electron-builder --mac",
+    "build:ctl": "mkdir -p electron/bin && clang -fobjc-arc -O2 -framework AppKit -framework ApplicationServices -o electron/bin/beehive-ctl electron/beehive-ctl.m",
+    "electron:build:mac": "npm run build:ctl && vite build && electron-builder --mac",
     "electron:build:win": "vite build && electron-builder --win",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -64,6 +65,12 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",
+      "extraResources": [
+        {
+          "from": "electron/bin/beehive-ctl",
+          "to": "beehive-ctl"
+        }
+      ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "electron/entitlements.mac.plist",

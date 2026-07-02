@@ -825,11 +825,12 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   const stopShareRef = useRef<() => void>()
 
   // Interactive control of the shared window from the main-area preview (desktop).
-  // Simple model: a plain overlay over the preview forwards click/scroll/keys to
-  // the shared window (nut-js). No pointer lock, so the meeting controls stay
-  // fully usable; no continuous cursor tracking, so nothing bounces.
+  // Events are posted DIRECTLY to the shared app's process (beehive-ctl helper,
+  // CGEventPostToPid): the physical cursor never moves, the target responds even
+  // behind the BeeHive window, and the meeting controls stay fully usable.
   const [controlMode, setControlMode] = useState(false)
   const shareVideoRef = useRef<HTMLVideoElement | null>(null)
+  const controlMoveThrottle = useRef(0)
   // The shared window's real OS title (desktopCapturer source name) — used to
   // locate the window for control. The media-track label is generic, so we keep
   // the source name here when a specific window is shared.
@@ -1565,6 +1566,13 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                 <div
                   tabIndex={0}
                   ref={el => el?.focus()}
+                  onPointerMove={e => {
+                    const now = performance.now()
+                    if (now - controlMoveThrottle.current < 33) return
+                    controlMoveThrottle.current = now
+                    const c = toShareCoords(e)
+                    if (c) window.electronAPI?.control?.move(c.nx, c.ny)
+                  }}
                   onClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny) }}
                   onDoubleClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { double: true }) }}
                   onContextMenu={e => { e.preventDefault(); const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { button: 'right' }) }}

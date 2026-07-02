@@ -33,7 +33,7 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Meeting Intelligence | Fathom API |
 | Background AI | MediaPipe Selfie Segmentation |
 | Desktop | Electron 42 + electron-builder |
-| Input control | nut-js (`@nut-tree-fork/nut-js`) — drive shared window from preview |
+| Input control | `beehive-ctl` native helper (CGEventPostToPid) + nut-js fallback — drive shared window from preview |
 
 ---
 
@@ -191,9 +191,10 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - **Local share (presenter)**: main area shows live `<video>` preview of the shared stream with a pulsing **LIVE** badge — no mirror echo; fallback "Broadcasting…" shown while stream initialises
   - 🖱️ **Interactive control of the shared window** (Electron desktop only, window share) — the presenter can drive the window they're sharing **directly from BeeHive's preview**, without switching back to it:
     - Toggle the **cursor** button (top-right of the main area) to enter control mode; a blue **CONTROLLING** badge appears
-    - Move / **click** / right-click / **scroll** and **type** in the preview → forwarded to the real window (mouse, wheel, keyboard incl. ⌘/⌃ combos)
-    - Coordinates are mapped from the preview (accounting for `object-fit: contain` letterboxing) to the shared window's on-screen region, resolved via nut-js `getWindows()`
-    - Injected with `nut-js` in the Electron main process over IPC; requires macOS **Accessibility** permission (prompted on first use)
+    - Hover / **click** / double-click / right-click / **scroll** and **type** in the preview → forwarded to the real window (mouse, wheel, keyboard incl. ⌘/⌃ combos)
+    - Events are posted **directly to the shared app's process** via the `beehive-ctl` native helper (`CGEventPostToPid`): the physical cursor never moves, the target responds even while behind the BeeHive window, and BeeHive keeps focus so meeting controls stay usable
+    - Coordinates are mapped from the preview (accounting for `object-fit: contain` letterboxing) to the window's live on-screen bounds (re-read per action, so moved windows stay accurate)
+    - Helper is compiled on demand in dev (clang) and shipped via `extraResources` in packaged builds; falls back to nut-js cursor injection if unavailable; requires macOS **Accessibility** permission (prompted on first use)
     - Only available for a **window** share (not entire-screen, which would create a control feedback loop); auto-disables when sharing stops
   - **Remote share (viewer)**: takes full main area; cameras move to Participants window (auto-opens)
   - **Presentation overlay** — floats over the presentation on both web and desktop:
@@ -270,7 +271,7 @@ Non-presentation files dropped on the meeting area go through the standard file 
 - `shell.openPath(filePath)` — open file in native app; `File.path` (Electron-added property) gives the local path
 - `desktopCapturer.getSources()` — enumerate windows/screens with base64 thumbnails (main process, exposed via IPC)
 - `getUserMedia` with `chromeMediaSourceId` — capture a specific window without an OS dialog
-- `nut-js` (`getWindows`, `mouse`, `keyboard`) — inject mouse/scroll/keyboard into the shared window (`electron/screenControl.cjs`); native `.node` binaries are `asarUnpack`ed for packaged builds
+- `beehive-ctl` (`electron/beehive-ctl.m`) — native ObjC helper posting mouse/scroll/keyboard events straight to the shared app's process (`CGEventPostToPid`); driven over stdin/stdout JSON from `electron/screenControl.cjs`; nut-js (`asarUnpack`ed) remains as fallback
 - `systemPreferences.isTrustedAccessibilityClient(prompt)` — gate + prompt for macOS Accessibility permission before control
 - `contextBridge.exposeInMainWorld('electronAPI', …)` — secure renderer bridge
 

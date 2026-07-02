@@ -24,16 +24,6 @@ export interface Profile {
   updated_at: string
 }
 
-export interface InvitationRecord {
-  id: string
-  token: string
-  invited_email: string
-  invited_by: string
-  room_id: string | null
-  status: 'pending' | 'accepted' | 'expired' | 'revoked'
-  expires_at: string
-}
-
 // ============================================================
 // useAuth — session listener, magic link, OTP
 // ============================================================
@@ -105,46 +95,6 @@ export function useProfile(userId: string | null) {
   }, [userId])
 
   return { profile, loading, updateProfile }
-}
-
-// ============================================================
-// useIsAdmin — resolves the is_admin() DB function
-// ============================================================
-export function useIsAdmin(userId: string | null) {
-  const [isAdmin, setIsAdmin] = useState(false)
-
-  useEffect(() => {
-    if (!userId) { setIsAdmin(false); return }
-    supabase.rpc('is_admin').then(({ data }) => setIsAdmin(!!data))
-  }, [userId])
-
-  return isAdmin
-}
-
-// ============================================================
-// useInvitation — validate a token via backend
-// ============================================================
-export function useInvitation(token: string | null) {
-  const [invitation, setInvitation] = useState<InvitationRecord | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!token) return
-    setLoading(true)
-    const base = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
-      ? 'http://localhost:3001' : ''
-    fetch(`${base}/api/invitations/validate/${token}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.error) { setError(data.error); setInvitation(null) }
-        else setInvitation(data as InvitationRecord)
-      })
-      .catch(() => setError('Could not validate invitation'))
-      .finally(() => setLoading(false))
-  }, [token])
-
-  return { invitation, loading, error }
 }
 
 // ============================================================

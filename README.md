@@ -65,6 +65,13 @@ Admin role is assigned automatically by the seed script. New self-registered use
 
 **Electron deep-link:** Magic links redirect to `beehive://auth/confirm#token=…`. Electron intercepts the URL scheme, extracts the token from the hash, and loads it into the renderer so Supabase can establish the session automatically.
 
+**Web → Desktop sign-in handoff** (`components/DesktopHandoff.tsx`): an **"Open in desktop app"** button on the web lobby lets a signed-in web user continue in the BeeHive desktop app without re-entering their email:
+- Clicking it navigates to `beehive://auth/confirm#access_token=…&refresh_token=…` — the desktop app picks up the hash and establishes the same session (`AuthGate` calls `supabase.auth.setSession(...)` explicitly, so it doesn't depend on Supabase's automatic `detectSessionInUrl`)
+- Tokens travel in the URL **hash**, never sent to a server or logged
+- If the desktop app isn't installed, the OS silently ignores the `beehive://` navigation — nothing breaks
+- Only rendered in a real browser — it never appears inside the Electron app itself (`canOfferDesktopHandoff()` checks for `window.electronAPI`)
+- Fully optional: a web-only user can simply ignore the button and keep using the web app
+
 **Supabase URL configuration (required for production):**
 - Site URL → `https://beehive-fu8w.onrender.com`
 - Redirect URLs → `https://beehive-fu8w.onrender.com/**`, `http://localhost:5173/**`
@@ -96,6 +103,7 @@ Anyone in a meeting can invite anyone else — no account required on either sid
 - **Post-meeting register** — guests who joined via room link are prompted to register when they return to the lobby after a meeting ends (same card-flip animation)
 - **User strip** — authenticated users see their name and a Sign out button at the top of the lobby card
 - **Recent meetings** — expandable Fathom panel showing AI-summarised past meetings
+- **Open in desktop app** — web-only button below "Recent meetings"; hands off the signed-in session to the BeeHive desktop app via the `beehive://` deep link (see [Authentication](#authentication))
 
 ### In Meeting
 
@@ -277,7 +285,8 @@ Non-presentation files dropped on the meeting area go through the standard file 
 - `desktopCapturer.getSources()` — enumerate windows/screens with base64 thumbnails (main process, exposed via IPC)
 - `getUserMedia` with `chromeMediaSourceId` — capture a specific window without an OS dialog
 - `beehive-ctl` (`electron/beehive-ctl.m`) — tiny one-shot native ObjC helper: given a `CGWindowNumber`, resolves the owning app's PID via `CGWindowListCopyWindowInfo` and brings it to the foreground via `NSRunningApplication activateWithOptions:`; invoked via `execFile`, no persistent process, no special permission required
-- `contextBridge.exposeInMainWorld('electronAPI', …)` — secure renderer bridge
+- A second `BrowserWindow` (`electron/dock.html` + `dockPreload.cjs`) — the always-on-top Control Dock; `contextBridge.exposeInMainWorld('dockAPI', …)` exposes a separate, narrower bridge for that window
+- `contextBridge.exposeInMainWorld('electronAPI', …)` — secure renderer bridge for the main window
 
 **Running the desktop app (dev):**
 ```bash
@@ -328,7 +337,6 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 ### Security
 - Row Level Security (RLS) on all Supabase tables
 - Passwordless auth — no password storage, no brute-force surface
-- Invitation tokens: 32-byte cryptographically random, 7-day expiry, single-use, revocable
 - Anon-safe participant tracking (no login required for `?room=` invite links)
 - Fathom API key proxied through backend (never reaches client)
 - Electron: `contextIsolation: true`, `nodeIntegration: false`, `contextBridge` only
@@ -344,10 +352,6 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 | `POST` | `/api/livekit/webhook` | LiveKit webhook receiver (`egress_ended`, `participant_left`) |
 | `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
 | `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
-| `POST` | `/api/invitations` | Create invitation; body: `{ invited_email, room_id? }`; auth required |
-| `GET` | `/api/invitations/validate/:token` | Validate token without redeeming; returns invitation record |
-| `POST` | `/api/invitations/redeem/:token` | Mark invitation accepted; auth required |
-| `DELETE` | `/api/invitations/:id` | Revoke invitation; auth required (owner or admin) |
 | `GET` | `/health` | Health check — `{ status: 'ok' }` |
 
 > File uploads go directly from the browser to **Supabase Storage** using the anon key — no backend route needed.
@@ -364,7 +368,7 @@ beehive/
 ├── components/                         # UI components & shared modules
 │   ├── AuthGate.tsx                    #   auth wrapper; ?room= bypasses gate
 │   ├── AuthScreen.tsx                  #   magic link + OTP sign-in / register UI
-│   ├── InviteModal.tsx                 #   in-meeting invitation creator
+│   ├── InviteModal.tsx                 #   plain ?room=ROOM_ID link + copy button
 │   ├── Lobby.tsx                       #   lobby (Start Now / Schedule + card-flip register)
 │   ├── SchedulePanel.tsx               #   schedule + email-invite panel
 │   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
@@ -375,14 +379,16 @@ beehive/
 │   ├── ScreenShareMenu.tsx             #   pre-share menu
 │   ├── ScreenShareBar.tsx              #   active-share bar
 │   ├── ElectronWindowPicker.tsx        #   desktop window picker
+│   ├── ReactionComposer.tsx            #   long-press emoji reaction composer popover
+│   ├── DesktopHandoff.tsx              #   web → desktop sign-in handoff (beehive:// deep link)
 │   ├── roomUtils.ts                    #   constants, helpers, drawVirtualScene
 │   └── roomStyles.ts                   #   shared `s` styles object
-├── livekit_react_hooks.tsx             # Hooks: useAuth, useProfile, useIsAdmin,
-│                                       #   useInvitation, useCreateRoom, useJoinRoom,
-│                                       #   useRoomInfo, useParticipants, useChat,
-│                                       #   useRecordings, useFathomMeetings, useFathomTranscript
-├── livekit_node_backend.js             # Express API: token, webhooks, Fathom proxy,
-│                                       #   invitation CRUD with Clerk-style auth validation
+├── livekit_react_hooks.tsx             # Hooks: useAuth, useProfile, useCreateRoom,
+│                                       #   useJoinRoom, useRoomInfo, useParticipants,
+│                                       #   useChat, useRecordings, useFathomMeetings,
+│                                       #   useFathomTranscript
+├── livekit_node_backend.js             # Express API: LiveKit token generation,
+│                                       #   LiveKit webhook receiver, Fathom proxy
 ├── supabase/
 │   └── migrations/
 │       └── 001_auth_system.sql         # Auth schema additions (applied)
@@ -428,7 +434,7 @@ beehive/
 | `profiles` | Canonical post-auth identity (`id = auth.users.id`); `full_name`, `avatar_url`; auto-created on signup via trigger |
 | `roles` | `admin` / `user` roles |
 | `user_roles` | User ↔ Role junction; default `user` role assigned on signup |
-| `invitations` | Tokenised invitations with expiry, status machine, and audit trail |
+| `invitations` | *(legacy)* Tokenised invitation schema — table still exists in the migration, but the app no longer reads/writes it; invites are now plain `?room=ROOM_ID` links (see [Invitations](#invitations)) |
 
 ---
 
@@ -441,13 +447,13 @@ React Frontend (Vite — default :5173)
         │
         ├── Supabase (state, RLS, Realtime)
         │         └── PostgreSQL — rooms, participants, chat, recordings,
-        │                          profiles, roles, user_roles, invitations
+        │                          profiles, roles, user_roles
         │         └── Storage — shared-files bucket (file uploads)
         │
         └── /api/* → Node.js Backend (:3001)
                         ├── LiveKit Server SDK — token generation
                         │         └── LiveKit Cloud — media (WebRTC)
-                        ├── Invitation API — create / validate / redeem / revoke
+                        ├── LiveKit webhook receiver — recordings, participant-left
                         └── Fathom API proxy — meeting intelligence
 
 Electron (desktop)
@@ -650,9 +656,10 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 ## Roadmap
 
 - [x] Authentication — Magic Link + Email OTP (no passwords); AuthGate; frictionless `?room=` join; post-meeting register CTA with card-flip animation
-- [x] Invitation system — tokenised invitations, 7-day expiry, single-use, revocable; `InviteModal` in meeting controls
+- [x] Invitation system — plain `?room=ROOM_ID` links, open to anyone, no account required; `InviteModal` in meeting controls (superseded the earlier tokenised-invitation backend, which has been removed)
 - [x] User roles — `admin` / `user`; auto-assigned on signup; `is_admin()` RLS helper
 - [x] Electron deep-link — `beehive://` URL scheme intercepts magic-link redirects
+- [x] Web → desktop sign-in handoff — "Open in desktop app" button on the web lobby hands off the live session via `beehive://` (web-only, optional)
 - [ ] Host role — host/co-host permissions
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled, renameable, group mute
@@ -664,7 +671,6 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Presenter slide control — drive Keynote / PowerPoint from the main area & fullscreen (macOS desktop, AppleScript)
 - [x] Click-to-focus for window shares — click the preview to bring the shared window forward (native window activation, no injection); persistent "You're sharing" indicator with elapsed time + Stop
 - [x] Floating always-on-top Control Dock — mic, camera, raise hand, slide nav, chat (unread badge), participants (count), stop sharing, leave, meeting/share timers, active-speaker name, connection-quality dot — visible above any foreground app while presenting a window
-- [x] Interactive shared-window control — click / scroll / type on the shared window from the preview (Electron desktop, nut-js + Accessibility permission)
 - [x] Meeting ended state — last-to-leave marks room ended; invite link shows summary card, blocks re-join
 - [x] Join / leave notifications in chat
 - [x] Auto-end when alone for 10 minutes (countdown banner with Stay option)

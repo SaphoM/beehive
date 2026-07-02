@@ -825,28 +825,31 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   const stopShareRef = useRef<() => void>()
 
   // Interactive control of the shared window from the main-area preview (desktop).
+  // Uses Pointer Lock: while controlling, the physical cursor is locked+hidden and
+  // we drive a virtual pointer from relative mouse deltas — so warping the shared
+  // window's cursor never yanks the OS cursor around / bounces the pointer.
   const [controlMode, setControlMode] = useState(false)
+  const [pointerLocked, setPointerLocked] = useState(false)
+  const [controlCursor, setControlCursor] = useState({ x: 0.5, y: 0.5 })
   const shareVideoRef = useRef<HTMLVideoElement | null>(null)
-  const controlMoveThrottle = useRef(0)
+  const controlOverlayRef = useRef<HTMLDivElement | null>(null)
+  const controlPos = useRef({ x: 0.5, y: 0.5 })
   // The shared window's real OS title (desktopCapturer source name) — used to
   // locate the window for control. The media-track label is generic, so we keep
   // the source name here when a specific window is shared.
   const controlWindowTitleRef = useRef('')
   const canControlShare = !isMobile && !!window.electronAPI?.control && isSharing && !sharingEntireScreen && !!localShareStream
 
-  // Map a pointer event over the preview <video> (object-fit: contain) to
-  // normalised [0,1] coords within the actual video content, accounting for the
-  // letterbox bars. Returns null if the pointer is over a bar (outside content).
-  const toShareCoords = (e: { clientX: number; clientY: number }): { nx: number; ny: number } | null => {
+  // The video's content box within the overlay, accounting for object-fit:contain
+  // letterbox bars. Used for delta→normalised scaling and the synthetic cursor.
+  const shareContentBox = () => {
     const v = shareVideoRef.current
-    if (!v || !v.videoWidth || !v.videoHeight) return null
-    const rect = v.getBoundingClientRect()
+    const overlay = controlOverlayRef.current
+    if (!v || !overlay || !v.videoWidth || !v.videoHeight) return null
+    const rect = overlay.getBoundingClientRect()
     const scale = Math.min(rect.width / v.videoWidth, rect.height / v.videoHeight)
     const cw = v.videoWidth * scale, ch = v.videoHeight * scale
-    const ox = (rect.width - cw) / 2, oy = (rect.height - ch) / 2
-    const cx = e.clientX - rect.left - ox, cy = e.clientY - rect.top - oy
-    if (cx < 0 || cy < 0 || cx > cw || cy > ch) return null
-    return { nx: cx / cw, ny: cy / ch }
+    return { ox: (rect.width - cw) / 2, oy: (rect.height - ch) / 2, cw, ch }
   }
 
   const toggleControlMode = useCallback(async () => {
@@ -878,6 +881,80 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
       window.electronAPI?.control?.end()
     }
   }, [controlMode, canControlShare])
+
+  // Pointer-lock control loop: relative mouse deltas → virtual pointer → shared
+  // window. The cursor is hidden while locked; a synthetic cursor is drawn in the
+  // preview. Escape (browser default) or leaving control mode releases the lock.
+  useEffect(() => {
+    if (!controlMode) return
+    const overlay = controlOverlayRef.current
+    if (!overlay) return
+    const ctl = window.electronAPI?.control
+    let raf = 0, pending = false
+    const flush = () => { raf = 0; if (pending) { ctl?.move(controlPos.current.x, controlPos.current.y); pending = false } }
+
+    const onMove = (e: MouseEvent) => {
+      if (document.pointerLockElement !== overlay) return
+      const box = shareContentBox()
+      if (!box) return
+      const p = controlPos.current
+      p.x = Math.min(1, Math.max(0, p.x + e.movementX / box.cw))
+      p.y = Math.min(1, Math.max(0, p.y + e.movementY / box.ch))
+      setControlCursor({ x: p.x, y: p.y })
+      pending = true
+      if (!raf) raf = requestAnimationFrame(flush)
+    }
+    const onDown = (e: MouseEvent) => {
+      if (document.pointerLockElement === overlay) {
+        e.preventDefault()
+        const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
+        ctl?.click(controlPos.current.x, controlPos.current.y, { button })
+      } else if (e.target === overlay) {
+        overlay.requestPointerLock()
+      }
+    }
+    const onWheel = (e: WheelEvent) => {
+      if (document.pointerLockElement !== overlay) return
+      e.preventDefault()
+      ctl?.scroll(controlPos.current.x, controlPos.current.y, e.deltaX, e.deltaY)
+    }
+    const onCtx = (e: MouseEvent) => { if (document.pointerLockElement === overlay) e.preventDefault() }
+    const onKey = (e: KeyboardEvent) => {
+      if (document.pointerLockElement !== overlay) return
+      if (e.key === 'Escape') return // let the browser release the lock
+      e.preventDefault()
+      const mods: string[] = []
+      if (e.metaKey) mods.push('cmd')
+      if (e.ctrlKey) mods.push('ctrl')
+      if (e.altKey) mods.push('alt')
+      if (e.shiftKey) mods.push('shift')
+      const special: Record<string, string> = { Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Delete: 'delete', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown', ' ': 'space' }
+      if (special[e.key]) { ctl?.key(special[e.key], mods); return }
+      if (e.key.length === 1) {
+        if (e.metaKey || e.ctrlKey || e.altKey) ctl?.key(e.key, mods)
+        else ctl?.type(e.key)
+      }
+    }
+    const onLockChange = () => setPointerLocked(document.pointerLockElement === overlay)
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('wheel', onWheel, { passive: false })
+    document.addEventListener('contextmenu', onCtx)
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerlockchange', onLockChange)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('wheel', onWheel)
+      document.removeEventListener('contextmenu', onCtx)
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerlockchange', onLockChange)
+      if (document.pointerLockElement === overlay) document.exitPointerLock()
+      if (raf) cancelAnimationFrame(raf)
+      setPointerLocked(false)
+    }
+  }, [controlMode])
 
   const [overlayMode, setOverlayMode] = useState<'visible' | 'minimized' | 'hidden'>('visible')
   const isPresenting = isSharing || hasRemoteScreenShare
@@ -1538,43 +1615,31 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                 <span style={{ color: '#48bb78', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 1 }}>LIVE</span>
               </div>
 
-              {/* Interactive control overlay — forwards mouse/scroll/keyboard to the
-                  shared window so the presenter can drive it from here (desktop). */}
-              {controlMode && (
-                <div
-                  tabIndex={0}
-                  ref={el => el?.focus()}
-                  onPointerMove={e => {
-                    const now = performance.now()
-                    if (now - controlMoveThrottle.current < 25) return
-                    controlMoveThrottle.current = now
-                    const c = toShareCoords(e)
-                    if (c) window.electronAPI?.control?.move(c.nx, c.ny)
-                  }}
-                  onClick={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny) }}
-                  onContextMenu={e => { e.preventDefault(); const c = toShareCoords(e); if (c) window.electronAPI?.control?.click(c.nx, c.ny, { button: 'right' }) }}
-                  onWheel={e => { const c = toShareCoords(e); if (c) window.electronAPI?.control?.scroll(c.nx, c.ny, e.deltaX, e.deltaY) }}
-                  onKeyDown={e => {
-                    e.preventDefault()
-                    const mods: string[] = []
-                    if (e.metaKey) mods.push('cmd')
-                    if (e.ctrlKey) mods.push('ctrl')
-                    if (e.altKey) mods.push('alt')
-                    if (e.shiftKey) mods.push('shift')
-                    const special: Record<string, string> = { Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Escape: 'escape', Delete: 'delete', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown', ' ': 'space' }
-                    if (special[e.key]) { window.electronAPI?.control?.key(special[e.key], mods); return }
-                    if (e.key.length === 1) {
-                      if (e.metaKey || e.ctrlKey || e.altKey) window.electronAPI?.control?.key(e.key, mods)
-                      else window.electronAPI?.control?.type(e.key)
-                    }
-                  }}
-                  style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'crosshair', outline: 'none' }}
-                />
-              )}
+              {/* Interactive control overlay — Pointer Lock captures the cursor and
+                  drives the shared window from relative deltas (no bounce). A
+                  synthetic cursor shows where you're pointing. */}
+              {controlMode && (() => {
+                const box = shareContentBox()
+                const cur = box ? { left: box.ox + controlCursor.x * box.cw, top: box.oy + controlCursor.y * box.ch } : null
+                return (
+                  <div ref={controlOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'none', outline: 'none' }}>
+                    {pointerLocked && cur && (
+                      <div style={{ position: 'absolute', left: cur.left, top: cur.top, width: 18, height: 18, marginLeft: -9, marginTop: -9, borderRadius: '50%', border: '2px solid #4299e1', background: 'rgba(66,153,225,0.35)', boxShadow: '0 0 0 1px rgba(0,0,0,0.5)', pointerEvents: 'none' }} />
+                    )}
+                    {!pointerLocked && (
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(66,153,225,0.2)', border: '1px solid #4299e1', borderRadius: 22, padding: '9px 18px', color: '#cbe6ff', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>
+                          <MousePointer2 size={15} /> Click to control · Esc to release
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
               {controlMode && (
                 <div style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(66,153,225,0.18)', backdropFilter: 'blur(6px)', border: '1px solid #4299e1', borderRadius: 20, padding: '4px 12px', zIndex: 21, pointerEvents: 'none' }}>
                   <MousePointer2 size={12} color="#4299e1" />
-                  <span style={{ color: '#4299e1', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>CONTROLLING</span>
+                  <span style={{ color: '#4299e1', fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5 }}>{pointerLocked ? 'CONTROLLING' : 'PAUSED'}</span>
                 </div>
               )}
             </div>

@@ -1622,15 +1622,13 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                 const box = shareContentBox()
                 const cur = box ? { left: box.ox + controlCursor.x * box.cw, top: box.oy + controlCursor.y * box.ch } : null
                 return (
-                  <div ref={controlOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'none', outline: 'none' }}>
+                  <div ref={controlOverlayRef} style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: pointerLocked ? 'none' : 'pointer', outline: 'none' }}>
                     {pointerLocked && cur && (
                       <div style={{ position: 'absolute', left: cur.left, top: cur.top, width: 18, height: 18, marginLeft: -9, marginTop: -9, borderRadius: '50%', border: '2px solid #4299e1', background: 'rgba(66,153,225,0.35)', boxShadow: '0 0 0 1px rgba(0,0,0,0.5)', pointerEvents: 'none' }} />
                     )}
                     {!pointerLocked && (
-                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(66,153,225,0.2)', border: '1px solid #4299e1', borderRadius: 22, padding: '9px 18px', color: '#cbe6ff', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>
-                          <MousePointer2 size={15} /> Click to control · Esc to release
-                        </div>
+                      <div style={{ position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(66,153,225,0.22)', backdropFilter: 'blur(6px)', border: '1px solid #4299e1', borderRadius: 22, padding: '9px 18px', color: '#cbe6ff', fontSize: 13, fontFamily: "'Roboto', sans-serif", pointerEvents: 'none' }}>
+                        <MousePointer2 size={15} /> Click anywhere on the preview to control · Esc to release
                       </div>
                     )}
                   </div>

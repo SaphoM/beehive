@@ -190,7 +190,9 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - **Blur** — background blurred; intensity slider (2–20 px); Flip toggle
   - **Image** — upload any photo; cover-fitted as background; Flip toggle
   - **Virtual** — 8 procedurally drawn scene presets (Office, Beach, City, Forest, Mountains, Space, Sunset, Studio)
-  - Pipeline: `replaceTrack` swaps the published LiveKit video track with `640×480 canvas.captureStream(30)`
+  - **Aspect-ratio-correct pipeline** — the output canvas is sized from the **real camera resolution** (preserving 16:9 / whatever the webcam reports, capped at 1280 px wide), so nothing is stretched or squashed. `replaceTrack` swaps the published LiveKit video track with `canvas.captureStream(30)`
+  - **Clean blur** — the blurred layer is drawn with an overscan so the blur kernel's faded edges fall outside the frame, eliminating the dark-vignette rim a naive canvas blur produces
+  - **High-contrast cutout** — MediaPipe's soft, semi-transparent mask edges are **thresholded into a crisp cutout** (with a thin anti-alias band, processed at ≤320 px for speed then upscaled), and a subtle dark rim shadow is composited around the attendee on Image/Virtual backgrounds — so the attendee stands out sharply instead of haloing/blending into the scene
 - 📸 Auto Cam — floating window (bottom-right), two modes:
   - **Auto Centre** — follows the active speaker (1.5 s debounce); crosshair name tag
   - **2 in 1** — local (You) left, active speaker right; "Waiting…" when no remote speaker
@@ -695,7 +697,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Mobile web responsive — zoom-to-fit viewport, iOS safe-area, small-phone button sizing, no horizontal overflow (all modern iPhone sizes)
 - [ ] Mobile native app (React Native + LiveKit mobile SDK)
 - [x] Fathom integration — meeting summaries, action items, transcript viewer
-- [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation)
+- [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation); aspect-ratio-correct output (no stretch), overscan blur (no vignette), thresholded high-contrast attendee cutout with separating rim shadow
 - [x] File sharing — drag-to-drop or paperclip; send to all or select attendees; Supabase Storage
 - [x] Schedule meeting — date/time picker, email chip invites, shareable link, mailto integration
 - [x] Electron desktop app — native file open, window capture without OS dialog, drag-to-present with preview confirmation

@@ -744,7 +744,12 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     if (!raw) return
     if (!bgOrigTrackRef.current) bgOrigTrackRef.current = raw
 
-    const W = 640, H = 480
+    // Canvas dimensions are derived from the REAL camera resolution (below) so the
+    // output keeps the camera's aspect ratio — no 4:3-vs-16:9 stretching. Capped
+    // to 1280 wide for performance; the MediaPipe model runs at a fixed internal
+    // size regardless, so a larger canvas only costs cheap GPU draw ops.
+    const MAX_W = 1280
+    let W = 0, H = 0
     let running = true
     let seg: any = null
 
@@ -753,26 +758,61 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     video.playsInline = true; video.muted = true
 
     const canvas = document.createElement('canvas')
-    canvas.width = W; canvas.height = H
     const ctx = canvas.getContext('2d')!
-
-    const offCanvas = document.createElement('canvas')
-    offCanvas.width = W; offCanvas.height = H
+    const offCanvas = document.createElement('canvas')     // masked attendee cutout
     const offCtx = offCanvas.getContext('2d')!
+    const maskCanvas = document.createElement('canvas')    // hardened segmentation mask
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!
 
     let trackReplaced = false
 
+    const setupDims = () => {
+      const vw = video.videoWidth || 1280, vh = video.videoHeight || 720
+      const scale = Math.min(1, MAX_W / vw)
+      W = Math.round(vw * scale); H = Math.round(vh * scale)
+      canvas.width = W; canvas.height = H
+      offCanvas.width = W; offCanvas.height = H
+    }
+
+    // MediaPipe's raw mask has soft, semi-transparent edges that make the
+    // attendee blend/halo into the background. Threshold the mask alpha into a
+    // crisp cutout (with a thin anti-alias band) so the attendee reads with high
+    // contrast against image/virtual backgrounds. Processed at ≤320px wide to
+    // keep the per-frame pixel loop cheap; upscaled smoothly when applied.
+    const LO = 100, HI = 165
+    const hardenMask = (mask: any) => {
+      const nw = mask.width || 256, nh = mask.height || 256
+      const mw = Math.min(320, nw), mh = Math.round(mw * nh / nw)
+      if (maskCanvas.width !== mw || maskCanvas.height !== mh) { maskCanvas.width = mw; maskCanvas.height = mh }
+      maskCtx.clearRect(0, 0, mw, mh)
+      maskCtx.drawImage(mask, 0, 0, mw, mh)
+      try {
+        const id = maskCtx.getImageData(0, 0, mw, mh)
+        const d = id.data
+        for (let i = 3; i < d.length; i += 4) {
+          const a = d[i]
+          d[i] = a <= LO ? 0 : a >= HI ? 255 : Math.round(((a - LO) / (HI - LO)) * 255)
+        }
+        maskCtx.putImageData(id, 0, 0)
+      } catch { /* tainted/unsupported — fall back to the soft mask already drawn */ }
+      return maskCanvas
+    }
+
     const onResults = (results: any) => {
-      if (!running) return
+      if (!running || !W) return
       const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
 
       ctx.save()
       ctx.clearRect(0, 0, W, H)
       if (flip) { ctx.translate(W, 0); ctx.scale(-1, 1) }
 
+      // ---- Background layer (drawn at the camera's true aspect ratio) ----
       if (effect === 'blur') {
+        // Overscan the blurred draw so the blur kernel's faded edges fall OUTSIDE
+        // the frame — kills the vignette/dark-rim artefact of a naive canvas blur.
+        const pad = Math.max(2, bl) * 2
         ctx.filter = `blur(${bl}px)`
-        ctx.drawImage(video, 0, 0, W, H)
+        ctx.drawImage(video, -pad, -pad, W + pad * 2, H + pad * 2)
         ctx.filter = 'none'
       } else if (effect === 'image') {
         const img = bgUploadedImageRef.current
@@ -791,13 +831,21 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
         ctx.drawImage(video, 0, 0, W, H)
       }
 
+      // ---- Attendee layer (crisp hardened-mask cutout, composited on top) ----
       if (effect !== 'none') {
         offCtx.clearRect(0, 0, W, H)
         offCtx.drawImage(video, 0, 0, W, H)
         offCtx.globalCompositeOperation = 'destination-in'
-        offCtx.drawImage(results.segmentationMask, 0, 0, W, H)
+        offCtx.imageSmoothingEnabled = true
+        offCtx.drawImage(hardenMask(results.segmentationMask), 0, 0, W, H)
         offCtx.globalCompositeOperation = 'source-over'
+        // Subtle dark rim separates the attendee from busy image/virtual scenes.
+        if (effect === 'image' || effect === 'virtual') {
+          ctx.shadowColor = 'rgba(0,0,0,0.45)'
+          ctx.shadowBlur = Math.max(6, Math.round(W / 120))
+        }
         ctx.drawImage(offCanvas, 0, 0)
+        ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'
       }
 
       ctx.restore()
@@ -821,10 +869,13 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
       seg.onResults(onResults)
 
       await video.play().catch(() => {})
+      if (video.videoWidth) setupDims()
+      else video.addEventListener('loadedmetadata', setupDims, { once: true })
 
       const sendFrame = async () => {
         if (!running) return
         if (video.readyState >= 2) {
+          if (!W) setupDims()
           try { await seg.send({ image: video }) } catch {}
         }
         if (running) requestAnimationFrame(sendFrame)

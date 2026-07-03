@@ -16,9 +16,12 @@ function startBackend() {
   // In dev mode, concurrently already starts the backend — don't double-spawn it
   if (isDev) return
 
-  const backendPath = isDev
-    ? path.join(__dirname, '..', 'livekit_node_backend.js')
-    : path.join(process.resourcesPath, 'app', 'livekit_node_backend.js')
+  // Packaged: run the esbuild-bundled backend (all deps inlined into one .mjs)
+  // — the raw livekit_node_backend.js can't resolve express/livekit-server-sdk
+  // from a spawned node process, since those node_modules only exist inside
+  // app.asar which pure Node can't read. (Dev returns above; this path is
+  // packaged-only.)
+  const backendPath = path.join(process.resourcesPath, 'app', 'backend.bundle.mjs')
 
   if (!existsSync(backendPath)) {
     console.warn('[electron] backend not found at', backendPath)
@@ -29,7 +32,12 @@ function startBackend() {
     ? path.join(__dirname, '..', '.env')
     : path.join(process.resourcesPath, 'app', '.env')
 
-  const env = { ...process.env, PORT: '3001' }
+  // In a packaged app, process.execPath is the Electron/BeeHive binary, not
+  // node. ELECTRON_RUN_AS_NODE makes that binary run the backend script with
+  // Electron's bundled Node runtime instead of booting a second app window —
+  // without it the "backend" launches as Electron, exits immediately (code 0),
+  // never binds :3001, and every "Start Meeting" hangs on "Starting…".
+  const env = { ...process.env, PORT: '3001', ELECTRON_RUN_AS_NODE: '1' }
 
   if (existsSync(envPath)) {
     readFileSync(envPath, 'utf8').split('\n').forEach(line => {

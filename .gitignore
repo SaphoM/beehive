@@ -1,3 +1,10 @@
 .env
 .env.local
 node_modules/
+
+# Build artifacts
+dist/
+release/
+electron/bin/
+electron/backend.bundle.mjs
+.DS_Store

@@ -8,6 +8,10 @@ import { useAuth, useProfile } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 
+// Strong dark red — logo + primary button switch to this when "Sting" mode
+// is selected, so the whole card reads as a distinct, deliberate mode change.
+const STING_RED = '#a91b1b'
+
 // -----------------------------------------------------------------------
 // RegisterPanel — appears on card back face after frictionless meeting
 // -----------------------------------------------------------------------
@@ -161,7 +165,7 @@ export function Lobby({
               </div>
             )}
 
-            <h1 style={s.title}>
+            <h1 style={{ ...s.title, ...(subtext === 'Sting' ? { color: STING_RED } : {}) }}>
               <span style={{ fontWeight: 400 }}>BEE</span>HIVE
             </h1>
 
@@ -225,7 +229,11 @@ export function Lobby({
                         </button>
                       </>
                     ) : (
-                      <button style={s.primaryBtn} onClick={onCreateRoom} disabled={creating}>
+                      <button
+                        style={{ ...s.primaryBtn, ...(subtext === 'Sting' ? { background: STING_RED } : {}) }}
+                        onClick={onCreateRoom}
+                        disabled={creating}
+                      >
                         {creating ? 'Starting…' : `Start ${subtext}`}
                       </button>
                     )}

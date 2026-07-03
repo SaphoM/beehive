@@ -17,6 +17,10 @@ export const APP_NAME = 'BeeHive'
 export const SUBTEXTS = ['Meet', 'Sting'] as const
 export type Subtext = typeof SUBTEXTS[number]
 
+// Strong dark red — Sting mode's accent colour, shared by Lobby (logo, active
+// tab) and SchedulePanel (Create button) so both stay in sync from one source.
+export const STING_RED = '#a91b1b'
+
 export const WEB_BASE = (import.meta.env.VITE_WEB_BASE_URL as string | undefined)?.replace(/\/$/, '')
   || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? window.location.origin : '')
 

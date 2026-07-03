@@ -15,7 +15,6 @@
 
 export interface MeetingTemplate {
   id: string
-  icon: string
   title: string
   description: string
   /** Rough baseline prep minutes for a fully-unprepared meeting of this type. */
@@ -31,7 +30,7 @@ export interface MeetingTemplate {
 
 export const MEETING_TEMPLATES: MeetingTemplate[] = [
   {
-    id: 'board', icon: '🏢', title: 'Board Meeting', description: 'Governance & strategy', prepMinutes: 45,
+    id: 'board', title: 'Board Meeting', description: 'Governance & strategy', prepMinutes: 45,
     agenda: ['Welcome & apologies', 'Approve previous minutes', 'CEO report', 'Financial review', 'Risk register', 'Strategy discussion', 'Decisions', 'Action items & close'],
     documents: ['Previous minutes', 'Financial statements', 'Board pack', 'Risk register', 'Compliance reports', 'CEO report', 'Strategy deck'],
     questions: ['What are the key risks this quarter?', 'Any financial concerns or variances?', 'What are our strategic priorities?', 'What decisions need board approval today?'],
@@ -40,7 +39,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Missing quorum', 'Incomplete financials', 'Undocumented decisions'],
   },
   {
-    id: 'client', icon: '🤝', title: 'Client Meeting', description: 'Sales & relationships', prepMinutes: 30,
+    id: 'client', title: 'Client Meeting', description: 'Sales & relationships', prepMinutes: 30,
     agenda: ['Introductions', 'Recap of needs', 'Proposed solution', 'Pricing & scope', 'Q&A', 'Next steps'],
     documents: ['Proposal', 'Pricing', 'Contract', 'Product presentation', 'Case studies', 'Previous meeting notes', 'Demo material'],
     questions: ['What problem are we solving?', 'What are the success criteria?', 'What is the budget?', 'What is the timeline?', 'Who are the decision makers?', 'What are the risks?', 'What are the next steps?'],
@@ -49,7 +48,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Unclear decision maker', 'Budget not confirmed', 'Scope creep'],
   },
   {
-    id: 'followup', icon: '🔄', title: 'Follow-up Meeting', description: 'Progress review', prepMinutes: 15,
+    id: 'followup', title: 'Follow-up Meeting', description: 'Progress review', prepMinutes: 15,
     agenda: ['Recap last meeting', 'Outstanding actions', 'Progress update', 'Blockers', 'Decisions', 'Next steps'],
     documents: ['Previous meeting notes', 'Action item list', 'Progress report'],
     questions: ['What actions are still outstanding?', 'What has progressed since last time?', 'What is blocking us?', 'What do we decide next?'],
@@ -58,7 +57,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Stale action items', 'Missing action owners'],
   },
   {
-    id: 'brainstorm', icon: '💡', title: 'Brainstorm', description: 'Generate ideas', prepMinutes: 20,
+    id: 'brainstorm', title: 'Brainstorm', description: 'Generate ideas', prepMinutes: 20,
     agenda: ['Frame the problem', 'Diverge — generate ideas', 'Cluster & theme', 'Converge — shortlist', 'Next steps'],
     documents: ['Problem statement', 'Whiteboard / board', 'Background research', 'Reference examples'],
     questions: ['What problem are we solving?', 'What constraints exist?', 'What would 10x look like?', 'Which ideas do we take forward?'],
@@ -67,7 +66,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Converging too early', 'Dominant voices crowding out others'],
   },
   {
-    id: 'kickoff', icon: '🚀', title: 'Project Kickoff', description: 'Start a project right', prepMinutes: 35,
+    id: 'kickoff', title: 'Project Kickoff', description: 'Start a project right', prepMinutes: 35,
     agenda: ['Project vision & scope', 'Timeline & milestones', 'Roles & responsibilities', 'Deliverables', 'Risks & dependencies', 'Success criteria', 'Next steps'],
     documents: ['Scope document', 'Timeline / plan', 'Budget', 'Team list', 'Deliverables list', 'Risk register', 'Success criteria'],
     questions: ['What is in and out of scope?', 'Who owns what?', 'What are the key milestones?', 'What could derail this?', 'How do we measure success?'],
@@ -76,7 +75,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Unclear scope', 'Undefined ownership', 'Unrealistic timeline'],
   },
   {
-    id: 'standup', icon: '👥', title: 'Team Stand-up', description: 'Daily sync', prepMinutes: 5,
+    id: 'standup', title: 'Team Stand-up', description: 'Daily sync', prepMinutes: 5,
     agenda: ['Yesterday', 'Today', 'Blockers'],
     documents: ['Task board', 'Sprint board'],
     questions: ['What did you do yesterday?', 'What will you do today?', 'Anything blocking you?'],
@@ -85,7 +84,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Turning into a status meeting', 'Running over time'],
   },
   {
-    id: 'sales', icon: '📈', title: 'Sales Meeting', description: 'Pipeline & deals', prepMinutes: 25,
+    id: 'sales', title: 'Sales Meeting', description: 'Pipeline & deals', prepMinutes: 25,
     agenda: ['Pipeline review', 'Key deals', 'Blockers & risks', 'Forecast', 'Actions'],
     documents: ['Pipeline report', 'Deal notes', 'Forecast', 'Pricing', 'Proposal'],
     questions: ['Which deals are at risk?', 'What is the forecast?', 'Where do we need help?', 'What are the next actions per deal?'],
@@ -94,7 +93,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Optimistic forecasting', 'Stalled deals not flagged'],
   },
   {
-    id: 'training', icon: '🎓', title: 'Training', description: 'Teach & upskill', prepMinutes: 40,
+    id: 'training', title: 'Training', description: 'Teach & upskill', prepMinutes: 40,
     agenda: ['Objectives', 'Core content', 'Demonstration', 'Hands-on practice', 'Q&A', 'Assessment & wrap-up'],
     documents: ['Training slides', 'Handouts', 'Exercises', 'Screen share material', 'Assessment form'],
     questions: ['What should attendees be able to do afterwards?', 'What is their current level?', 'How will we check understanding?'],
@@ -103,7 +102,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Content pitched at wrong level', 'No time for practice'],
   },
   {
-    id: 'interview', icon: '💼', title: 'Interview', description: 'Assess a candidate', prepMinutes: 20,
+    id: 'interview', title: 'Interview', description: 'Assess a candidate', prepMinutes: 20,
     agenda: ['Introductions', 'Role overview', 'Candidate background', 'Competency questions', 'Candidate questions', 'Next steps'],
     documents: ['CV / résumé', 'Job description', 'Evaluation form', 'Interview scorecard'],
     questions: ['Does their experience match the role?', 'How do they handle challenge X?', 'What motivates them?', 'Any red flags or concerns?'],
@@ -112,7 +111,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Inconsistent scoring', 'Unstructured questions', 'Bias'],
   },
   {
-    id: 'executive', icon: '⚖️', title: 'Executive Meeting', description: 'Leadership decisions', prepMinutes: 35,
+    id: 'executive', title: 'Executive Meeting', description: 'Leadership decisions', prepMinutes: 35,
     agenda: ['Priorities update', 'Key metrics', 'Decisions required', 'Cross-team dependencies', 'Actions'],
     documents: ['Executive dashboard', 'Key metrics', 'Decision briefs', 'Department reports'],
     questions: ['What decisions are needed today?', 'Are we on track against goals?', 'What cross-team risks exist?'],
@@ -121,7 +120,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Decisions deferred', 'Unclear ownership'],
   },
   {
-    id: 'workshop', icon: '🛠️', title: 'Workshop', description: 'Collaborate & build', prepMinutes: 40,
+    id: 'workshop', title: 'Workshop', description: 'Collaborate & build', prepMinutes: 40,
     agenda: ['Objectives & context', 'Warm-up', 'Working sessions', 'Share-outs', 'Synthesis', 'Actions'],
     documents: ['Agenda / run-of-show', 'Templates & worksheets', 'Whiteboard', 'Pre-read material'],
     questions: ['What outcome must we leave with?', 'What decisions are in scope?', 'Who owns the follow-through?'],
@@ -130,7 +129,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['No clear outcome', 'Under-preparation', 'Time overrun'],
   },
   {
-    id: 'one-on-one', icon: '🧑‍🤝‍🧑', title: 'One-on-One', description: 'Manager & report', prepMinutes: 10,
+    id: 'one-on-one', title: 'One-on-One', description: 'Manager & report', prepMinutes: 10,
     agenda: ['Check-in', 'Wins & challenges', 'Feedback (both ways)', 'Growth & goals', 'Actions'],
     documents: ['Previous 1:1 notes', 'Goals / OKRs', 'Feedback notes'],
     questions: ['How are you doing?', 'What is going well / not well?', 'What support do you need?', 'How are your goals tracking?'],
@@ -139,7 +138,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Cancelled repeatedly', 'One-directional (only status)'],
   },
   {
-    id: 'performance', icon: '📋', title: 'Performance Review', description: 'Evaluate & develop', prepMinutes: 30,
+    id: 'performance', title: 'Performance Review', description: 'Evaluate & develop', prepMinutes: 30,
     agenda: ['Review period recap', 'Achievements', 'Areas to develop', 'Ratings & feedback', 'Goals for next period', 'Development plan'],
     documents: ['Self-assessment', 'Manager assessment', 'Goals from last period', '360 feedback', 'Rating rubric'],
     questions: ['Did they meet their goals?', 'What are the standout achievements?', 'What are the development areas?', 'What are next-period goals?'],
@@ -148,7 +147,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Recency bias', 'No concrete examples', 'Vague goals'],
   },
   {
-    id: 'sprint-planning', icon: '🗓️', title: 'Sprint Planning', description: 'Plan the sprint', prepMinutes: 20,
+    id: 'sprint-planning', title: 'Sprint Planning', description: 'Plan the sprint', prepMinutes: 20,
     agenda: ['Sprint goal', 'Capacity', 'Backlog refinement', 'Commit to scope', 'Task breakdown'],
     documents: ['Product backlog', 'Team capacity', 'Definition of done', 'Previous velocity'],
     questions: ['What is the sprint goal?', 'What is our capacity?', 'Is the backlog ready & estimated?', 'What can we realistically commit to?'],
@@ -157,7 +156,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Over-committing', 'Unrefined backlog'],
   },
   {
-    id: 'sprint-review', icon: '✅', title: 'Sprint Review', description: 'Demo & inspect', prepMinutes: 20,
+    id: 'sprint-review', title: 'Sprint Review', description: 'Demo & inspect', prepMinutes: 20,
     agenda: ['Sprint goal recap', 'Demo completed work', 'Stakeholder feedback', 'Backlog adjustments'],
     documents: ['Sprint backlog', 'Demo environment', 'Release notes'],
     questions: ['Did we meet the sprint goal?', 'What feedback do stakeholders have?', 'What changes to the backlog?'],
@@ -166,7 +165,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Demo not working', 'Low stakeholder turnout'],
   },
   {
-    id: 'retro', icon: '🔁', title: 'Retrospective', description: 'Inspect & improve', prepMinutes: 15,
+    id: 'retro', title: 'Retrospective', description: 'Inspect & improve', prepMinutes: 15,
     agenda: ['Set the stage', 'What went well', 'What didn’t', 'Root causes', 'Action items'],
     documents: ['Previous retro actions', 'Sprint metrics', 'Retro board'],
     questions: ['What went well?', 'What should we change?', 'What is one thing we’ll try next sprint?'],
@@ -175,7 +174,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Blame culture', 'Actions never followed up'],
   },
   {
-    id: 'investor', icon: '💰', title: 'Investor Meeting', description: 'Funding & updates', prepMinutes: 45,
+    id: 'investor', title: 'Investor Meeting', description: 'Funding & updates', prepMinutes: 45,
     agenda: ['Company update', 'Key metrics & traction', 'Financials', 'Roadmap', 'The ask', 'Q&A'],
     documents: ['Pitch deck', 'Financial model', 'Metrics dashboard', 'Cap table', 'Data room link'],
     questions: ['What traction can we show?', 'What is the ask and use of funds?', 'What are the key risks?', 'What milestones will this unlock?'],
@@ -184,7 +183,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Weak metrics story', 'Unclear ask', 'Unprepared financials'],
   },
   {
-    id: 'demo', icon: '🖥️', title: 'Product Demo', description: 'Show the product', prepMinutes: 25,
+    id: 'demo', title: 'Product Demo', description: 'Show the product', prepMinutes: 25,
     agenda: ['Context & goals', 'Guided demo', 'Key differentiators', 'Q&A', 'Next steps'],
     documents: ['Demo script', 'Demo environment', 'Slides', 'Screen share material', 'Feature list'],
     questions: ['What outcomes does the audience care about?', 'Which features matter most to them?', 'What are the next steps after the demo?'],
@@ -193,7 +192,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Live demo failure', 'Generic (not tailored) demo'],
   },
   {
-    id: 'discovery', icon: '🔍', title: 'Discovery Call', description: 'Qualify & learn', prepMinutes: 20,
+    id: 'discovery', title: 'Discovery Call', description: 'Qualify & learn', prepMinutes: 20,
     agenda: ['Introductions', 'Current situation', 'Challenges & goals', 'Decision process', 'Next steps'],
     documents: ['Prospect research', 'Discovery question list', 'CRM record', 'Qualification framework'],
     questions: ['What are you trying to achieve?', 'What is the impact of not solving it?', 'What does your decision process look like?', 'What is the timeline?'],
@@ -202,7 +201,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Pitching before understanding', 'Not qualifying budget/authority'],
   },
   {
-    id: 'quarterly', icon: '📊', title: 'Quarterly Review', description: 'QBR / results', prepMinutes: 40,
+    id: 'quarterly', title: 'Quarterly Review', description: 'QBR / results', prepMinutes: 40,
     agenda: ['Quarter recap', 'Goal attainment', 'Key metrics', 'Wins & misses', 'Next-quarter priorities', 'Actions'],
     documents: ['Quarterly report', 'KPI dashboard', 'Goals from last quarter', 'Budget vs actual'],
     questions: ['Did we hit our goals?', 'What drove the wins & misses?', 'What are next quarter’s priorities?'],
@@ -211,7 +210,7 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     risks: ['Metrics not ready', 'Recap without decisions'],
   },
   {
-    id: 'annual-planning', icon: '🗺️', title: 'Annual Planning', description: 'Set the year', prepMinutes: 60,
+    id: 'annual-planning', title: 'Annual Planning', description: 'Set the year', prepMinutes: 60,
     agenda: ['Vision & context', 'Prior-year review', 'Strategic themes', 'Goals & OKRs', 'Budget & resourcing', 'Roadmap', 'Commitments'],
     documents: ['Prior-year results', 'Strategy deck', 'Budget model', 'Draft OKRs', 'Roadmap'],
     questions: ['What are our top themes for the year?', 'What outcomes define success?', 'How do we resource it?', 'What are we explicitly not doing?'],

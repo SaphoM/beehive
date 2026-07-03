@@ -1,5 +1,22 @@
 import { useMemo, useState } from 'react'
+import {
+  Building2, Handshake, RefreshCw, Lightbulb, Rocket, Users, TrendingUp,
+  GraduationCap, Briefcase, Scale, Wrench, UserCheck, ClipboardCheck,
+  CalendarDays, CheckCircle2, RotateCcw, DollarSign, Monitor, Search,
+  BarChart3, Map as MapIcon, type LucideIcon,
+} from 'lucide-react'
 import { MEETING_TEMPLATES, getTemplate } from './meetingTemplates'
+
+// Simple, monochrome lucide icons — consistent with the rest of the app's icon
+// language, in place of the earlier colourful emoji set.
+const TEMPLATE_ICONS: Record<string, LucideIcon> = {
+  board: Building2, client: Handshake, followup: RefreshCw, brainstorm: Lightbulb,
+  kickoff: Rocket, standup: Users, sales: TrendingUp, training: GraduationCap,
+  interview: Briefcase, executive: Scale, workshop: Wrench, 'one-on-one': UserCheck,
+  performance: ClipboardCheck, 'sprint-planning': CalendarDays, 'sprint-review': CheckCircle2,
+  retro: RotateCcw, investor: DollarSign, demo: Monitor, discovery: Search,
+  quarterly: BarChart3, 'annual-planning': MapIcon,
+}
 
 // ============================================================
 // SMART MEETING PREPARATION
@@ -90,6 +107,7 @@ export function MeetingPrep({
       <div style={st.cardGrid} aria-label="Meeting type">
         {MEETING_TEMPLATES.map(t => {
           const active = t.id === selectedId
+          const Icon = TEMPLATE_ICONS[t.id]
           return (
             <button
               key={t.id}
@@ -100,7 +118,7 @@ export function MeetingPrep({
               className="bhv-prep-card"
               style={{ ...st.card, ...(active ? st.cardActive : {}) }}
             >
-              <span style={st.cardIcon}>{t.icon}</span>
+              {Icon && <Icon size={17} color={active ? '#f5a623' : '#888'} style={{ flexShrink: 0 }} />}
               <span style={st.cardTitle}>{t.title}</span>
               <span style={st.cardDesc}>{t.description}</span>
             </button>
@@ -241,7 +259,6 @@ const st: Record<string, React.CSSProperties> = {
   cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))', gap: 8, maxHeight: 264, overflowY: 'auto', paddingRight: 2 },
   card: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 12, padding: '10px 12px', cursor: 'pointer', textAlign: 'left', transition: 'transform 0.12s ease, border-color 0.15s, background 0.15s', color: '#ddd', WebkitAppRegion: 'no-drag' as any },
   cardActive: { borderColor: '#f5a623', background: '#2a2010' },
-  cardIcon: { fontSize: 20, lineHeight: 1.2 },
   cardTitle: { fontSize: 13, fontWeight: 600, color: '#eee' },
   cardDesc: { fontSize: 11, fontWeight: 300, color: '#888' },
   panel: { display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 },

@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useCreateRoom } from '../livekit_react_hooks'
-import { WEB_BASE } from './roomUtils'
+import { WEB_BASE, STING_RED } from './roomUtils'
 import { s } from './roomStyles'
 import { MeetingPrep } from './MeetingPrep'
 
 const DURATIONS = [15, 30, 45, 60, 90]
 
-export function SchedulePanel({ displayName, onDisplayNameChange }: { displayName: string; onDisplayNameChange: (v: string) => void }) {
+export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { displayName: string; onDisplayNameChange: (v: string) => void; isSting: boolean }) {
   const { createRoom, loading } = useCreateRoom()
   const [roomName, setRoomName] = useState('')
   const [date, setDate] = useState('')
@@ -59,6 +59,9 @@ export function SchedulePanel({ displayName, onDisplayNameChange }: { displayNam
   }
 
   const todayStr = new Date().toISOString().split('T')[0]
+  // Prep cards are an aid, not a requirement — only appear once the essentials
+  // are filled in, so the user can then choose to use them or ignore them.
+  const formReady = displayName.trim() !== '' && date !== '' && time !== ''
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14 }}>
@@ -140,8 +143,9 @@ export function SchedulePanel({ displayName, onDisplayNameChange }: { displayNam
         </div>
       )}
 
-      {/* Smart Meeting Preparation — meeting-type cards + AI-style prep assistant */}
-      <MeetingPrep durationMinutes={duration} attendeeCount={emails.length} />
+      {/* Smart Meeting Preparation — meeting-type cards + AI-style prep assistant.
+          Only shown once name/date/time are filled in; entirely optional from there. */}
+      {formReady && <MeetingPrep durationMinutes={duration} attendeeCount={emails.length} />}
 
       {link ? (
         <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
@@ -166,7 +170,11 @@ export function SchedulePanel({ displayName, onDisplayNameChange }: { displayNam
           )}
         </div>
       ) : (
-        <button style={{ ...s.primaryBtn, margin: 0 }} onClick={handleCreate} disabled={loading}>
+        <button
+          style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}
+          onClick={handleCreate}
+          disabled={loading}
+        >
           {loading ? 'Creating…' : 'Create Meeting & Get Link'}
         </button>
       )}

@@ -1,16 +1,12 @@
 import { useState, useEffect } from 'react'
 import { User } from '@supabase/supabase-js'
 import { s } from './roomStyles'
-import { SUBTEXTS, type Subtext } from './roomUtils'
+import { SUBTEXTS, STING_RED, type Subtext } from './roomUtils'
 import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
 import { useAuth, useProfile } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
 import { OpenDesktopAppButton } from './DesktopHandoff'
-
-// Strong dark red — logo + primary button switch to this when "Sting" mode
-// is selected, so the whole card reads as a distinct, deliberate mode change.
-const STING_RED = '#a91b1b'
 
 // -----------------------------------------------------------------------
 // RegisterPanel — appears on card back face after frictionless meeting
@@ -171,10 +167,16 @@ export function Lobby({
 
             {!hasInvite && (
               <div style={s.lobbyTabRow}>
-                <button style={{ ...s.lobbyTab, ...(lobbyTab === 'now' ? s.lobbyTabActive : {}) }} onClick={() => setLobbyTab('now')}>
+                <button
+                  style={{ ...s.lobbyTab, ...(lobbyTab === 'now' ? { ...s.lobbyTabActive, ...(subtext === 'Sting' ? { color: STING_RED } : {}) } : {}) }}
+                  onClick={() => setLobbyTab('now')}
+                >
                   Start Now
                 </button>
-                <button style={{ ...s.lobbyTab, ...(lobbyTab === 'schedule' ? s.lobbyTabActive : {}) }} onClick={() => setLobbyTab('schedule')}>
+                <button
+                  style={{ ...s.lobbyTab, ...(lobbyTab === 'schedule' ? { ...s.lobbyTabActive, ...(subtext === 'Sting' ? { color: STING_RED } : {}) } : {}) }}
+                  onClick={() => setLobbyTab('schedule')}
+                >
                   Schedule
                 </button>
               </div>
@@ -250,7 +252,7 @@ export function Lobby({
                 )}
               </>
             ) : (
-              <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} />
+              <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} isSting={subtext === 'Sting'} />
             )}
           </div>
 

@@ -95,6 +95,7 @@ import {
   fileIcon,
   ensureMediaPipe,
   drawVirtualScene,
+  STING_RED,
   type Subtext,
 } from './components/roomUtils'
 
@@ -199,6 +200,7 @@ export default function RoomPage() {
           roomId={activeRoomId}
           displayName={displayName}
           onLeave={handleLeave}
+          subtext={subtext}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
@@ -226,9 +228,11 @@ export default function RoomPage() {
 // ============================================================
 // MEETING ROOM
 // ============================================================
-function MeetingRoom({ roomId, displayName, onLeave }: {
-  roomId: string; displayName: string; onLeave: () => void
+function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
+  roomId: string; displayName: string; onLeave: () => void; subtext: Subtext
 }) {
+  // Sting meetings carry the red accent through to in-room controls
+  const accent = subtext === 'Sting' ? STING_RED : '#f5a623'
   const [showInviteModal, setShowInviteModal] = useState(false)
   // withPlaceholder keeps a name/avatar tile in the grid for participants whose
   // camera is off — without it they have no tile at all, and since tracks now
@@ -2479,7 +2483,7 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
               >
                 <Paperclip size={16} />
               </button>
-              <button style={s.sendBtn} onClick={handleSend}>↑</button>
+              <button style={{ ...s.sendBtn, background: accent }} onClick={handleSend}>↑</button>
             </div>
             <input
               ref={fileInputRef}

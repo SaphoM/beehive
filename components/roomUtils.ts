@@ -17,9 +17,14 @@ export const APP_NAME = 'BeeHive'
 export const SUBTEXTS = ['Meet', 'Sting'] as const
 export type Subtext = typeof SUBTEXTS[number]
 
-// Strong dark red — Sting mode's accent colour, shared by Lobby (logo, active
-// tab) and SchedulePanel (Create button) so both stay in sync from one source.
-export const STING_RED = '#a91b1b'
+// Sting mode's accent colour, shared by Lobby (logo, active tab) and
+// SchedulePanel (Create button) so both stay in sync from one source.
+// The original #a91b1b measured only ~2.3–2.7:1 contrast against this app's
+// dark backgrounds (#161616 / #1e1e1e / #0a0a0a) — well under WCAG AA's 3:1
+// minimum for large text. #ef4444 (Tailwind red-500) measures ~4.8–5.2:1
+// against those same backgrounds — passes AA for normal text too — while
+// still reading unambiguously as red, not pink or orange.
+export const STING_RED = '#ef4444'
 
 export const WEB_BASE = (import.meta.env.VITE_WEB_BASE_URL as string | undefined)?.replace(/\/$/, '')
   || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? window.location.origin : '')

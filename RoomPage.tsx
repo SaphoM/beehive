@@ -176,6 +176,12 @@ export default function RoomPage() {
         token={token}
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
         connect={true}
+        // useLiveKitRoom defaults BOTH to false, silently requiring a manual
+        // click on the mic/camera buttons after every join — which reads as
+        // "video isn't working" to anyone expecting Zoom/Teams/Meet-style
+        // default-on camera. Auto-enable both, matching that convention.
+        video={true}
+        audio={true}
         onDisconnected={handleLeave}
         style={{ height: 'var(--vh, 100vh)' }}
       >

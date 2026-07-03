@@ -103,7 +103,7 @@ Anyone in a meeting can invite anyone else — no account required on either sid
 - **BEE**HIVE wordmark — `BEE` in Roboto Regular (400), `HIVE` in Roboto Thin (100)
 - **Start Now / Schedule** tab switcher:
   - **Start Now** — Meet / Sting mode toggle; enter name; start immediately
-    - **Sting mode theming** — selecting **Sting** turns the BEEHIVE logo, the active lobby tab (Start Now / Schedule, whichever is currently selected), the "Start Sting" button, and the Schedule tab's "Create Meeting & Get Link" button a strong dark red (`STING_RED`, `#a91b1b`, defined once in `roomUtils.ts`) — the selection persists across tabs, so switching from Start Now to Schedule keeps the red theme applied
+    - **Sting mode theming** — selecting **Sting** turns the BEEHIVE logo, the active lobby tab (Start Now / Schedule, whichever is currently selected), the "Start Sting" button, and the Schedule tab's "Create Meeting & Get Link" button red (`STING_RED`, `#ef4444`, defined once in `roomUtils.ts`) — the selection persists across tabs, so switching from Start Now to Schedule keeps the red theme applied. Tuned for contrast: the original `#a91b1b` measured only ~2.3–2.7:1 against this app's dark backgrounds — under WCAG AA's 3:1 minimum for large text — `#ef4444` measures ~4.8–5.2:1, clearing AA for normal text while still reading unambiguously as red
   - **Schedule** — pick date + time + **duration**, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately. Also includes the **Smart Meeting Preparation** assistant (below)
 - Invite preview — guests visiting a `?room=ROOM_ID` link see the room name and live participant count before joining
 - **Register CTA** — unauthenticated guests see a "Register to save your history" button; clicking it card-flips the lobby card to a registration form (magic link or OTP)
@@ -189,7 +189,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 **Emoji panel** appears as an absolute chip above the scroll row; tapping any emoji sends it and closes the panel.
 
 #### In-meeting Features
-- 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`)
+- 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`); camera and mic **auto-enable on join** (`<LiveKitRoom video audio>`) — `@livekit/components-react`'s `useLiveKitRoom` defaults both to `false`, which silently required a manual click on the camera/mic buttons after every join (looked like "video isn't working" to anyone expecting Zoom/Teams/Meet-style default-on camera)
 - 🖱️ **Apple Dock magnification** (desktop) — hovering the controls bar magnifies icons with a Gaussian bell-curve wave; a two-pass cumulative X-shift pushes neighbours apart so gaps between icons are always preserved at any zoom level; spring-pop entry, fast cursor-tracking, and a micro-bounce settle on leave; `transform-origin: center` keeps click hit-areas aligned with visuals at all scales
 - 😊 **Emoji reactions** — two modes triggered by the `Smile` button:
   - **Quick tap**: emoji floats up immediately (👍 ❤️ 😂 🎉 👏 🔥); visible to all participants via Supabase Realtime

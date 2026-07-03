@@ -2,12 +2,16 @@ import { useState } from 'react'
 import { useCreateRoom } from '../livekit_react_hooks'
 import { WEB_BASE } from './roomUtils'
 import { s } from './roomStyles'
+import { MeetingPrep } from './MeetingPrep'
+
+const DURATIONS = [15, 30, 45, 60, 90]
 
 export function SchedulePanel({ displayName, onDisplayNameChange }: { displayName: string; onDisplayNameChange: (v: string) => void }) {
   const { createRoom, loading } = useCreateRoom()
   const [roomName, setRoomName] = useState('')
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
+  const [duration, setDuration] = useState(30)
   const [emailInput, setEmailInput] = useState('')
   const [emails, setEmails] = useState<string[]>([])
   const [link, setLink] = useState('')
@@ -89,6 +93,27 @@ export function SchedulePanel({ displayName, onDisplayNameChange }: { displayNam
         />
       </div>
 
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <span style={{ color: '#666', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase' as const, flexShrink: 0 }}>Duration</span>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+          {DURATIONS.map(d => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDuration(d)}
+              style={{
+                background: duration === d ? '#2a2010' : '#1a1a1a',
+                border: `1px solid ${duration === d ? '#f5a623' : '#2a2a2a'}`,
+                borderRadius: 16, color: duration === d ? '#f5a623' : '#888',
+                fontSize: 12, padding: '5px 12px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif",
+              }}
+            >
+              {d < 60 ? `${d}m` : `${d / 60}h${d % 60 ? ` ${d % 60}m` : ''}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           style={{ ...s.input, flex: 1, margin: 0 }}
@@ -114,6 +139,9 @@ export function SchedulePanel({ displayName, onDisplayNameChange }: { displayNam
           ))}
         </div>
       )}
+
+      {/* Smart Meeting Preparation — meeting-type cards + AI-style prep assistant */}
+      <MeetingPrep durationMinutes={duration} attendeeCount={emails.length} />
 
       {link ? (
         <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>

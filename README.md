@@ -103,13 +103,25 @@ Anyone in a meeting can invite anyone else — no account required on either sid
 - **BEE**HIVE wordmark — `BEE` in Roboto Regular (400), `HIVE` in Roboto Thin (100)
 - **Start Now / Schedule** tab switcher:
   - **Start Now** — Meet / Sting mode toggle; enter name; start immediately
-  - **Schedule** — pick date + time, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately
+  - **Schedule** — pick date + time + **duration**, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately. Also includes the **Smart Meeting Preparation** assistant (below)
 - Invite preview — guests visiting a `?room=ROOM_ID` link see the room name and live participant count before joining
 - **Register CTA** — unauthenticated guests see a "Register to save your history" button; clicking it card-flips the lobby card to a registration form (magic link or OTP)
 - **Post-meeting register** — guests who joined via room link are prompted to register when they return to the lobby after a meeting ends (same card-flip animation)
 - **User strip** — authenticated users see their name and a Sign out button at the top of the lobby card
 - **Recent meetings** — expandable Fathom panel showing AI-summarised past meetings
 - **Open in desktop app** — web-only button below "Recent meetings"; hands off the signed-in session to the BeeHive desktop app via the `beehive://` deep link, with an OS-aware "Download for macOS/Windows" fallback link for visitors who don't have it installed (see [Authentication](#authentication))
+
+#### Smart Meeting Preparation
+
+Inside the **Schedule** tab, once the basics (name / date / time / duration / attendees) are set, a preparation assistant helps the host walk into the meeting prepared. Components: `MeetingPrep.tsx` (UI) + `meetingTemplates.ts` (data).
+
+- **Meeting-type cards** — a responsive, scrollable grid of ~21 templates (Board, Client, Follow-up, Brainstorm, Project Kickoff, Team Stand-up, Sales, Training, Interview, Executive, Workshop, One-on-One, Performance Review, Sprint Planning / Review / Retro, Investor, Product Demo, Discovery Call, Quarterly Review, Annual Planning). Each card is icon + title + description, keyboard-focusable (`aria-pressed`, focus ring), touch-friendly, and lifts on hover
+- **Per-type preparation** — selecting a card expands a panel with the template's suggested **objectives**, **agenda**, **preparation checklist / documents**, **questions**, **suggested attendees**, and **risks to watch**
+- **Editable throughout** — the agenda is an editable list (add / edit / remove rows); the checklist ("AI thinks you'll probably need…") is interactive — check / uncheck / **add custom items** / remove
+- **Live readiness dashboard** — a real-time score (documents-ready 60% + attendees invited 20% + duration set 20%), a colour-coded progress bar, a **Missing** list, and an **estimated prep time** (~4 min per outstanding document + fixed costs for gaps)
+- **Rule-based smart recommendations** — genuine deterministic logic, e.g. "your agenda has 12 topics for a 30-minute meeting (~2.5 min each) — consider increasing the duration or trimming the agenda", plus prompts to add attendees / set a duration
+- **Extensibility** — adding a meeting type is a single entry in `MEETING_TEMPLATES` (no component changes)
+- **Scope (v1):** all preparation content is deterministic template data — **no language model is called**. The PRD's history-aware behaviours (e.g. "your third meeting with this client", auto-attaching relevant files, generated briefings, and persisted / shareable personal & organisation templates) need a backend + model + stored history and are intentionally left for a later phase rather than mocked
 
 ### In Meeting
 
@@ -379,7 +391,9 @@ beehive/
 │   ├── AuthScreen.tsx                  #   magic link + OTP sign-in / register UI
 │   ├── InviteModal.tsx                 #   plain ?room=ROOM_ID link + copy button
 │   ├── Lobby.tsx                       #   lobby (Start Now / Schedule + card-flip register)
-│   ├── SchedulePanel.tsx               #   schedule + email-invite panel
+│   ├── SchedulePanel.tsx               #   schedule + duration + email-invite panel
+│   ├── MeetingPrep.tsx                 #   Smart Meeting Preparation (type cards + prep panel)
+│   ├── meetingTemplates.ts             #   meeting-type template data (agenda/docs/questions/…)
 │   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
 │   ├── ParticipantsWindow.tsx          #   draggable/dockable window + strip
 │   ├── BackgroundMenu.tsx              #   background-effects menu
@@ -699,6 +713,8 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Fathom integration — meeting summaries, action items, transcript viewer
 - [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation); aspect-ratio-correct output (no stretch), overscan blur (no vignette), thresholded high-contrast attendee cutout with separating rim shadow
 - [x] File sharing — drag-to-drop or paperclip; send to all or select attendees; Supabase Storage
-- [x] Schedule meeting — date/time picker, email chip invites, shareable link, mailto integration
+- [x] Schedule meeting — date/time/duration picker, email chip invites, shareable link, mailto integration
+- [x] Smart Meeting Preparation (v1) — ~21 meeting-type cards; per-type agenda/checklist/questions/goals/attendees/risks; editable agenda + interactive checklist (add/remove/custom); live readiness score + prep-time estimate; rule-based recommendations (agenda-vs-duration pacing, missing attendees). Template-data-driven, no LLM
+- [ ] Smart Meeting Preparation (AI phase) — history-aware suggestions, auto-attach relevant files, generated briefings/questions, persisted & shareable personal + organisation templates (needs backend + model + stored history)
 - [x] Electron desktop app — native file open, window capture without OS dialog, drag-to-present with preview confirmation
 - [ ] Self-hosted LiveKit option (Africa-first / data sovereignty)

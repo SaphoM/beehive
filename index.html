@@ -18,6 +18,10 @@
       @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
       .controls-bar::-webkit-scrollbar { display: none; }
 
+      /* Smart Meeting Preparation type cards — hover/focus lift + focus ring */
+      .bhv-prep-card:hover { transform: translateY(-2px); border-color: #444 !important; background: #202020 !important; }
+      .bhv-prep-card:focus-visible { outline: 2px solid #f5a623; outline-offset: 2px; }
+
       /* ── Mobile: lift speaking indicator above controls bar ─────────── */
       @media (max-width: 640px) {
         /* safe-area accounts for home indicator (34px on iPhone 13); +130px clears the controls bar */

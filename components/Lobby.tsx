@@ -232,7 +232,7 @@ export function Lobby({
                       </>
                     ) : (
                       <button
-                        style={{ ...s.primaryBtn, ...(subtext === 'Sting' ? { background: STING_RED } : {}) }}
+                        style={{ ...s.primaryBtn, background: subtext === 'Sting' ? STING_RED : '#f5a623' }}
                         onClick={onCreateRoom}
                         disabled={creating}
                       >

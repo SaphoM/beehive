@@ -63,7 +63,7 @@ export const s: Record<string, React.CSSProperties> = {
   msgText: { color: '#ddd', fontSize: 13, lineHeight: 1.4 },
   msgTime: { color: '#444', fontSize: 11 },
   chatInputRow: { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid #1e1e1e' },
-  sendBtn: { background: '#5b5ef4', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { background: '#f5a623', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   fileCard: { display: 'flex', flexDirection: 'column' as const, gap: 4, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '10px 12px' },
   fileCardLink: { display: 'flex', alignItems: 'center', gap: 8, color: '#ddd', textDecoration: 'none', fontSize: 13, background: '#111', border: '1px solid #222', borderRadius: 8, padding: '8px 10px', marginTop: 4 },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },

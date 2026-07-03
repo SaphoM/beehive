@@ -136,6 +136,18 @@ export default function RoomPage() {
     window.electronAPI.requestMediaPermissions().catch(() => {})
   }, [])
 
+  // Web / mobile browsers only show the camera-mic permission prompt when
+  // getUserMedia is actually called. Tracks now start disabled, so without
+  // this warm-up the prompt never appeared and the first camera toggle could
+  // silently fail (or stall) on phones. Request once on entering a room,
+  // release the tracks immediately — we only want the permission grant.
+  useEffect(() => {
+    if (view !== 'room' || window.electronAPI) return
+    navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
+      .then(stream => stream.getTracks().forEach(t => t.stop()))
+      .catch(() => { /* denied or unavailable — toggles will surface it */ })
+  }, [view])
+
   const handleCreate = async () => {
     if (!displayName.trim()) return alert('Enter your name first')
     const room = await createRoom(`Meeting ${new Date().toLocaleTimeString()}`, 'X Spark')
@@ -176,12 +188,10 @@ export default function RoomPage() {
         token={token}
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
         connect={true}
-        // useLiveKitRoom defaults BOTH to false, silently requiring a manual
-        // click on the mic/camera buttons after every join — which reads as
-        // "video isn't working" to anyone expecting Zoom/Teams/Meet-style
-        // default-on camera. Auto-enable both, matching that convention.
-        video={true}
-        audio={true}
+        // Join with mic/camera off by default; participants opt in via the
+        // toggle buttons once in the room.
+        video={false}
+        audio={false}
         onDisconnected={handleLeave}
         style={{ height: 'var(--vh, 100vh)' }}
       >
@@ -220,7 +230,16 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
   roomId: string; displayName: string; onLeave: () => void
 }) {
   const [showInviteModal, setShowInviteModal] = useState(false)
-  const allTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false })
+  // withPlaceholder keeps a name/avatar tile in the grid for participants whose
+  // camera is off — without it they have no tile at all, and since tracks now
+  // start disabled the whole grid rendered as a blank black area on join.
+  const allTracks = useTracks(
+    [
+      { source: Track.Source.Camera, withPlaceholder: true },
+      { source: Track.Source.ScreenShare, withPlaceholder: false },
+    ],
+    { onlySubscribed: false },
+  )
   const { localParticipant } = useLocalParticipant()
   const liveKitParticipants = useLiveKitParticipants()
 
@@ -1173,8 +1192,15 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
     onLeave()
   }, [roomId, displayName, onLeave])
 
+  // StrictMode mounts effects twice in dev, which double-inserted the
+  // "joined" announcement — guard so one join announces exactly once.
+  const joinAnnouncedRef = useRef<string | null>(null)
   useEffect(() => {
-    supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__JOIN__${displayName}` }).then(() => {})
+    const key = `${roomId}:${displayName}`
+    if (joinAnnouncedRef.current !== key) {
+      joinAnnouncedRef.current = key
+      supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__JOIN__${displayName}` }).then(() => {})
+    }
     return () => {
       supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName).then(() => {})
     }
@@ -2386,9 +2412,12 @@ function MeetingRoom({ roomId, displayName, onLeave }: {
                   No messages yet
                 </p>
               )}
-              {messages.map(m => {
+              {messages.map((m, i) => {
                 if (m.message.startsWith('__DM__')) return null
                 if (m.message.startsWith('__JOIN__') || m.message.startsWith('__LEAVE__')) {
+                  // Collapse back-to-back duplicates (historic double-inserts
+                  // from StrictMode remounts) into a single annotation line.
+                  if (messages[i - 1]?.message === m.message) return null
                   const isJoin = m.message.startsWith('__JOIN__')
                   const name = m.message.slice(8)
                   return (

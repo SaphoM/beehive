@@ -46,6 +46,14 @@
     "appId": "co.xspark.beehive",
     "productName": "BeeHive",
     "copyright": "Copyright © 2025 X Spark",
+    "protocols": [
+      {
+        "name": "BeeHive",
+        "schemes": [
+          "beehive"
+        ]
+      }
+    ],
     "files": [
       "dist/**",
       "electron/**",

@@ -3,7 +3,23 @@ import { createClient, Session, User } from '@supabase/supabase-js'
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    auth: {
+      // Implicit flow puts self-contained tokens in the URL *hash*
+      // (#access_token&refresh_token) rather than a PKCE ?code that must be
+      // exchanged using a verifier stored in the *originating* app's storage.
+      // The desktop magic-link handoff opens a different app instance than the
+      // one that requested the link, so a PKCE code can't be exchanged there
+      // and the user lands back on the sign-in screen. Implicit tokens can be
+      // consumed by any instance via setSession — which is exactly what
+      // AuthGate and DesktopHandoff already do.
+      flowType: 'implicit',
+      detectSessionInUrl: true,
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  }
 )
 
 // In packaged Electron (file: origin) there is no Vite proxy — hit :3001 directly.
@@ -56,9 +72,19 @@ export function useAuth() {
   }, [])
 
   const signInWithOtp = useCallback(async (email: string) => {
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true },
+      options: {
+        // The email carries both a 6-digit code and a magic link. Point that
+        // link back to the desktop app (beehive://) when sent from Electron so
+        // clicking it signs the user in *in the desktop app* instead of
+        // bouncing to the web Site URL. On web, return to the web callback.
+        emailRedirectTo: isElectron
+          ? 'beehive://auth/confirm'
+          : `${window.location.origin}/?auth=confirm`,
+        shouldCreateUser: true,
+      },
     })
     return { error: error?.message ?? null }
   }, [])

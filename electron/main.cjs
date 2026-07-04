@@ -361,15 +361,23 @@ app.setAsDefaultProtocolClient('beehive')
 
 function handleDeepLink(url) {
   if (!mainWindow || !url) return
-  // url = beehive://auth/confirm#access_token=XXX&...
+  // url = beehive://auth/confirm#access_token=XXX...  (implicit flow)
+  //   or beehive://auth/confirm?code=XXX             (PKCE / other providers)
   try {
     const parsed = new URL(url)
-    const hash = parsed.hash.slice(1) // strip leading #
-    // Token must be in the hash so Supabase's detectSessionInUrl picks it up
+    const hash = parsed.hash // includes leading '#', or '' — forwarded verbatim
+    // Carry any query params through too (e.g. a PKCE ?code=). Merge our own
+    // auth=confirm marker in so AuthGate treats it as a callback. Forwarding
+    // *both* query and hash means the session is established regardless of
+    // which flow Supabase used; previously the query was dropped, so a link
+    // that came back as ?code=… lost its payload and fell to the sign-in screen.
+    const query = new URLSearchParams(parsed.search)
+    query.set('auth', 'confirm')
+    const suffix = `?${query.toString()}${hash}`
     mainWindow.webContents.loadURL(
       isDev
-        ? `http://localhost:5173/?auth=confirm#${hash}`
-        : `file://${path.join(__dirname, '..', 'dist', 'index.html')}?auth=confirm#${hash}`
+        ? `http://localhost:5173/${suffix}`
+        : `file://${path.join(__dirname, '..', 'dist', 'index.html')}${suffix}`
     )
     mainWindow.show()
     mainWindow.focus()

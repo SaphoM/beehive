@@ -7,6 +7,7 @@ import { FathomPanel } from './FathomPanel'
 import { useAuth, useProfile } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
 import { OpenDesktopAppButton } from './DesktopHandoff'
+import { BuiltByFooter } from './BuiltByFooter'
 
 // -----------------------------------------------------------------------
 // RegisterPanel — appears on card back face after a frictionless meeting.
@@ -235,6 +236,8 @@ export function Lobby({
 
       {/* Web only — continue in the desktop app (renders nothing inside Electron) */}
       <OpenDesktopAppButton style={{ maxWidth: 320 }} />
+
+      <BuiltByFooter />
     </div>
   )
 }

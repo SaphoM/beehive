@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useAuth } from '../livekit_react_hooks'
 import { REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO } from './roomUtils'
+import { BuiltByFooter } from './BuiltByFooter'
 
 type Mode = 'login' | 'register'
 type Step = 'email' | 'otp' | 'magic_sent'
@@ -265,6 +266,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
           )}
         </div>
       </div>
+      <BuiltByFooter />
     </div>
   )
 }

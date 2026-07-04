@@ -3,6 +3,7 @@ import { useCreateRoom } from '../livekit_react_hooks'
 import { WEB_BASE, STING_RED } from './roomUtils'
 import { s } from './roomStyles'
 import { MeetingPrep } from './MeetingPrep'
+import { TimePicker } from './TimePicker'
 
 const DURATIONS = [15, 30, 45, 60, 90]
 
@@ -88,12 +89,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { d
           value={date}
           onChange={e => setDate(e.target.value)}
         />
-        <input
-          type="time"
-          style={{ ...s.input, flex: 1, margin: 0, colorScheme: 'dark' as any }}
-          value={time}
-          onChange={e => setTime(e.target.value)}
-        />
+        <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} />
       </div>
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

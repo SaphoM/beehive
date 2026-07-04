@@ -3,7 +3,7 @@ import {
   Building2, Handshake, RefreshCw, Lightbulb, Rocket, Users, TrendingUp,
   GraduationCap, Briefcase, Scale, Wrench, UserCheck, ClipboardCheck,
   CalendarDays, CheckCircle2, RotateCcw, DollarSign, Monitor, Search,
-  BarChart3, Map as MapIcon, type LucideIcon,
+  BarChart3, Map as MapIcon, ArrowLeft, type LucideIcon,
 } from 'lucide-react'
 import { MEETING_TEMPLATES, getTemplate } from './meetingTemplates'
 
@@ -58,6 +58,14 @@ export function MeetingPrep({
     setChecklist(t.documents.map((label, i) => ({ id: `${id}-${i}`, label, checked: true })))
   }
 
+  // Back to the full card grid — clears the panel state too, so returning to
+  // this same card later starts fresh rather than flashing stale data.
+  const backToOptions = () => {
+    setSelectedId(null)
+    setAgenda([])
+    setChecklist([])
+  }
+
   // ---- Live readiness + prep-time (recomputed on every edit) ----
   const { readiness, prepMinutes, missing, recommendations } = useMemo(() => {
     if (!template) return { readiness: 0, prepMinutes: 0, missing: [] as string[], recommendations: [] as string[] }
@@ -104,8 +112,16 @@ export function MeetingPrep({
       <div style={st.sectionLabel}>Prepare for this meeting</div>
 
       {/* ---- Meeting-type cards ---- */}
+      {/* Once a card is picked, the rest collapse away and only the selected
+          one remains (still in the same 2-column grid slot) — a "Back" button
+          takes the host back to the full set of options. */}
+      {selectedId && (
+        <button type="button" style={st.backBtn} onClick={backToOptions}>
+          <ArrowLeft size={13} /> Back to meeting types
+        </button>
+      )}
       <div style={st.cardGrid} aria-label="Meeting type">
-        {MEETING_TEMPLATES.map(t => {
+        {(selectedId ? MEETING_TEMPLATES.filter(t => t.id === selectedId) : MEETING_TEMPLATES).map(t => {
           const active = t.id === selectedId
           const Icon = TEMPLATE_ICONS[t.id]
           return (
@@ -256,6 +272,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 const st: Record<string, React.CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 10, fontFamily: "'Roboto', sans-serif" },
   sectionLabel: { color: '#888', fontSize: 11, fontWeight: 300, letterSpacing: 1.5, textTransform: 'uppercase', marginTop: 4 },
+  backBtn: { display: 'flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', background: 'none', border: 'none', color: '#888', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', padding: '2px 0' },
   cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))', gap: 8, maxHeight: 264, overflowY: 'auto', paddingRight: 2 },
   card: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 12, padding: '10px 12px', cursor: 'pointer', textAlign: 'left', transition: 'transform 0.12s ease, border-color 0.15s, background 0.15s', color: '#ddd', WebkitAppRegion: 'no-drag' as any },
   cardActive: { borderColor: '#f5a623', background: '#2a2010' },

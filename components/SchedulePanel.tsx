@@ -157,7 +157,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { d
           </div>
           {emails.length > 0 && (
             <button
-              style={{ ...s.primaryBtn, margin: 0, background: '#5b5ef4' }}
+              style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}
               onClick={sendEmails}
             >
               Send Email Invite{emails.length > 1 ? 's' : ''} ({emails.length})

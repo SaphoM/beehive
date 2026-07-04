@@ -14,9 +14,12 @@ interface Props {
   onClose: () => void
   lastReactionAt: React.MutableRefObject<number>
   cooldownMs: number
+  // Signature gold, or STING_RED when the meeting is in Sting mode — passed
+  // down from RoomPage's `accent` so this button matches the rest of the room.
+  accent?: string
 }
 
-export function ReactionComposer({ emoji, defaultText, anchor, onSend, onClose, lastReactionAt, cooldownMs }: Props) {
+export function ReactionComposer({ emoji, defaultText, anchor, onSend, onClose, lastReactionAt, cooldownMs, accent = '#f5a623' }: Props) {
   const [text, setText] = useState(defaultText)
   const [cooldownLeft, setCooldownLeft] = useState(() =>
     Math.max(0, cooldownMs - (Date.now() - lastReactionAt.current))
@@ -151,7 +154,7 @@ export function ReactionComposer({ emoji, defaultText, anchor, onSend, onClose, 
               aria-label={canSend ? 'Send reaction' : `Wait ${Math.ceil(cooldownLeft / 1000)}s`}
               title={canSend ? undefined : `Cooldown — ${Math.ceil(cooldownLeft / 1000)}s`}
               style={{
-                background: canSend ? '#f5c518' : '#222',
+                background: canSend ? accent : '#222',
                 border: 'none',
                 borderRadius: 8,
                 color: canSend ? '#000' : '#555',

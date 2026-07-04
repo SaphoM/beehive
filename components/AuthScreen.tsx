@@ -34,7 +34,7 @@ const c: Record<string, React.CSSProperties> = {
     boxSizing: 'border-box',
   },
   primaryBtn: {
-    background: '#f5c518', color: '#000', border: 'none', borderRadius: 8,
+    background: '#f5a623', color: '#000', border: 'none', borderRadius: 8,
     fontWeight: 600, fontSize: 14, padding: '13px 0', cursor: 'pointer',
     width: '100%', letterSpacing: 0.5,
     transition: 'opacity 0.15s',
@@ -49,7 +49,7 @@ const c: Record<string, React.CSSProperties> = {
     display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center',
   },
   modeSwitchLink: {
-    color: '#f5c518', background: 'none', border: 'none',
+    color: '#f5a623', background: 'none', border: 'none',
     cursor: 'pointer', fontSize: 12, textDecoration: 'underline', padding: 0,
   },
   error: {
@@ -64,7 +64,7 @@ const c: Record<string, React.CSSProperties> = {
   betaBadge: {
     display: 'inline-block', marginLeft: 6, padding: '1px 6px', borderRadius: 999,
     background: 'rgba(245,197,24,0.12)', border: '1px solid rgba(245,197,24,0.4)',
-    color: '#f5c518', fontSize: 9, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase',
+    color: '#f5a623', fontSize: 9, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase',
     verticalAlign: 'middle',
   },
   betaNote: {
@@ -123,7 +123,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
 
   async function handleOtpSubmit(e: FormEvent) {
     e.preventDefault()
-    if (otp.length < 6) return
+    if (otp.length < 8) return
     setErr(null)
     setBusy(true)
     const { error } = await verifyOtp(email, otp)
@@ -150,7 +150,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
           {step === 'email' && mode === 'register' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <p style={c.betaNote}>
-                BeeHive is in private <strong style={{ color: '#f5c518' }}>Beta</strong>. Accounts are
+                BeeHive is in private <strong style={{ color: '#f5a623' }}>Beta</strong>. Accounts are
                 provisioned by X&nbsp;Spark — request access and we'll set you up.
               </p>
               <a
@@ -190,7 +190,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
                 <>
                   <p style={c.divider}>— or —</p>
                   <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy || !email.trim()}>
-                    Send 6-digit code instead
+                    Send code instead
                   </button>
                 </>
               )}
@@ -205,7 +205,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
                 Click the link in your email to sign in.
               </p>
               <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy}>
-                {busy ? 'Sending…' : 'Use 6-digit code instead'}
+                {busy ? 'Sending…' : 'Use code instead'}
               </button>
               <button style={c.ghostBtn} type="button" onClick={reset}>
                 Use a different email
@@ -219,16 +219,21 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
                 Code sent to <strong>{email}</strong>
               </p>
               <div>
-                <p style={c.label}>6-digit code</p>
+                <p style={c.label}>Verification code</p>
                 <input
                   style={c.otpInput}
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder="000000"
+                  // This project's Supabase Auth issues an 8-digit OTP (confirmed via
+                  // admin generate_link — email_otp is consistently 8 chars), not the
+                  // 6-digit default. Capping input at 6 made manual code entry
+                  // impossible: the last 2 digits could never be typed, so
+                  // verifyOtp always failed and sent the user back to this screen.
+                  maxLength={8}
+                  placeholder="00000000"
                   value={otp}
-                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
                   autoFocus
                   autoComplete="one-time-code"
                 />
@@ -236,7 +241,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
 
               {err && <p style={c.error}>{err}</p>}
 
-              <button style={c.primaryBtn} type="submit" disabled={busy || otp.length < 6}>
+              <button style={c.primaryBtn} type="submit" disabled={busy || otp.length < 8}>
                 {busy ? 'Verifying…' : 'Verify code'}
               </button>
               <button style={c.ghostBtn} type="button" onClick={reset}>

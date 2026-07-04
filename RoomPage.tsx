@@ -2743,6 +2743,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         <InviteModal
           roomId={roomId}
           onClose={() => setShowInviteModal(false)}
+          accent={accent}
         />
       )}
 
@@ -2755,6 +2756,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           onClose={() => setReactionComposer(null)}
           lastReactionAt={lastReactionAt}
           cooldownMs={REACTION_COOLDOWN_MS}
+          accent={accent}
         />
       )}
     </div>

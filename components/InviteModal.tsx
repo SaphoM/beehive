@@ -5,9 +5,12 @@ import { WEB_BASE } from './roomUtils'
 interface Props {
   roomId: string | null
   onClose: () => void
+  // Signature gold, or STING_RED when the meeting is in Sting mode — passed
+  // down from RoomPage's `accent` so this button matches the rest of the room.
+  accent?: string
 }
 
-export function InviteModal({ roomId, onClose }: Props) {
+export function InviteModal({ roomId, onClose, accent = '#f5a623' }: Props) {
   const [copied, setCopied] = useState(false)
 
   // WEB_BASE is the deployed web URL (VITE_WEB_BASE_URL), with a same-origin fallback
@@ -37,7 +40,7 @@ export function InviteModal({ roomId, onClose }: Props) {
     cursor: 'text',
   }
   const copyBtn: React.CSSProperties = {
-    background: copied ? '#1a3a1a' : '#f5c518',
+    background: copied ? '#1a3a1a' : accent,
     color: copied ? '#48bb78' : '#000',
     border: copied ? '1px solid #48bb78' : 'none',
     borderRadius: 8, fontWeight: 600, fontSize: 14,
@@ -52,7 +55,7 @@ export function InviteModal({ roomId, onClose }: Props) {
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Link size={15} color="#f5c518" />
+            <Link size={15} color={accent} />
             <h2 style={{ color: '#fff', fontSize: 15, fontWeight: 500, margin: 0 }}>Invite to meeting</h2>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#555', display: 'flex', alignItems: 'center' }}>

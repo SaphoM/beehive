@@ -26,7 +26,7 @@ function RegisterPanel({ onDismiss }: { onDismiss: () => void }) {
       <div>
         <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 400, marginBottom: 6 }}>
           Create your account
-          <span style={{ marginLeft: 8, padding: '1px 6px', borderRadius: 999, background: 'rgba(245,197,24,0.12)', border: '1px solid rgba(245,197,24,0.4)', color: '#f5c518', fontSize: 9, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' as const, verticalAlign: 'middle' }}>Beta</span>
+          <span style={{ marginLeft: 8, padding: '1px 6px', borderRadius: 999, background: 'rgba(245,197,24,0.12)', border: '1px solid rgba(245,197,24,0.4)', color: '#f5a623', fontSize: 9, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' as const, verticalAlign: 'middle' }}>Beta</span>
         </h2>
         <p style={{ color: '#666', fontSize: 12, lineHeight: 1.5 }}>
           Save your name and access meeting history across sessions.
@@ -34,7 +34,7 @@ function RegisterPanel({ onDismiss }: { onDismiss: () => void }) {
       </div>
 
       <p style={noteStyle}>
-        BeeHive is in private <strong style={{ color: '#f5c518' }}>Beta</strong>. Accounts are
+        BeeHive is in private <strong style={{ color: '#f5a623' }}>Beta</strong>. Accounts are
         provisioned by X&nbsp;Spark — request access and we'll set you up.
       </p>
 
@@ -139,7 +139,7 @@ export function Lobby({
                   <div style={s.invitePreview}>
                     <p style={s.inviteLabel}>This meeting has ended</p>
                     <p style={s.inviteRoomName}>{inviteRoom.name}</p>
-                    <button style={s.primaryBtn} onClick={onCreateRoom} disabled={creating}>Start a new meeting</button>
+                    <button style={{ ...s.primaryBtn, ...(subtext === 'Sting' ? { background: STING_RED } : {}) }} onClick={onCreateRoom} disabled={creating}>Start a new meeting</button>
                   </div>
                 ) : hasInvite && inviteRoom ? (
                   <div style={s.invitePreview}>
@@ -174,7 +174,7 @@ export function Lobby({
 
                     {hasInvite ? (
                       <>
-                        <button style={s.primaryBtn} onClick={onJoinRoom} disabled={creating}>
+                        <button style={{ ...s.primaryBtn, ...(subtext === 'Sting' ? { background: STING_RED } : {}) }} onClick={onJoinRoom} disabled={creating}>
                           {creating ? 'Joining…' : 'Join Meeting'}
                         </button>
                         <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
@@ -195,7 +195,11 @@ export function Lobby({
 
                 {!user && !flipped && (
                   <button
-                    style={{ ...s.secondaryBtn, marginTop: 2, fontSize: 12, color: '#f5c518', borderColor: 'rgba(245,197,24,0.25)' }}
+                    style={{
+                      ...s.secondaryBtn, marginTop: 2, fontSize: 12,
+                      color: subtext === 'Sting' ? STING_RED : '#f5a623',
+                      borderColor: subtext === 'Sting' ? 'rgba(239,68,68,0.3)' : 'rgba(245,166,35,0.25)',
+                    }}
                     onClick={() => setFlipped(true)}
                   >
                     Register to save your history

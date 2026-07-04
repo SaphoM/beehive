@@ -29,6 +29,17 @@ export const STING_RED = '#ef4444'
 export const WEB_BASE = (import.meta.env.VITE_WEB_BASE_URL as string | undefined)?.replace(/\/$/, '')
   || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? window.location.origin : '')
 
+// BeeHive is in private Beta — accounts are provisioned by X Spark rather than
+// self-served, so "Register" points people here. Shared by AuthScreen and the
+// Lobby's RegisterPanel so both stay in sync from one source.
+export const REQUEST_ACCESS_EMAIL = 'studio@xspark.co.za'
+export const REQUEST_ACCESS_MAILTO =
+  `mailto:${REQUEST_ACCESS_EMAIL}` +
+  `?subject=${encodeURIComponent('BeeHive Beta access request')}` +
+  `&body=${encodeURIComponent(
+    "Hi X Spark,\n\nI'd like to request access to the BeeHive Beta.\n\nName:\nOrganisation:\nEmail:\n\nThanks!",
+  )}`
+
 export const PRESENTATION_EXTS = ['.key', '.keynote', '.pptx', '.ppt', '.odp', '.pdf']
 export const PRESENTATION_APP: Record<string, string> = {
   '.key': 'Keynote', '.keynote': 'Keynote',

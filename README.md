@@ -49,7 +49,9 @@ BeeHive uses **passwordless auth** — no passwords, ever.
 | **Magic link** | Enter email → click link in email → signed in (web default) |
 | **6-digit OTP** | Enter email → receive code → type code in app (Electron default; also available on web) |
 | **Frictionless room join** | `?room=ID` links bypass auth entirely — guests join directly |
-| **Post-meeting register** | Guests who joined via room link are prompted to register after the meeting ends (card-flip animation in lobby) |
+| **Post-meeting register** | Guests who joined via room link are prompted to **request Beta access** after the meeting ends (card-flip animation in lobby) |
+
+**Private Beta — access is invite-only:** BeeHive is in a private Beta, so accounts are **provisioned by X Spark** rather than self-served. The **Register** control (both on the `AuthScreen` and the lobby's post-meeting `RegisterPanel`) is tagged with a **`Beta`** badge and, instead of creating an account, opens a pre-filled `mailto:studio@xspark.co.za` "Request access from X Spark" message. Sign-in for existing accounts (magic link / OTP) is unchanged. The request-access email + `mailto` are defined once in `components/roomUtils.ts` (`REQUEST_ACCESS_EMAIL`, `REQUEST_ACCESS_MAILTO`) and shared by both surfaces.
 
 **Roles:**
 
@@ -58,7 +60,7 @@ BeeHive uses **passwordless auth** — no passwords, ever.
 | `admin` | sapho@xspark.co.za |
 | `user` | All other team members |
 
-Admin role is assigned automatically by the seed script. New self-registered users get the `user` role via a Supabase trigger on `auth.users`.
+Admin role is assigned automatically by the seed script. Users provisioned during the Beta get the `user` role via a Supabase trigger on `auth.users`. Both **seed users** (assigned by the seed script) and **fully registered users** (with a `user` role) are "authenticated" — they hold a Supabase session, which is what gates access to the desktop-app handoff/download below (invite-link guests hold no session and don't see it).
 
 **Auth gate:** The `AuthGate` component wraps the entire app. `?room=` links skip the gate; all other routes require a session.
 
@@ -67,16 +69,16 @@ Admin role is assigned automatically by the seed script. New self-registered use
 **Electron deep-link:** Magic links redirect to `beehive://auth/confirm#token=…`. Electron intercepts the URL scheme, extracts the token from the hash, and loads it into the renderer so Supabase can establish the session automatically.
 
 **Web → Desktop sign-in handoff** (`components/DesktopHandoff.tsx`): an **"Open in desktop app"** button on the web lobby lets a signed-in web user continue in the BeeHive desktop app without re-entering their email:
+- **Authenticated users only** — the whole handoff/download block (`OpenDesktopAppButton`) renders nothing unless there's a Supabase session (`if (!session) return null`), so it's shown only to **seed users and fully registered users**, never to invite-link guests
 - Clicking it navigates to `beehive://auth/confirm#access_token=…&refresh_token=…` — the desktop app picks up the hash and establishes the same session (`AuthGate` calls `supabase.auth.setSession(...)` explicitly, so it doesn't depend on Supabase's automatic `detectSessionInUrl`)
 - Tokens travel in the URL **hash**, never sent to a server or logged
 - If the desktop app isn't installed, the OS silently ignores the `beehive://` navigation — nothing breaks
 - Only rendered in a real browser — it never appears inside the Electron app itself (`canOfferDesktopHandoff()` checks for `window.electronAPI`)
-- Fully optional: a web-only user can simply ignore the button and keep using the web app
 
-**Download the desktop app:** directly beneath the button, a small OS-aware **"Don't have it? Download for macOS / Windows"** link is shown to visitors on a real Mac or Windows desktop browser:
+**Download the desktop app:** directly beneath the button, a small OS-aware **"Don't have it? Download for macOS / Windows"** link is shown to authenticated visitors on a real Mac or Windows desktop browser:
 - OS is detected via `detectDesktopOS()` — checks `navigator.platform`/`userAgent`, and excludes touch-primary devices (`matchMedia('(pointer: coarse)')`) so phones and tablets never see a desktop-app download link — this specifically also excludes **iPadOS**, which reports `navigator.platform` as `"MacIntel"` when the device requests the desktop site, and would otherwise be misidentified as a Mac
-- Link target is `VITE_DESKTOP_DOWNLOAD_MAC_URL` / `VITE_DESKTOP_DOWNLOAD_WIN_URL` if set, otherwise falls back to the repo's [GitHub Releases page](https://github.com/SaphoM/beehive/releases/latest)
-- **Note:** this only builds the download *link* — it does not itself build, sign, or publish installers. Producing real downloadable artifacts is a separate, deliberate step: run `npm run electron:build:mac` / `electron:build:win` locally, then publish the resulting `release/*.dmg` / `release/*.exe` to a GitHub Release (or wherever `VITE_DESKTOP_DOWNLOAD_*_URL` points)
+- **macOS ships the native installer directly:** the link points at `/downloads/BeeHive-arm64.dmg`, served by Vite from `public/downloads/`. Build it with `npm run electron:build:mac`, then copy `release/BeeHive-*-arm64.dmg` → `public/downloads/BeeHive-arm64.dmg`. The `.dmg` itself is git-ignored (large binary); for production hosting either commit/host it or set `VITE_DESKTOP_DOWNLOAD_MAC_URL` to an external URL
+- Windows has no bundled installer yet, so it falls back to the repo's [GitHub Releases page](https://github.com/SaphoM/beehive/releases/latest) (override with `VITE_DESKTOP_DOWNLOAD_WIN_URL`)
 
 **Supabase URL configuration (required for production):**
 - Site URL → `https://beehive-fu8w.onrender.com`
@@ -106,11 +108,11 @@ Anyone in a meeting can invite anyone else — no account required on either sid
     - **Sting mode theming** — selecting **Sting** turns the BEEHIVE logo, the active lobby tab (Start Now / Schedule, whichever is currently selected), the "Start Sting" button, and the Schedule tab's "Create Meeting & Get Link" button red (`STING_RED`, `#ef4444`, defined once in `roomUtils.ts`) — the selection persists across tabs, so switching from Start Now to Schedule keeps the red theme applied. Tuned for contrast: the original `#a91b1b` measured only ~2.3–2.7:1 against this app's dark backgrounds — under WCAG AA's 3:1 minimum for large text — `#ef4444` measures ~4.8–5.2:1, clearing AA for normal text while still reading unambiguously as red
   - **Schedule** — pick date + time + **duration**, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately. Also includes the **Smart Meeting Preparation** assistant (below)
 - Invite preview — guests visiting a `?room=ROOM_ID` link see the room name and live participant count before joining
-- **Register CTA** — unauthenticated guests see a "Register to save your history" button; clicking it card-flips the lobby card to a registration form (magic link or OTP)
-- **Post-meeting register** — guests who joined via room link are prompted to register when they return to the lobby after a meeting ends (same card-flip animation)
+- **Register CTA (Beta)** — the register control card-flips the lobby card to the `RegisterPanel`, which — during the private Beta — shows a **`Beta`** badge and a "Request access from X Spark" button (`mailto:studio@xspark.co.za`) instead of a self-serve form (see [Authentication](#authentication))
+- **Post-meeting register** — guests who joined via room link are prompted to request Beta access when they return to the lobby after a meeting ends (same card-flip animation)
 - **User strip** — authenticated users see their name and a Sign out button at the top of the lobby card
 - **Recent meetings** — expandable Fathom panel showing AI-summarised past meetings
-- **Open in desktop app** — web-only button below "Recent meetings"; hands off the signed-in session to the BeeHive desktop app via the `beehive://` deep link, with an OS-aware "Download for macOS/Windows" fallback link for visitors who don't have it installed (see [Authentication](#authentication))
+- **Open in desktop app** — web-only button below "Recent meetings", shown **only to authenticated (seed / fully registered) users**; hands off the signed-in session to the BeeHive desktop app via the `beehive://` deep link, with an OS-aware download link beneath it — macOS serves the native `.dmg` from `public/downloads/` (see [Authentication](#authentication))
 
 #### Smart Meeting Preparation
 

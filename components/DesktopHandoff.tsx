@@ -62,14 +62,16 @@ export function openInDesktopApp(session: Session | null): void {
 // ============================================================
 // DOWNLOAD — offer the installer for a visitor who doesn't have the app yet
 // ============================================================
-// Desktop-app installers aren't hosted by this web build itself (they're large
-// binaries built + published separately via `npm run electron:build:mac|win`
-// and a GitHub release). VITE_DESKTOP_DOWNLOAD_{MAC,WIN}_URL let a deployment
-// point at real hosted installers; unset, both fall back to the repo's GitHub
-// Releases page, which is always a valid destination once a release exists.
+// macOS ships the native installer directly: `npm run electron:build:mac`
+// produces the .dmg, which is served from the web app's own `public/downloads/`
+// (path below). VITE_DESKTOP_DOWNLOAD_{MAC,WIN}_URL still let a deployment
+// override with an externally hosted binary; Windows has no bundled installer
+// yet, so it falls back to the repo's GitHub Releases page.
 const GITHUB_RELEASES_URL = 'https://github.com/SaphoM/beehive/releases/latest'
+// Served by Vite from `public/downloads/` at the site root.
+const NATIVE_MAC_DMG_URL = '/downloads/BeeHive-arm64.dmg'
 const DOWNLOAD_URLS: Record<'mac' | 'windows', string> = {
-  mac: (import.meta.env.VITE_DESKTOP_DOWNLOAD_MAC_URL as string | undefined) || GITHUB_RELEASES_URL,
+  mac: (import.meta.env.VITE_DESKTOP_DOWNLOAD_MAC_URL as string | undefined) || NATIVE_MAC_DMG_URL,
   windows: (import.meta.env.VITE_DESKTOP_DOWNLOAD_WIN_URL as string | undefined) || GITHUB_RELEASES_URL,
 }
 
@@ -97,6 +99,10 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
   const os = detectDesktopOS()
 
   if (!canOfferDesktopHandoff()) return null
+  // Desktop-app access is limited to seed users and fully registered users
+  // during the Beta — an authenticated Supabase session is the marker for
+  // both (invite-link guests have none). Hide the whole block for guests.
+  if (!session) return null
 
   function handleOpen() {
     setOpening(true)
@@ -127,8 +133,7 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
       {(os === 'mac' || os === 'windows') && (
         <a
           href={DOWNLOAD_URLS[os]}
-          target="_blank"
-          rel="noopener noreferrer"
+          {...(os === 'mac' ? { download: '' } : { target: '_blank', rel: 'noopener noreferrer' })}
           title={`Download the BeeHive desktop app for ${os === 'mac' ? 'macOS' : 'Windows'}`}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,

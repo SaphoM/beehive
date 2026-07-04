@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { User } from '@supabase/supabase-js'
 import { s } from './roomStyles'
-import { SUBTEXTS, STING_RED, type Subtext } from './roomUtils'
+import { SUBTEXTS, STING_RED, REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO, type Subtext } from './roomUtils'
 import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
 import { useAuth, useProfile } from '../livekit_react_hooks'
@@ -9,93 +9,44 @@ import { LogOut } from 'lucide-react'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 
 // -----------------------------------------------------------------------
-// RegisterPanel — appears on card back face after frictionless meeting
+// RegisterPanel — appears on card back face after a frictionless meeting.
+// During the Beta, accounts are provisioned by X Spark, so this prompts the
+// guest to request access rather than self-registering.
 // -----------------------------------------------------------------------
-function RegisterPanel({ prefillEmail, onDismiss }: { prefillEmail?: string; onDismiss: () => void }) {
-  const { signInWithMagicLink, signInWithOtp, verifyOtp } = useAuth()
-  const [email, setEmail] = useState(prefillEmail ?? '')
-  const [otp, setOtp] = useState('')
-  const [step, setStep] = useState<'email' | 'otp' | 'sent'>('email')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
-
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault()
-    if (!email.trim()) return
-    setErr(null); setBusy(true)
-    const { error } = isElectron ? await signInWithOtp(email) : await signInWithMagicLink(email)
-    setBusy(false)
-    if (error) { setErr(error); return }
-    setStep(isElectron ? 'otp' : 'sent')
-  }
-
-  async function handleVerify(e: React.FormEvent) {
-    e.preventDefault()
-    if (otp.length < 6) return
-    setErr(null); setBusy(true)
-    const { error } = await verifyOtp(email, otp)
-    setBusy(false)
-    if (error) { setErr(error); return }
-    onDismiss()
-  }
-
-  const inp: React.CSSProperties = { background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, color: '#fff', fontSize: 15, padding: '11px 14px', width: '100%', outline: 'none', boxSizing: 'border-box' }
-  const lbl: React.CSSProperties = { color: '#888', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }
-  const errStyle: React.CSSProperties = { color: '#f55', fontSize: 12, background: 'rgba(255,80,80,0.08)', border: '1px solid rgba(255,80,80,0.2)', borderRadius: 6, padding: '8px 12px' }
-  const okStyle: React.CSSProperties = { color: '#5f5', fontSize: 12, background: 'rgba(80,255,80,0.06)', border: '1px solid rgba(80,255,80,0.15)', borderRadius: 6, padding: '8px 12px', textAlign: 'center' as const, lineHeight: 1.6 }
+function RegisterPanel({ onDismiss }: { onDismiss: () => void }) {
   const col: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 14 }
+  const noteStyle: React.CSSProperties = {
+    color: '#999', fontSize: 12.5, lineHeight: 1.6, textAlign: 'center',
+    background: 'rgba(245,197,24,0.05)', border: '1px solid rgba(245,197,24,0.18)',
+    borderRadius: 8, padding: '12px 14px',
+  }
 
   return (
     <div style={col}>
       <div>
-        <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 400, marginBottom: 6 }}>Create your account</h2>
+        <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 400, marginBottom: 6 }}>
+          Create your account
+          <span style={{ marginLeft: 8, padding: '1px 6px', borderRadius: 999, background: 'rgba(245,197,24,0.12)', border: '1px solid rgba(245,197,24,0.4)', color: '#f5c518', fontSize: 9, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' as const, verticalAlign: 'middle' }}>Beta</span>
+        </h2>
         <p style={{ color: '#666', fontSize: 12, lineHeight: 1.5 }}>
           Save your name and access meeting history across sessions.
         </p>
       </div>
 
-      {step === 'email' && (
-        <form onSubmit={handleSend} style={col}>
-          <div>
-            <p style={lbl}>Email address</p>
-            <input style={inp} type="email" placeholder="you@company.com" value={email} onChange={e => setEmail(e.target.value)} autoFocus autoComplete="email" />
-          </div>
-          {err && <p style={errStyle}>{err}</p>}
-          <button style={s.primaryBtn} type="submit" disabled={busy || !email.trim()}>
-            {busy ? 'Sending…' : isElectron ? 'Send code' : 'Send magic link'}
-          </button>
-          <button style={s.secondaryBtn} type="button" onClick={onDismiss}>Not now</button>
-        </form>
-      )}
+      <p style={noteStyle}>
+        BeeHive is in private <strong style={{ color: '#f5c518' }}>Beta</strong>. Accounts are
+        provisioned by X&nbsp;Spark — request access and we'll set you up.
+      </p>
 
-      {step === 'sent' && (
-        <div style={col}>
-          <p style={okStyle}>Magic link sent to <strong>{email}</strong>.<br />Click it to finish registering.</p>
-          <button style={s.secondaryBtn} type="button" onClick={onDismiss}>Close</button>
-        </div>
-      )}
+      <a
+        href={REQUEST_ACCESS_MAILTO}
+        style={{ ...s.primaryBtn, display: 'block', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}
+      >
+        Request access from X Spark
+      </a>
+      <p style={{ color: '#555', fontSize: 11, textAlign: 'center', margin: 0 }}>{REQUEST_ACCESS_EMAIL}</p>
 
-      {step === 'otp' && (
-        <form onSubmit={handleVerify} style={col}>
-          <p style={okStyle}>Code sent to <strong>{email}</strong></p>
-          <div>
-            <p style={lbl}>6-digit code</p>
-            <input
-              style={{ ...inp, fontSize: 22, fontWeight: 600, textAlign: 'center', letterSpacing: 4 }}
-              type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6}
-              placeholder="000000" value={otp}
-              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              autoFocus autoComplete="one-time-code"
-            />
-          </div>
-          {err && <p style={errStyle}>{err}</p>}
-          <button style={s.primaryBtn} type="submit" disabled={busy || otp.length < 6}>
-            {busy ? 'Verifying…' : 'Verify & Register'}
-          </button>
-          <button style={s.secondaryBtn} type="button" onClick={onDismiss}>Not now</button>
-        </form>
-      )}
+      <button style={s.secondaryBtn} type="button" onClick={onDismiss}>Not now</button>
     </div>
   )
 }
@@ -265,7 +216,7 @@ export function Lobby({
             position: 'absolute',
             top: 0, left: 0, width: '100%',
           } as React.CSSProperties}>
-            <RegisterPanel prefillEmail={user?.email ?? ''} onDismiss={handleDismissRegister} />
+            <RegisterPanel onDismiss={handleDismissRegister} />
           </div>
         </div>
       </div>

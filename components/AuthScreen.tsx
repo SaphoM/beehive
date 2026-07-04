@@ -1,5 +1,6 @@
 import { useState, FormEvent } from 'react'
 import { useAuth } from '../livekit_react_hooks'
+import { REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO } from './roomUtils'
 
 type Mode = 'login' | 'register'
 type Step = 'email' | 'otp' | 'magic_sent'
@@ -59,6 +60,17 @@ const c: Record<string, React.CSSProperties> = {
     color: '#5f5', fontSize: 12, background: 'rgba(80,255,80,0.06)',
     border: '1px solid rgba(80,255,80,0.15)', borderRadius: 6, padding: '8px 12px',
     textAlign: 'center', lineHeight: 1.6,
+  },
+  betaBadge: {
+    display: 'inline-block', marginLeft: 6, padding: '1px 6px', borderRadius: 999,
+    background: 'rgba(245,197,24,0.12)', border: '1px solid rgba(245,197,24,0.4)',
+    color: '#f5c518', fontSize: 9, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase',
+    verticalAlign: 'middle',
+  },
+  betaNote: {
+    color: '#999', fontSize: 12.5, lineHeight: 1.6, textAlign: 'center',
+    background: 'rgba(245,197,24,0.05)', border: '1px solid rgba(245,197,24,0.18)',
+    borderRadius: 8, padding: '12px 14px',
   },
   divider: { color: '#333', fontSize: 11, textAlign: 'center', position: 'relative' },
   otpRow: { display: 'flex', gap: 8 },
@@ -131,11 +143,29 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
               <span style={c.logoAccent}>BEE</span>HIVE
             </h1>
             <p style={c.subtitle}>
-              {mode === 'login' ? 'Sign in to continue' : 'Create your account'}
+              {mode === 'login' ? 'Sign in to continue' : 'Request Beta access'}
             </p>
           </div>
 
-          {step === 'email' && (
+          {step === 'email' && mode === 'register' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <p style={c.betaNote}>
+                BeeHive is in private <strong style={{ color: '#f5c518' }}>Beta</strong>. Accounts are
+                provisioned by X&nbsp;Spark — request access and we'll set you up.
+              </p>
+              <a
+                href={REQUEST_ACCESS_MAILTO}
+                style={{ ...c.primaryBtn, display: 'block', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}
+              >
+                Request access from X Spark
+              </a>
+              <p style={{ color: '#555', fontSize: 11, textAlign: 'center' }}>
+                {REQUEST_ACCESS_EMAIL}
+              </p>
+            </div>
+          )}
+
+          {step === 'email' && mode === 'login' && (
             <form onSubmit={handleEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <p style={c.label}>Email address</p>
@@ -221,9 +251,10 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
               <button
                 style={c.modeSwitchLink}
                 type="button"
-                onClick={() => { setMode(m => m === 'login' ? 'register' : 'login'); setErr(null) }}
+                onClick={() => { setMode(m => m === 'login' ? 'register' : 'login'); setErr(null); setStep('email') }}
               >
                 {mode === 'login' ? 'Register' : 'Sign in'}
+                {mode === 'login' && <span style={c.betaBadge}>Beta</span>}
               </button>
             </p>
           )}

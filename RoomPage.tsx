@@ -793,10 +793,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const offCanvas = document.createElement('canvas')     // masked attendee cutout
     const offCtx = offCanvas.getContext('2d')!
     offCtx.imageSmoothingQuality = 'high'
-    const maskCanvas = document.createElement('canvas')    // per-frame feathered mask
-    const maskCtx = maskCanvas.getContext('2d')!
-    const smoothMaskCanvas = document.createElement('canvas')  // temporally-smoothed mask (persists across frames)
-    const smoothMaskCtx = smoothMaskCanvas.getContext('2d')!
+    const maskCanvas = document.createElement('canvas')    // raw mask + confidence ramp (getImageData each frame)
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!
+    const featherCanvas = document.createElement('canvas') // feather-blurred copy of the ramped mask
+    const featherCtx = featherCanvas.getContext('2d')!
+    // Temporal smoothing needs a read+write of the previous smoothed mask each
+    // frame, which a canvas can't do onto itself — so ping-pong two canvases.
+    let smoothFront = document.createElement('canvas')
+    let smoothFrontCtx = smoothFront.getContext('2d')!
+    let smoothBack = document.createElement('canvas')
+    let smoothBackCtx = smoothBack.getContext('2d')!
     let maskSeeded = false
 
     // A visible fake shadow around the cutout was a crutch for the old hard-
@@ -823,40 +829,74 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       offCanvas.width = W; offCanvas.height = H
     }
 
-    // MediaPipe's raw mask already has soft, semi-transparent edges — exactly
-    // what preserves hair strands and finger edges. Feathering it further (a
-    // cheap canvas blur, not a per-pixel threshold) and then blending it into a
-    // persistent "smoothed" mask across frames kills both the hard cutout look
-    // and frame-to-frame shimmer, with no JS pixel loop involved anywhere.
-    const FEATHER_PX = 4
-    const TEMPORAL_ALPHA = 0.6 // weight given to the new frame each blend
+    // Mask pipeline, per frame: confidence ramp → feather → temporal EMA.
+    //
+    // 1. Confidence ramp (pixel loop): MediaPipe assigns mid confidence to
+    //    person-adjacent objects (pillows, chair backs). Left as-is, those
+    //    render as translucent ghost blobs of the real room. A wide smoothstep
+    //    ramp crushes low confidence to 0 and lifts high confidence to 1 while
+    //    keeping a broad soft band in between — junk suppressed, hair/finger
+    //    edges still soft (unlike the old near-binary 100–165 threshold).
+    // 2. Feather: small blur so the ramped edge blends instead of cutting.
+    // 3. Temporal EMA with real decay: new = α·current + (1−α)·previous, done
+    //    with 'lighter' compositing (alpha channels literally add), because a
+    //    plain source-over blend can NEVER decay a pixel back toward
+    //    transparent — src alpha 0 leaves dst untouched — which made every
+    //    transient misclassification stick on screen permanently.
+    const RAMP_LO = 70, RAMP_HI = 190
+    const FEATHER_PX = 3
+    const TEMPORAL_ALPHA = 0.65 // weight of the new frame each blend
     const processMask = (mask: any) => {
       const nw = mask.width || 256, nh = mask.height || 256
       const mw = Math.min(480, nw), mh = Math.round(mw * nh / nw)
-      if (maskCanvas.width !== mw || maskCanvas.height !== mh) { maskCanvas.width = mw; maskCanvas.height = mh }
-      if (smoothMaskCanvas.width !== mw || smoothMaskCanvas.height !== mh) {
-        smoothMaskCanvas.width = mw; smoothMaskCanvas.height = mh
-        maskSeeded = false // resized — the old smoothed contents no longer match, reseed
+      for (const c of [maskCanvas, featherCanvas, smoothFront, smoothBack]) {
+        if (c.width !== mw || c.height !== mh) {
+          c.width = mw; c.height = mh
+          maskSeeded = false // resized — old smoothed contents no longer match
+        }
       }
-      maskCtx.clearRect(0, 0, mw, mh)
-      maskCtx.filter = `blur(${FEATHER_PX}px)`
-      maskCtx.drawImage(mask, 0, 0, mw, mh)
-      maskCtx.filter = 'none'
 
-      // Exponential moving average via canvas alpha compositing: source-over
-      // computes dst = src·α + dst·(1-α), which is exactly an EMA — as long as
-      // smoothMaskCanvas is never cleared, so it keeps accumulating across
-      // frames instead of restarting from blank every time.
+      maskCtx.clearRect(0, 0, mw, mh)
+      maskCtx.drawImage(mask, 0, 0, mw, mh)
+      try {
+        const id = maskCtx.getImageData(0, 0, mw, mh)
+        const d = id.data
+        for (let i = 3; i < d.length; i += 4) {
+          const a = d[i]
+          if (a <= RAMP_LO) d[i] = 0
+          else if (a >= RAMP_HI) d[i] = 255
+          else {
+            const t = (a - RAMP_LO) / (RAMP_HI - RAMP_LO)
+            d[i] = Math.round(t * t * (3 - 2 * t) * 255) // smoothstep, not linear
+          }
+        }
+        maskCtx.putImageData(id, 0, 0)
+      } catch { /* tainted/unsupported — soft mask already drawn is the fallback */ }
+
+      featherCtx.clearRect(0, 0, mw, mh)
+      featherCtx.filter = `blur(${FEATHER_PX}px)`
+      featherCtx.drawImage(maskCanvas, 0, 0)
+      featherCtx.filter = 'none'
+
       if (!maskSeeded) {
-        smoothMaskCtx.globalAlpha = 1
-        smoothMaskCtx.drawImage(maskCanvas, 0, 0)
+        smoothFrontCtx.clearRect(0, 0, mw, mh)
+        smoothFrontCtx.drawImage(featherCanvas, 0, 0)
         maskSeeded = true
       } else {
-        smoothMaskCtx.globalAlpha = TEMPORAL_ALPHA
-        smoothMaskCtx.drawImage(maskCanvas, 0, 0)
-        smoothMaskCtx.globalAlpha = 1
+        // back = (1−α)·front + α·feather, exactly — then swap front/back.
+        smoothBackCtx.globalCompositeOperation = 'source-over'
+        smoothBackCtx.clearRect(0, 0, mw, mh)
+        smoothBackCtx.globalAlpha = 1 - TEMPORAL_ALPHA
+        smoothBackCtx.drawImage(smoothFront, 0, 0)
+        smoothBackCtx.globalCompositeOperation = 'lighter'
+        smoothBackCtx.globalAlpha = TEMPORAL_ALPHA
+        smoothBackCtx.drawImage(featherCanvas, 0, 0)
+        smoothBackCtx.globalCompositeOperation = 'source-over'
+        smoothBackCtx.globalAlpha = 1
+        ;[smoothFront, smoothBack] = [smoothBack, smoothFront]
+        ;[smoothFrontCtx, smoothBackCtx] = [smoothBackCtx, smoothFrontCtx]
       }
-      return smoothMaskCanvas
+      return smoothFront
     }
 
     const onResults = (results: any) => {

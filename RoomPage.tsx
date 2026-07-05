@@ -803,6 +803,12 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     let smoothFrontCtx = smoothFront.getContext('2d')!
     let smoothBack = document.createElement('canvas')
     let smoothBackCtx = smoothBack.getContext('2d')!
+    // Halo (nearness-to-subject falloff, for the depth-of-field blur below) and
+    // the reduced-resolution "near focus" background pass that reads it.
+    const haloCanvas = document.createElement('canvas')
+    const haloCtx = haloCanvas.getContext('2d')!
+    const bgLightCanvas = document.createElement('canvas')
+    const bgLightCtx = bgLightCanvas.getContext('2d')!
     let maskSeeded = false
 
     // A visible fake shadow around the cutout was a crutch for the old hard-
@@ -846,10 +852,27 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const RAMP_LO = 70, RAMP_HI = 190
     const FEATHER_PX = 3
     const TEMPORAL_ALPHA = 0.65 // weight of the new frame each blend
+    const HALO_BLUR_PX = 18 // large-radius blur of the mask -> soft "nearness to subject" falloff, for the depth blur below
+
+    // Depth-of-field blur (background effect only) — see onResults' 'blur'
+    // branch. Both multipliers apply to the user's existing 2-20 blurLevel
+    // slider, so its range/meaning to the user is unchanged.
+    const NEAR_MULT = 0.6  // background right around the subject stays relatively sharp
+    const FAR_MULT = 1.5   // background far from the subject gets noticeably softer
+    const BG_WORK_SCALE = 0.5 // reduced working resolution for the near-focus pass (cheap; blur has no fine detail to lose)
+
+    // Subtle global contrast lift on the subject layer ("portrait pop") — a
+    // flat multiplicative contrast, not true local/spatial unsharp masking
+    // (Canvas 2D has no native signed-subtraction blend mode; a real unsharp
+    // mask would need a per-pixel loop, which conflicts with this pipeline's
+    // performance-first design). Cheap: chains onto a filter string already
+    // being applied, not an extra pass.
+    const FOREGROUND_CONTRAST = 1.05
+
     const processMask = (mask: any) => {
       const nw = mask.width || 256, nh = mask.height || 256
       const mw = Math.min(480, nw), mh = Math.round(mw * nh / nw)
-      for (const c of [maskCanvas, featherCanvas, smoothFront, smoothBack]) {
+      for (const c of [maskCanvas, featherCanvas, smoothFront, smoothBack, haloCanvas]) {
         if (c.width !== mw || c.height !== mh) {
           c.width = mw; c.height = mh
           maskSeeded = false // resized — old smoothed contents no longer match
@@ -896,6 +919,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         ;[smoothFront, smoothBack] = [smoothBack, smoothFront]
         ;[smoothFrontCtx, smoothBackCtx] = [smoothBackCtx, smoothFrontCtx]
       }
+
+      // Derive the depth-of-field "nearness" halo from the final smoothed mask
+      // itself (not a separate computation) — guarantees pixel-perfect alignment
+      // with the actual subject silhouette, since it IS that silhouette, just
+      // blurred far more broadly. A large blur of a mostly-binary shape yields a
+      // smooth radial falloff outward from the shape boundary.
+      haloCtx.clearRect(0, 0, mw, mh)
+      haloCtx.filter = `blur(${HALO_BLUR_PX}px)`
+      haloCtx.drawImage(smoothFront, 0, 0)
+      haloCtx.filter = 'none'
+
       return smoothFront
     }
 
@@ -903,18 +937,53 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       if (!running || !W) return
       const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
 
+      // Hoisted so the depth-of-field blur background pass (below) can read
+      // haloCanvas, which processMask() populates as a side effect — must run
+      // before the background layer, not after (it used to be called inline
+      // down in the attendee-layer block; same single call, just relocated).
+      const mask = processMask(results.segmentationMask)
+
       ctx.save()
       ctx.clearRect(0, 0, W, H)
       if (flip) { ctx.translate(W, 0); ctx.scale(-1, 1) }
 
       // ---- Background layer (drawn at the camera's true aspect ratio) ----
       if (effect === 'blur') {
-        // Overscan the blurred draw so the blur kernel's faded edges fall OUTSIDE
-        // the frame — kills the vignette/dark-rim artefact of a naive canvas blur.
+        // Fake depth-of-field: blend a lightly-blurred "near subject" pass with
+        // a heavily-blurred "far" backdrop, weighted by haloCanvas (a large blur
+        // of the subject's own mask — high near the silhouette, decaying with
+        // distance). No hard blur boundary, because the halo itself is a
+        // continuous gradient.
         const pad = Math.max(2, bl) * 2
-        ctx.filter = `blur(${bl}px)`
+        const farBlur = bl * FAR_MULT
+        const nearBlur = bl * NEAR_MULT
+
+        // Far backdrop — full resolution, same overscan anti-vignette trick as before.
+        ctx.filter = `blur(${farBlur}px)`
         ctx.drawImage(video, -pad, -pad, W + pad * 2, H + pad * 2)
         ctx.filter = 'none'
+
+        // Near-focus pass — reduced working resolution (blur destroys detail
+        // anyway, so downscale-before-blur/upscale-after is visually lossless
+        // while cutting this pass's pixel cost to ~BG_WORK_SCALE^2).
+        const lw = Math.max(1, Math.round(W * BG_WORK_SCALE))
+        const lh = Math.max(1, Math.round(H * BG_WORK_SCALE))
+        if (bgLightCanvas.width !== lw || bgLightCanvas.height !== lh) {
+          bgLightCanvas.width = lw; bgLightCanvas.height = lh
+        }
+        // The overscan pad must scale down with the reduced resolution too —
+        // skipping this leaves a vignette-darkened rim wherever the halo lets
+        // the near pass show through.
+        const lpad = Math.max(2, nearBlur) * 2 * BG_WORK_SCALE
+        bgLightCtx.clearRect(0, 0, lw, lh)
+        bgLightCtx.filter = `blur(${nearBlur * BG_WORK_SCALE}px)`
+        bgLightCtx.drawImage(video, -lpad, -lpad, lw + lpad * 2, lh + lpad * 2)
+        bgLightCtx.filter = 'none'
+        bgLightCtx.globalCompositeOperation = 'destination-in'
+        bgLightCtx.drawImage(haloCanvas, 0, 0, lw, lh) // halo stretched to near-pass resolution — same stretch pattern as mask -> offCanvas
+        bgLightCtx.globalCompositeOperation = 'source-over'
+
+        ctx.drawImage(bgLightCanvas, 0, 0, W, H) // upscale onto the far backdrop already on ctx
       } else if (effect === 'image') {
         const img = bgUploadedImageRef.current
         if (img) {
@@ -953,14 +1022,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       // ---- Attendee layer (feathered, temporally-smoothed cutout) ----
       if (effect !== 'none') {
         offCtx.clearRect(0, 0, W, H)
-        if (bgColorCache) {
-          offCtx.filter = `brightness(${bgColorCache.brightness}) saturate(${bgColorCache.saturate})`
-        }
+        // Subtle global contrast lift ("portrait pop") stacks with the
+        // background-tone nudge when present, or applies alone otherwise —
+        // covers every case that reaches this layer (blur/image/virtual).
+        offCtx.filter = bgColorCache
+          ? `brightness(${bgColorCache.brightness}) saturate(${bgColorCache.saturate}) contrast(${FOREGROUND_CONTRAST})`
+          : `contrast(${FOREGROUND_CONTRAST})`
         offCtx.drawImage(video, 0, 0, W, H)
         offCtx.filter = 'none' // must be cleared before the mask draw below — a
                                 // lingering filter would blur the mask itself, not just the video
         offCtx.globalCompositeOperation = 'destination-in'
-        offCtx.drawImage(processMask(results.segmentationMask), 0, 0, W, H)
+        offCtx.drawImage(mask, 0, 0, W, H)
         offCtx.globalCompositeOperation = 'source-over'
         // Optional rim — off by default; the feathered mask shouldn't need it
         // (see SHOW_RIM above). Kept as a one-line revert path.

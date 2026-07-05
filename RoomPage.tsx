@@ -93,12 +93,13 @@ import {
   formatBytes,
   getReactionTemplate,
   fileIcon,
-  ensureMediaPipe,
   drawVirtualScene,
   sampleAverageBrightness,
   STING_RED,
   type Subtext,
 } from './components/roomUtils'
+import { createSegmentationEngine } from './components/segmentation/createSegmentationEngine'
+import type { SegmentationEngine } from './components/segmentation/types'
 
 export default function RoomPage() {
   const { user } = useAuth()
@@ -781,7 +782,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const MAX_W = 1280
     let W = 0, H = 0
     let running = true
-    let seg: any = null
+    let seg: SegmentationEngine | null = null
 
     const video = document.createElement('video')
     video.srcObject = new MediaStream([bgOrigTrackRef.current])
@@ -1054,18 +1055,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     }
 
     const init = async () => {
-      try { await ensureMediaPipe() } catch { return }
-      if (!running) return
+      // Tries MediaPipe Tasks Vision (GPU-delegated, actively maintained)
+      // first, falling back to the legacy SelfieSegmentation engine — see
+      // components/segmentation/ for the abstraction. Either engine
+      // implements the same SegmentationEngine shape, so nothing below this
+      // line needs to know or care which one is actually active.
+      seg = await createSegmentationEngine()
+      if (!running) { seg.close(); return }
 
-      seg = new (window as any).SelfieSegmentation({
-        locateFile: (f: string) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`,
-      })
-      // Model 0 ("general", 256x256 internal) — more accurate on fine edges
-      // (hair, fingers) than model 1 ("landscape"), which trades accuracy for
-      // speed on wide/multi-person framing that doesn't apply to this app's
-      // single close-up webcam view.
-      seg.setOptions({ modelSelection: 0 })
       seg.onResults(onResults)
 
       await video.play().catch(() => {})
@@ -1076,7 +1073,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         if (!running) return
         if (video.readyState >= 2) {
           if (!W) setupDims()
-          try { await seg.send({ image: video }) } catch {}
+          try { await seg.send(video) } catch {}
         }
         if (running) requestAnimationFrame(sendFrame)
       }

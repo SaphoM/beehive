@@ -2,7 +2,12 @@ import type React from 'react'
 
 export const s: Record<string, React.CSSProperties> = {
   lobby: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#0a0a0a', WebkitAppRegion: 'drag' as any },
-  lobbyCard: { background: '#161616', borderRadius: 20, padding: '40px 44px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 360, boxShadow: '0 0 40px rgba(0,0,0,0.6)', fontFamily: "'Roboto', sans-serif", WebkitAppRegion: 'no-drag' as any },
+  // Fixed width (not just minWidth) — without it, content like the invite-link
+  // row (a long monospace URL) forces the card wider than the meeting-prep
+  // card grid's natural 2-column width, so the whole lobby visibly widens and
+  // re-flows to more columns the moment a link is generated. A fixed width
+  // keeps every lobby/schedule screen the same size regardless of content.
+  lobbyCard: { background: '#161616', borderRadius: 20, padding: '40px 44px', display: 'flex', flexDirection: 'column', gap: 14, width: 400, boxSizing: 'border-box' as const, boxShadow: '0 0 40px rgba(0,0,0,0.6)', fontFamily: "'Roboto', sans-serif", WebkitAppRegion: 'no-drag' as any },
   title: { color: '#fff', margin: 0, fontSize: 32, fontWeight: 100, letterSpacing: 4, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
   input: { background: '#222', border: '1px solid #333', borderRadius: 10, padding: '11px 14px', color: '#fff', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' },
   // Signature gold — the app's default primary-action color (matches the

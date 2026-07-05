@@ -63,13 +63,16 @@ export function openInDesktopApp(session: Session | null): void {
 // DOWNLOAD — offer the installer for a visitor who doesn't have the app yet
 // ============================================================
 // macOS ships the native installer directly: `npm run electron:build:mac`
-// produces the .dmg, which is served from the web app's own `public/downloads/`
-// (path below). VITE_DESKTOP_DOWNLOAD_{MAC,WIN}_URL still let a deployment
-// override with an externally hosted binary; Windows has no bundled installer
-// yet, so it falls back to the repo's GitHub Releases page.
+// produces the .dmg, published as a direct-download asset on a GitHub Release
+// (not the Releases *page* — the asset URL itself, so clicking it starts the
+// download immediately with no extra click-through). The .dmg is too large
+// for a git commit (500MB+, over GitHub's 100MB per-file limit), which is why
+// it's published as a release asset instead of shipped in `public/`.
+// VITE_DESKTOP_DOWNLOAD_{MAC,WIN}_URL let a deployment override with a
+// differently-hosted binary; Windows has no bundled installer yet, so it
+// falls back to the repo's GitHub Releases page.
 const GITHUB_RELEASES_URL = 'https://github.com/SaphoM/beehive/releases/latest'
-// Served by Vite from `public/downloads/` at the site root.
-const NATIVE_MAC_DMG_URL = '/downloads/BeeHive-arm64.dmg'
+const NATIVE_MAC_DMG_URL = 'https://github.com/SaphoM/beehive/releases/download/v1.0.0/BeeHive-1.0.0-arm64.dmg'
 const DOWNLOAD_URLS: Record<'mac' | 'windows', string> = {
   mac: (import.meta.env.VITE_DESKTOP_DOWNLOAD_MAC_URL as string | undefined) || NATIVE_MAC_DMG_URL,
   windows: (import.meta.env.VITE_DESKTOP_DOWNLOAD_WIN_URL as string | undefined) || GITHUB_RELEASES_URL,
@@ -133,7 +136,8 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
       {(os === 'mac' || os === 'windows') && (
         <a
           href={DOWNLOAD_URLS[os]}
-          {...(os === 'mac' ? { download: '' } : { target: '_blank', rel: 'noopener noreferrer' })}
+          target="_blank"
+          rel="noopener noreferrer"
           title={`Download the BeeHive desktop app for ${os === 'mac' ? 'macOS' : 'Windows'}`}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,

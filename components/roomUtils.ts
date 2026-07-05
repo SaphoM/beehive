@@ -218,3 +218,29 @@ export function drawVirtualScene(ctx: CanvasRenderingContext2D, id: string, W: n
     }
   }
 }
+
+// Samples the average brightness (0–1) of whatever's currently drawn on a
+// canvas, via a single downscale-and-read. Used by the virtual-background
+// compositor to nudge the subject's exposure subtly toward the background's
+// tone — called once per background change, never per frame, so the cost of
+// the one getImageData call here is negligible.
+const brightnessSampleCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null
+export function sampleAverageBrightness(source: CanvasImageSource): number {
+  if (!brightnessSampleCanvas) return 0.5
+  const SIZE = 16
+  brightnessSampleCanvas.width = SIZE
+  brightnessSampleCanvas.height = SIZE
+  const ctx = brightnessSampleCanvas.getContext('2d')
+  if (!ctx) return 0.5
+  try {
+    ctx.drawImage(source, 0, 0, SIZE, SIZE)
+    const { data } = ctx.getImageData(0, 0, SIZE, SIZE)
+    let sum = 0
+    for (let i = 0; i < data.length; i += 4) {
+      sum += (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114)
+    }
+    return sum / (data.length / 4) / 255
+  } catch {
+    return 0.5 // tainted/unsupported source — caller treats 0.5 as "neutral, no adjustment"
+  }
+}

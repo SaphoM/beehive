@@ -95,6 +95,7 @@ import {
   fileIcon,
   ensureMediaPipe,
   drawVirtualScene,
+  sampleAverageBrightness,
   STING_RED,
   type Subtext,
 } from './components/roomUtils'
@@ -788,10 +789,29 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')!
+    ctx.imageSmoothingQuality = 'high'
     const offCanvas = document.createElement('canvas')     // masked attendee cutout
     const offCtx = offCanvas.getContext('2d')!
-    const maskCanvas = document.createElement('canvas')    // hardened segmentation mask
-    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!
+    offCtx.imageSmoothingQuality = 'high'
+    const maskCanvas = document.createElement('canvas')    // per-frame feathered mask
+    const maskCtx = maskCanvas.getContext('2d')!
+    const smoothMaskCanvas = document.createElement('canvas')  // temporally-smoothed mask (persists across frames)
+    const smoothMaskCtx = smoothMaskCanvas.getContext('2d')!
+    let maskSeeded = false
+
+    // A visible fake shadow around the cutout was a crutch for the old hard-
+    // edged mask; the feathered + temporally-smoothed mask below shouldn't
+    // need it. Left as a one-line revert switch rather than deleted outright.
+    const SHOW_RIM = false
+
+    // Subtle, capped exposure/tint nudge toward the background's average tone —
+    // recomputed only when the background itself changes (not per frame).
+    // Keyed on the *object identity* of the uploaded image (bgUploadedImageRef
+    // is a ref, always live) rather than the bgUploadedImageName state, which
+    // this closure would otherwise capture stale — image/preset can change
+    // while bgActive stays true, so this effect never re-runs to pick up a
+    // fresh value of a plain state variable.
+    let bgColorCache: { effect: string; presetId: string; img: HTMLImageElement | null; brightness: number; saturate: number } | null = null
 
     let trackReplaced = false
 
@@ -803,28 +823,40 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       offCanvas.width = W; offCanvas.height = H
     }
 
-    // MediaPipe's raw mask has soft, semi-transparent edges that make the
-    // attendee blend/halo into the background. Threshold the mask alpha into a
-    // crisp cutout (with a thin anti-alias band) so the attendee reads with high
-    // contrast against image/virtual backgrounds. Processed at ≤320px wide to
-    // keep the per-frame pixel loop cheap; upscaled smoothly when applied.
-    const LO = 100, HI = 165
-    const hardenMask = (mask: any) => {
+    // MediaPipe's raw mask already has soft, semi-transparent edges — exactly
+    // what preserves hair strands and finger edges. Feathering it further (a
+    // cheap canvas blur, not a per-pixel threshold) and then blending it into a
+    // persistent "smoothed" mask across frames kills both the hard cutout look
+    // and frame-to-frame shimmer, with no JS pixel loop involved anywhere.
+    const FEATHER_PX = 4
+    const TEMPORAL_ALPHA = 0.6 // weight given to the new frame each blend
+    const processMask = (mask: any) => {
       const nw = mask.width || 256, nh = mask.height || 256
-      const mw = Math.min(320, nw), mh = Math.round(mw * nh / nw)
+      const mw = Math.min(480, nw), mh = Math.round(mw * nh / nw)
       if (maskCanvas.width !== mw || maskCanvas.height !== mh) { maskCanvas.width = mw; maskCanvas.height = mh }
+      if (smoothMaskCanvas.width !== mw || smoothMaskCanvas.height !== mh) {
+        smoothMaskCanvas.width = mw; smoothMaskCanvas.height = mh
+        maskSeeded = false // resized — the old smoothed contents no longer match, reseed
+      }
       maskCtx.clearRect(0, 0, mw, mh)
+      maskCtx.filter = `blur(${FEATHER_PX}px)`
       maskCtx.drawImage(mask, 0, 0, mw, mh)
-      try {
-        const id = maskCtx.getImageData(0, 0, mw, mh)
-        const d = id.data
-        for (let i = 3; i < d.length; i += 4) {
-          const a = d[i]
-          d[i] = a <= LO ? 0 : a >= HI ? 255 : Math.round(((a - LO) / (HI - LO)) * 255)
-        }
-        maskCtx.putImageData(id, 0, 0)
-      } catch { /* tainted/unsupported — fall back to the soft mask already drawn */ }
-      return maskCanvas
+      maskCtx.filter = 'none'
+
+      // Exponential moving average via canvas alpha compositing: source-over
+      // computes dst = src·α + dst·(1-α), which is exactly an EMA — as long as
+      // smoothMaskCanvas is never cleared, so it keeps accumulating across
+      // frames instead of restarting from blank every time.
+      if (!maskSeeded) {
+        smoothMaskCtx.globalAlpha = 1
+        smoothMaskCtx.drawImage(maskCanvas, 0, 0)
+        maskSeeded = true
+      } else {
+        smoothMaskCtx.globalAlpha = TEMPORAL_ALPHA
+        smoothMaskCtx.drawImage(maskCanvas, 0, 0)
+        smoothMaskCtx.globalAlpha = 1
+      }
+      return smoothMaskCanvas
     }
 
     const onResults = (results: any) => {
@@ -860,16 +892,39 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         ctx.drawImage(video, 0, 0, W, H)
       }
 
-      // ---- Attendee layer (crisp hardened-mask cutout, composited on top) ----
+      // ---- Subtle color match: nudge the subject toward the background's tone ----
+      // Recomputed only when the background actually changes (cached, keyed on
+      // the live image ref rather than any closure-captured state — see note
+      // on bgColorCache above), so this costs nothing on the other ~29 frames
+      // out of 30 each second.
+      const currentImg = bgUploadedImageRef.current
+      const bgChanged = bgColorCache?.effect !== effect || bgColorCache?.presetId !== presetId || bgColorCache?.img !== currentImg
+      if (effect !== 'none' && bgChanged) {
+        const bgBrightness = sampleAverageBrightness(canvas)
+        // 0.5 (mid-grey) is neutral — deviation from it drives a small, capped nudge.
+        const delta = bgBrightness - 0.5
+        bgColorCache = {
+          effect, presetId, img: currentImg,
+          brightness: Math.min(1.08, Math.max(0.92, 1 + delta * 0.16)),
+          saturate: Math.min(1.05, Math.max(0.95, 1 + delta * 0.1)),
+        }
+      }
+
+      // ---- Attendee layer (feathered, temporally-smoothed cutout) ----
       if (effect !== 'none') {
         offCtx.clearRect(0, 0, W, H)
+        if (bgColorCache) {
+          offCtx.filter = `brightness(${bgColorCache.brightness}) saturate(${bgColorCache.saturate})`
+        }
         offCtx.drawImage(video, 0, 0, W, H)
+        offCtx.filter = 'none' // must be cleared before the mask draw below — a
+                                // lingering filter would blur the mask itself, not just the video
         offCtx.globalCompositeOperation = 'destination-in'
-        offCtx.imageSmoothingEnabled = true
-        offCtx.drawImage(hardenMask(results.segmentationMask), 0, 0, W, H)
+        offCtx.drawImage(processMask(results.segmentationMask), 0, 0, W, H)
         offCtx.globalCompositeOperation = 'source-over'
-        // Subtle dark rim separates the attendee from busy image/virtual scenes.
-        if (effect === 'image' || effect === 'virtual') {
+        // Optional rim — off by default; the feathered mask shouldn't need it
+        // (see SHOW_RIM above). Kept as a one-line revert path.
+        if (SHOW_RIM && (effect === 'image' || effect === 'virtual')) {
           ctx.shadowColor = 'rgba(0,0,0,0.45)'
           ctx.shadowBlur = Math.max(6, Math.round(W / 120))
         }
@@ -894,7 +949,11 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         locateFile: (f: string) =>
           `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`,
       })
-      seg.setOptions({ modelSelection: 1 })
+      // Model 0 ("general", 256x256 internal) — more accurate on fine edges
+      // (hair, fingers) than model 1 ("landscape"), which trades accuracy for
+      // speed on wide/multi-person framing that doesn't apply to this app's
+      // single close-up webcam view.
+      seg.setOptions({ modelSelection: 0 })
       seg.onResults(onResults)
 
       await video.play().catch(() => {})

@@ -112,9 +112,11 @@ export function MeetingPrep({
       <div style={st.sectionLabel}>Prepare for this meeting</div>
 
       {/* ---- Meeting-type cards ---- */}
-      {/* Once a card is picked, the rest collapse away and only the selected
-          one remains (still in the same 2-column grid slot) — a "Back" button
-          takes the host back to the full set of options. */}
+      {/* Once a card is picked, the rest collapse away and the selected one
+          spans the full grid width (merging into the neighbouring slot)
+          rather than leaving half the row empty — a "Back" button takes the
+          host back to the full set of options. The grid container itself
+          never resizes either way, so the panel below never shifts width. */}
       {selectedId && (
         <button type="button" style={st.backBtn} onClick={backToOptions}>
           <ArrowLeft size={13} /> Back to meeting types
@@ -132,7 +134,7 @@ export function MeetingPrep({
               aria-label={`${t.title} — ${t.description}`}
               onClick={() => selectTemplate(t.id)}
               className="bhv-prep-card"
-              style={{ ...st.card, ...(active ? st.cardActive : {}) }}
+              style={{ ...st.card, ...(active ? { ...st.cardActive, gridColumn: '1 / -1' } : {}) }}
             >
               {Icon && <Icon size={17} color={active ? '#f5a623' : '#888'} style={{ flexShrink: 0 }} />}
               <span style={st.cardTitle}>{t.title}</span>

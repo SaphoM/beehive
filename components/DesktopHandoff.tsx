@@ -62,20 +62,25 @@ export function openInDesktopApp(session: Session | null): void {
 // ============================================================
 // DOWNLOAD — offer the installer for a visitor who doesn't have the app yet
 // ============================================================
-// macOS ships the native installer directly: `npm run electron:build:mac`
-// produces the .dmg, published as a direct-download asset on a GitHub Release
-// (not the Releases *page* — the asset URL itself, so clicking it starts the
-// download immediately with no extra click-through). The .dmg is too large
-// for a git commit (500MB+, over GitHub's 100MB per-file limit), which is why
-// it's published as a release asset instead of shipped in `public/`.
+// Both macOS and Windows ship their native installer directly: `npm run
+// electron:build:mac` / `electron:build:win` produce the .dmg / .exe, each
+// published as a direct-download asset on a GitHub Release (not the Releases
+// *page* — the asset URL itself, so clicking it starts the download
+// immediately with no extra click-through). These binaries are too large for
+// a git commit (100MB+, over GitHub's 100MB per-file git limit), which is why
+// they're published as release assets instead of shipped in `public/`.
 // VITE_DESKTOP_DOWNLOAD_{MAC,WIN}_URL let a deployment override with a
-// differently-hosted binary; Windows has no bundled installer yet, so it
-// falls back to the repo's GitHub Releases page.
-const GITHUB_RELEASES_URL = 'https://github.com/SaphoM/beehive/releases/latest'
+// differently-hosted binary.
+//
+// Windows ships the x64 installer (the standard architecture for the vast
+// majority of Windows PCs) — an arm64 build also exists for Windows-on-ARM
+// devices (Surface Pro X and similar) but isn't linked here, matching
+// detectDesktopOS()'s OS-level (not architecture-level) detection below.
 const NATIVE_MAC_DMG_URL = 'https://github.com/SaphoM/beehive/releases/download/v1.0.0/BeeHive-1.0.0-arm64.dmg'
+const NATIVE_WIN_EXE_URL = 'https://github.com/SaphoM/beehive/releases/download/v1.0.0/BeeHive.Setup.1.0.0.x64.exe'
 const DOWNLOAD_URLS: Record<'mac' | 'windows', string> = {
   mac: (import.meta.env.VITE_DESKTOP_DOWNLOAD_MAC_URL as string | undefined) || NATIVE_MAC_DMG_URL,
-  windows: (import.meta.env.VITE_DESKTOP_DOWNLOAD_WIN_URL as string | undefined) || GITHUB_RELEASES_URL,
+  windows: (import.meta.env.VITE_DESKTOP_DOWNLOAD_WIN_URL as string | undefined) || NATIVE_WIN_EXE_URL,
 }
 
 // Detects the visitor's desktop OS for the download CTA. Touch-primary devices

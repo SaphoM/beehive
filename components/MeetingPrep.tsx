@@ -3,7 +3,7 @@ import {
   Building2, Handshake, RefreshCw, Lightbulb, Rocket, Users, TrendingUp,
   GraduationCap, Briefcase, Scale, Wrench, UserCheck, ClipboardCheck,
   CalendarDays, CheckCircle2, RotateCcw, DollarSign, Monitor, Search,
-  BarChart3, Map as MapIcon, ArrowLeft, type LucideIcon,
+  BarChart3, Map as MapIcon, ArrowLeft, ChevronRight, type LucideIcon,
 } from 'lucide-react'
 import { MEETING_TEMPLATES, getTemplate } from './meetingTemplates'
 
@@ -45,6 +45,9 @@ export function MeetingPrep({
   const [agenda, setAgenda] = useState<string[]>([])
   const [checklist, setChecklist] = useState<ChecklistItem[]>([])
   const [newItem, setNewItem] = useState('')
+  // Lets the host bypass meeting-prep entirely and go straight to creating
+  // the meeting. Collapses the card grid; "Show options" brings it back.
+  const [skipped, setSkipped] = useState(false)
 
   const template = selectedId ? getTemplate(selectedId) : undefined
 
@@ -109,40 +112,57 @@ export function MeetingPrep({
 
   return (
     <div style={st.wrap}>
-      <div style={st.sectionLabel}>Prepare for this meeting</div>
-
-      {/* ---- Meeting-type cards ---- */}
-      {/* Once a card is picked, the rest collapse away and the selected one
-          spans the full grid width (merging into the neighbouring slot)
-          rather than leaving half the row empty — a "Back" button takes the
-          host back to the full set of options. The grid container itself
-          never resizes either way, so the panel below never shifts width. */}
-      {selectedId && (
-        <button type="button" style={st.backBtn} onClick={backToOptions}>
-          <ArrowLeft size={13} /> Back to meeting types
-        </button>
-      )}
-      <div style={st.cardGrid} aria-label="Meeting type">
-        {(selectedId ? MEETING_TEMPLATES.filter(t => t.id === selectedId) : MEETING_TEMPLATES).map(t => {
-          const active = t.id === selectedId
-          const Icon = TEMPLATE_ICONS[t.id]
-          return (
-            <button
-              key={t.id}
-              type="button"
-              aria-pressed={active}
-              aria-label={`${t.title} — ${t.description}`}
-              onClick={() => selectTemplate(t.id)}
-              className="bhv-prep-card"
-              style={{ ...st.card, ...(active ? { ...st.cardActive, gridColumn: '1 / -1' } : {}) }}
-            >
-              {Icon && <Icon size={17} color={active ? '#f5a623' : '#888'} style={{ flexShrink: 0 }} />}
-              <span style={st.cardTitle}>{t.title}</span>
-              <span style={st.cardDesc}>{t.description}</span>
-            </button>
-          )
-        })}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={st.sectionLabel}>Prepare for this meeting</div>
+        {/* Bypass meeting-prep entirely — only offered before a card is
+            picked; once skipped, "Show options" (below) is the way back. */}
+        {!selectedId && !skipped && (
+          <button type="button" style={st.skipBtn} onClick={() => setSkipped(true)}>
+            Skip options <ChevronRight size={13} />
+          </button>
+        )}
       </div>
+
+      {skipped ? (
+        <button type="button" style={st.backBtn} onClick={() => setSkipped(false)}>
+          Show meeting prep options
+        </button>
+      ) : (
+        <>
+          {/* ---- Meeting-type cards ---- */}
+          {/* Once a card is picked, the rest collapse away and the selected one
+              spans the full grid width (merging into the neighbouring slot)
+              rather than leaving half the row empty — a "Back" button takes the
+              host back to the full set of options. The grid container itself
+              never resizes either way, so the panel below never shifts width. */}
+          {selectedId && (
+            <button type="button" style={st.backBtn} onClick={backToOptions}>
+              <ArrowLeft size={13} /> Back to meeting types
+            </button>
+          )}
+          <div style={st.cardGrid} aria-label="Meeting type">
+            {(selectedId ? MEETING_TEMPLATES.filter(t => t.id === selectedId) : MEETING_TEMPLATES).map(t => {
+              const active = t.id === selectedId
+              const Icon = TEMPLATE_ICONS[t.id]
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  aria-pressed={active}
+                  aria-label={`${t.title} — ${t.description}`}
+                  onClick={() => selectTemplate(t.id)}
+                  className="bhv-prep-card"
+                  style={{ ...st.card, ...(active ? { ...st.cardActive, gridColumn: '1 / -1' } : {}) }}
+                >
+                  {Icon && <Icon size={17} color={active ? '#f5a623' : '#888'} style={{ flexShrink: 0 }} />}
+                  <span style={st.cardTitle}>{t.title}</span>
+                  <span style={st.cardDesc}>{t.description}</span>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
 
       {template && (
         <div style={st.panel}>
@@ -275,6 +295,7 @@ const st: Record<string, React.CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 10, fontFamily: "'Roboto', sans-serif" },
   sectionLabel: { color: '#888', fontSize: 11, fontWeight: 300, letterSpacing: 1.5, textTransform: 'uppercase', marginTop: 4 },
   backBtn: { display: 'flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', background: 'none', border: 'none', color: '#888', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', padding: '2px 0' },
+  skipBtn: { display: 'flex', alignItems: 'center', gap: 2, background: 'none', border: 'none', color: '#f5a623', fontSize: 12, fontWeight: 500, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', padding: '2px 0', letterSpacing: 0.3 },
   cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))', gap: 8, maxHeight: 264, overflowY: 'auto', paddingRight: 2 },
   card: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 12, padding: '10px 12px', cursor: 'pointer', textAlign: 'left', transition: 'transform 0.12s ease, border-color 0.15s, background 0.15s', color: '#ddd', WebkitAppRegion: 'no-drag' as any },
   cardActive: { borderColor: '#f5a623', background: '#2a2010' },

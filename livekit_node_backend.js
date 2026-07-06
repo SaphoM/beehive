@@ -24,16 +24,26 @@ const supabase = createClient(
 // Body: { roomName, displayName }
 // ============================================================
 app.post('/api/livekit/token', async (req, res) => {
-  const { roomName, displayName } = req.body
+  const { roomName, displayName, identity } = req.body
 
   if (!roomName || !displayName) {
     return res.status(400).json({ error: 'roomName and displayName are required' })
   }
 
+  // Identity must be unique per participant connection — LiveKit silently
+  // disconnects the earlier participant whenever a second one joins the same
+  // room with an identity already in use. Display names are freeform and
+  // often collide (two people typing "Guest", or two tabs sharing the same
+  // logged-in profile's name), which was replacing/kicking earlier
+  // participants and looking like "their mic doesn't work". The client
+  // generates a random identity per join; this falls back to displayName
+  // only for older clients that don't send one.
+  const participantIdentity = identity || displayName
+
   const token = new AccessToken(
     process.env.LIVEKIT_API_KEY,
     process.env.LIVEKIT_API_SECRET,
-    { identity: displayName, name: displayName }
+    { identity: participantIdentity, name: displayName }
   )
 
   token.addGrant({
@@ -86,11 +96,14 @@ app.post('/api/livekit/webhook', async (req, res) => {
       .single()
 
     if (room) {
+      // participant.identity is now a random per-connection UUID (see the
+      // token endpoint above) — match on participant.name instead, which
+      // still carries the actual display name.
       await supabase
         .from('room_participants')
         .update({ is_active: false, left_at: new Date().toISOString() })
         .eq('room_id', room.id)
-        .eq('display_name', participant.identity)
+        .eq('display_name', participant.name)
     }
   }
 

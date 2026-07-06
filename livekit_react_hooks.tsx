@@ -239,6 +239,14 @@ export function useJoinRoom() {
       .eq('room_id', roomId)
       .eq('display_name', displayName)
 
+    // A LiveKit identity must be unique per connection — two participants
+    // (or two tabs sharing one logged-in profile's name) joining with the
+    // same identity causes LiveKit to disconnect the earlier one, which
+    // looked like "their mic doesn't work". Display names are freeform and
+    // collide easily, so identity is a random UUID instead; displayName is
+    // still sent separately and used as LiveKit's "name" field for display.
+    const identity = crypto.randomUUID()
+
     // Insert fresh participant row and fetch LiveKit token in parallel —
     // the token only needs roomName + displayName, not the participant row ID
     const [, tokenRes] = await Promise.all([
@@ -252,7 +260,7 @@ export function useJoinRoom() {
       fetch(`${API_BASE}/api/livekit/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: room.livekit_room_name, displayName }),
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity }),
       }),
     ])
 

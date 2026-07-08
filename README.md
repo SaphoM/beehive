@@ -389,7 +389,8 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 ---
 
 ### Security
-- Row Level Security (RLS) on all Supabase tables
+- Row Level Security (RLS) on all Supabase tables — including `usage` and `audit_logs`, which shipped in the base schema without it (Supabase's advisor flagged `usage` as publicly readable/writable; `audit_logs` had the identical gap). Fixed via `supabase/migrations/002_enable_rls_usage_audit_logs.sql`. Neither table is touched by any client-side code, so RLS-with-no-policies (default-deny) is correct — there's no legitimate client read/write case to add a policy for
+- **Default grants revoked too** — RLS-with-no-policies already denies `anon`/`authenticated` regardless of table grants, but both roles still held Supabase's default full CRUD grants on `usage`/`audit_logs`, leaving RLS as the only barrier. `supabase/migrations/003_revoke_public_grants_usage_audit_logs.sql` revokes those grants as defense-in-depth, so a future permissive policy added to either table by mistake still wouldn't expose them
 - Passwordless auth — no password storage, no brute-force surface
 - Anon-safe participant tracking (no login required for `?room=` invite links)
 - Fathom API key proxied through backend (never reaches client)
@@ -457,7 +458,9 @@ beehive/
 │                                       #   LiveKit webhook receiver, Fathom proxy
 ├── supabase/
 │   └── migrations/
-│       └── 001_auth_system.sql         # Auth schema additions (applied)
+│       ├── 001_auth_system.sql         # Auth schema additions (applied)
+│       ├── 002_enable_rls_usage_audit_logs.sql         # RLS fix — see Security (applied)
+│       └── 003_revoke_public_grants_usage_audit_logs.sql # Grant revocation — see Security (applied)
 ├── scripts/
 │   └── seed-dev.js                     # Create 6 X Spark dev users via Supabase Admin API
 ├── electron/

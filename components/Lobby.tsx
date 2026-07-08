@@ -8,6 +8,10 @@ import { useAuth, useProfile } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 import { BuiltByFooter } from './BuiltByFooter'
+import { Toast } from './Toast'
+
+interface NextMeeting { name: string; date: string; time: string; link: string }
+const NEXT_MEETING_KEY = 'beehive:nextMeeting'
 
 // -----------------------------------------------------------------------
 // RegisterPanel — appears on card back face after a frictionless meeting.
@@ -77,8 +81,27 @@ export function Lobby({
   const [showFathom, setShowFathom] = useState(false)
   const [lobbyTab, setLobbyTab] = useState<'now' | 'schedule'>('now')
   const [flipped, setFlipped] = useState(false)
+  const [nextMeeting, setNextMeeting] = useState<NextMeeting | null>(() => {
+    try {
+      const raw = localStorage.getItem(NEXT_MEETING_KEY)
+      return raw ? JSON.parse(raw) : null
+    } catch { return null }
+  })
+  const [showScheduledToast, setShowScheduledToast] = useState(false)
 
   useEffect(() => { if (showRegister) setFlipped(true) }, [showRegister])
+
+  function handleScheduled(meeting: NextMeeting) {
+    setNextMeeting(meeting)
+    try { localStorage.setItem(NEXT_MEETING_KEY, JSON.stringify(meeting)) } catch { /* storage unavailable — card just won't survive a refresh */ }
+    setLobbyTab('now')
+    setShowScheduledToast(true)
+  }
+
+  function dismissNextMeeting() {
+    setNextMeeting(null)
+    try { localStorage.removeItem(NEXT_MEETING_KEY) } catch { /* best-effort */ }
+  }
 
   function handleDismissRegister() {
     setFlipped(false)
@@ -131,6 +154,26 @@ export function Lobby({
                 >
                   Schedule
                 </button>
+              </div>
+            )}
+
+            {lobbyTab === 'now' && !hasInvite && nextMeeting && (
+              <div style={{ ...s.invitePreview, position: 'relative' }}>
+                <button
+                  onClick={dismissNextMeeting}
+                  style={{ position: 'absolute', top: 8, right: 10, background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}
+                  title="Dismiss"
+                >×</button>
+                <p style={s.inviteLabel}>Next meeting</p>
+                <p style={s.inviteRoomName}>{nextMeeting.name}</p>
+                {nextMeeting.date && (
+                  <p style={s.inviteMeta}>
+                    {new Date(`${nextMeeting.date}T${nextMeeting.time || '00:00'}`).toLocaleString(undefined, {
+                      weekday: 'long', month: 'long', day: 'numeric',
+                      ...(nextMeeting.time ? { hour: '2-digit', minute: '2-digit' } : {}),
+                    })}
+                  </p>
+                )}
               </div>
             )}
 
@@ -208,7 +251,7 @@ export function Lobby({
                 )}
               </>
             ) : (
-              <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} isSting={subtext === 'Sting'} />
+              <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} isSting={subtext === 'Sting'} onScheduled={handleScheduled} />
             )}
           </div>
 
@@ -238,6 +281,10 @@ export function Lobby({
       <OpenDesktopAppButton style={{ maxWidth: 320 }} />
 
       <BuiltByFooter />
+
+      {showScheduledToast && (
+        <Toast message="Meeting set up successfully" onDone={() => setShowScheduledToast(false)} />
+      )}
     </div>
   )
 }

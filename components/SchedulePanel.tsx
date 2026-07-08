@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import { useCreateRoom } from '../livekit_react_hooks'
-import { WEB_BASE, STING_RED } from './roomUtils'
+import { WEB_BASE, STING_RED, saveMeetingPrep } from './roomUtils'
 import { s } from './roomStyles'
-import { MeetingPrep } from './MeetingPrep'
+import { MeetingPrep, type MeetingPrepSummary } from './MeetingPrep'
 import { TimePicker } from './TimePicker'
 
 const DURATIONS = [15, 30, 45, 60, 90]
 
-export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { displayName: string; onDisplayNameChange: (v: string) => void; isSting: boolean }) {
+export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onScheduled }: {
+  displayName: string
+  onDisplayNameChange: (v: string) => void
+  isSting: boolean
+  onScheduled?: (meeting: { name: string; date: string; time: string; link: string }) => void
+}) {
   const { createRoom, loading } = useCreateRoom()
   const [roomName, setRoomName] = useState('')
   const [date, setDate] = useState('')
@@ -17,6 +22,8 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { d
   const [emails, setEmails] = useState<string[]>([])
   const [link, setLink] = useState('')
   const [copied, setCopied] = useState(false)
+  const [prep, setPrep] = useState<MeetingPrepSummary | null>(null)
+  const [createdRoomId, setCreatedRoomId] = useState<string | null>(null)
 
   const addEmail = () => {
     const e = emailInput.trim().toLowerCase()
@@ -28,12 +35,19 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { d
 
   const removeEmail = (e: string) => setEmails(prev => prev.filter(x => x !== e))
 
+  // Shared with sendEmails/onScheduled below so the "next meeting" summary
+  // matches whatever name the room was actually created under.
+  const meetingName = roomName.trim() || (date ? `Meeting – ${new Date(date + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'BeeHive Meeting')
+
   const handleCreate = async () => {
     if (!displayName.trim()) { alert('Enter your name first'); return }
-    const name = roomName.trim() || (date ? `Meeting – ${new Date(date + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'BeeHive Meeting')
-    const room = await createRoom(name)
+    const room = await createRoom(meetingName)
     if (!room) return
     setLink(`${WEB_BASE}?room=${room.id}`)
+    setCreatedRoomId(room.id)
+    // Whatever prep template/checklist/agenda was picked (if any) follows the
+    // room in — read back by MeetingPrepWindow once inside the meeting.
+    if (prep) saveMeetingPrep(room.id, prep)
   }
 
   const copyLink = () => {
@@ -57,6 +71,10 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { d
       `— ${displayName || 'Your host'} via BeeHive`
     )
     window.open(`mailto:${emails.join(',')}?subject=${subject}&body=${body}`)
+    // Re-save in case the prep selection changed after the room was created
+    // but before the invite was sent (both remain editable in between).
+    if (prep && createdRoomId) saveMeetingPrep(createdRoomId, prep)
+    onScheduled?.({ name: meetingName, date, time, link })
   }
 
   const todayStr = new Date().toISOString().split('T')[0]
@@ -141,7 +159,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting }: { d
 
       {/* Smart Meeting Preparation — meeting-type cards + AI-style prep assistant.
           Only shown once name/date/time are filled in; entirely optional from there. */}
-      {formReady && <MeetingPrep durationMinutes={duration} attendeeCount={emails.length} />}
+      {formReady && <MeetingPrep durationMinutes={duration} attendeeCount={emails.length} onChange={setPrep} />}
 
       {link ? (
         <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>

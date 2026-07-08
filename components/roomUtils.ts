@@ -244,3 +244,27 @@ export function sampleAverageBrightness(source: CanvasImageSource): number {
     return 0.5 // tainted/unsupported source — caller treats 0.5 as "neutral, no adjustment"
   }
 }
+
+// Meeting-prep summary (selected template + checklist + agenda), persisted
+// locally at scheduling time (SchedulePanel) and read back in the room
+// (RoomPage's MeetingPrepWindow) — keyed by room id so it follows the
+// specific meeting it was set up for, not the browser session in general.
+export interface StoredMeetingPrep {
+  templateId: string
+  title: string
+  agenda: string[]
+  checklist: { id: string; label: string; checked: boolean }[]
+}
+
+const meetingPrepKey = (roomId: string) => `beehive:prep:${roomId}`
+
+export function saveMeetingPrep(roomId: string, prep: StoredMeetingPrep): void {
+  try { localStorage.setItem(meetingPrepKey(roomId), JSON.stringify(prep)) } catch { /* storage unavailable — the in-room panel just won't have anything to show */ }
+}
+
+export function loadMeetingPrep(roomId: string): StoredMeetingPrep | null {
+  try {
+    const raw = localStorage.getItem(meetingPrepKey(roomId))
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}

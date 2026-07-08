@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Building2, Handshake, RefreshCw, Lightbulb, Rocket, Users, TrendingUp,
   GraduationCap, Briefcase, Scale, Wrench, UserCheck, ClipboardCheck,
@@ -34,12 +34,28 @@ const TEMPLATE_ICONS: Record<string, LucideIcon> = {
 
 interface ChecklistItem { id: string; label: string; checked: boolean }
 
+// What gets handed up to the parent (and, from there, persisted so it can
+// follow the meeting into the room) — just the parts of this component's
+// state that are meaningful outside the scheduling form itself.
+export interface MeetingPrepSummary {
+  templateId: string
+  title: string
+  agenda: string[]
+  checklist: ChecklistItem[]
+}
+
 export function MeetingPrep({
   durationMinutes,
   attendeeCount,
+  onChange,
 }: {
   durationMinutes: number
   attendeeCount: number
+  // Fires whenever the selected template/checklist/agenda changes, and once
+  // with `null` if the host clears their selection — lets a parent (e.g.
+  // SchedulePanel) persist "what was picked" for later, without this
+  // component needing to know anything about where that ends up.
+  onChange?: (summary: MeetingPrepSummary | null) => void
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [agenda, setAgenda] = useState<string[]>([])
@@ -50,6 +66,15 @@ export function MeetingPrep({
   const [skipped, setSkipped] = useState(false)
 
   const template = selectedId ? getTemplate(selectedId) : undefined
+
+  // Report the current selection upward on every change — cheap (this data is
+  // already small), and keeps the parent's copy trivially in sync without a
+  // separate "commit" step the host would have to remember to trigger.
+  useEffect(() => {
+    if (!onChange) return
+    if (!selectedId || !template) { onChange(null); return }
+    onChange({ templateId: selectedId, title: template.title, agenda, checklist })
+  }, [selectedId, template, agenda, checklist, onChange])
 
   const selectTemplate = (id: string) => {
     const t = getTemplate(id)

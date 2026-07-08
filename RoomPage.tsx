@@ -45,7 +45,7 @@ type DockAction =
   | { type: 'toggle-mic' | 'toggle-cam' | 'toggle-hand' | 'stop-share' | 'leave' | 'open-chat' | 'open-participants' }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2 } from 'lucide-react'
+import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2, ClipboardList } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -78,6 +78,8 @@ import { InviteModal } from './components/InviteModal'
 import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { AutoCamWindow } from './components/AutoCamWindow'
+import { MeetingPrepWindow } from './components/MeetingPrepWindow'
+import { Toast } from './components/Toast'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
 import { ScreenShareBar } from './components/ScreenShareBar'
@@ -95,6 +97,8 @@ import {
   fileIcon,
   drawVirtualScene,
   sampleAverageBrightness,
+  loadMeetingPrep,
+  type StoredMeetingPrep,
   STING_RED,
   type Subtext,
 } from './components/roomUtils'
@@ -301,6 +305,40 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   const [showChat, setShowChat] = useState(() => window.innerWidth > 768)
   const [showParticipants, setShowParticipants] = useState(false)
   const [participantsDocked, setParticipantsDocked] = useState(false)
+  // Meeting-prep checklist/agenda picked back at scheduling time (if any) —
+  // loaded once per room, since it's set once at scheduling and only ever
+  // edited from within this same window (MeetingPrepWindow writes back to
+  // the same localStorage entry directly, so no need to re-read after that).
+  const [meetingPrep, setMeetingPrep] = useState<StoredMeetingPrep | null>(null)
+  const [showMeetingPrep, setShowMeetingPrep] = useState(false)
+  useEffect(() => { setMeetingPrep(loadMeetingPrep(roomId)) }, [roomId])
+
+  // TrackToggle (mic/camera) fails silently by default — if setMicrophoneEnabled
+  // rejects (no device, OS permission denied, device already in use by another
+  // app), the button just stays in its old state with no error shown anywhere,
+  // which looks exactly like "the button doesn't work" with no way to diagnose
+  // it from a bug report. onDeviceError below makes that failure visible.
+  const [deviceErrorToast, setDeviceErrorToast] = useState<string | null>(null)
+  const handleMicDeviceError = useCallback((error: Error) => {
+    console.error('[mic] setMicrophoneEnabled failed:', error)
+    setDeviceErrorToast(
+      error.name === 'NotAllowedError'
+        ? 'Microphone access is blocked — check your OS/browser permission settings.'
+        : error.name === 'NotFoundError'
+        ? 'No microphone found — check it’s connected and not disabled.'
+        : `Microphone error: ${error.message || error.name}`
+    )
+  }, [])
+  const handleCameraDeviceError = useCallback((error: Error) => {
+    console.error('[camera] setCameraEnabled failed:', error)
+    setDeviceErrorToast(
+      error.name === 'NotAllowedError'
+        ? 'Camera access is blocked — check your OS/browser permission settings.'
+        : error.name === 'NotFoundError'
+        ? 'No camera found — check it’s connected and not disabled.'
+        : `Camera error: ${error.message || error.name}`
+    )
+  }, [])
   const [showQuality, setShowQuality] = useState(false)
   const [quality, setQuality] = useState('Medium (720p)')
   const [floatingReactions, setFloatingReactions] = useState<{
@@ -1993,6 +2031,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
             />
           )}
 
+          {/* Meeting Prep Window — the checklist/agenda picked at scheduling time */}
+          {showMeetingPrep && meetingPrep && overlayMode !== 'hidden' && (
+            <MeetingPrepWindow
+              roomId={roomId}
+              prep={meetingPrep}
+              onClose={() => setShowMeetingPrep(false)}
+            />
+          )}
+
           {/* Auto Cam Window */}
           {autoCamMode && overlayMode !== 'hidden' && (
             <AutoCamWindow
@@ -2178,7 +2225,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                   >
                     <div style={{ display: 'flex', gap: isSmallPhone ? 6 : 10, width: 'max-content' }}>
                       {/* Mic */}
-                      <TrackToggle source={Track.Source.Microphone} style={mb} showIcon />
+                      <TrackToggle source={Track.Source.Microphone} style={mb} showIcon onDeviceError={handleMicDeviceError} />
                       {/* Speaker mute */}
                       <button
                         style={{ ...mb, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
@@ -2188,7 +2235,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                         {speakerMuted ? <VolumeX size={isSmallPhone ? 16 : 18} /> : <Volume2 size={isSmallPhone ? 16 : 18} />}
                       </button>
                       {/* Camera */}
-                      <TrackToggle source={Track.Source.Camera} style={mb} showIcon />
+                      <TrackToggle source={Track.Source.Camera} style={mb} showIcon onDeviceError={handleCameraDeviceError} />
                       {/* Reactions */}
                       <button
                         style={{ ...mb, ...(showMobileEmoji ? { background: '#2a2010', border: '1px solid #f5a623' } : {}) }}
@@ -2217,6 +2264,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                       >
                         <Layers size={isSmallPhone ? 16 : 18} />
                       </button>
+                      {/* Meeting Prep */}
+                      {meetingPrep && (
+                        <button
+                          style={{ ...mb, ...(showMeetingPrep ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                          onClick={() => setShowMeetingPrep(v => !v)}
+                          title="Meeting prep"
+                        >
+                          <ClipboardList size={isSmallPhone ? 16 : 18} />
+                        </button>
+                      )}
                       {/* Auto Cam */}
                       <button
                         style={{ ...mb, ...(autoCamMode ? { background: '#1a2e4a', border: '1px solid #4299e1' } : {}) }}
@@ -2268,7 +2325,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           ) : isPresenting && overlayMode === 'minimized' ? (
             /* ── Desktop: minimised presenter bar ────────────────────────── */
             <div style={{ ...s.controls, gap: 8, padding: '8px 14px' }}>
-              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon />
+              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon onDeviceError={handleMicDeviceError} />
               <button
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
                 onClick={toggleSpeaker}
@@ -2276,7 +2333,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               >
                 {speakerMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
               </button>
-              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon />
+              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} showIcon onDeviceError={handleCameraDeviceError} />
               {isSharing && (
                 <button style={{ ...s.controlBtn, background: '#276127', border: '1px solid #48bb78' }} onClick={stopShare} title="Stop sharing"><MonitorOff size={20} /></button>
               )}
@@ -2314,7 +2371,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               .bhv-emoji:hover { filter: none !important; }
             `}</style>
             <div ref={controlsBarRef} style={{ ...s.controls, overflow: 'visible' }} className="controls-bar">
-              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon />
+              <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon onDeviceError={handleMicDeviceError} />
               <button className="bhv-btn"
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
                 onClick={toggleSpeaker}
@@ -2322,7 +2379,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               >
                 {speakerMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
               </button>
-              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} className="bhv-btn" showIcon />
+              <TrackToggle source={Track.Source.Camera} style={s.controlBtn} className="bhv-btn" showIcon onDeviceError={handleCameraDeviceError} />
 
               {/* Background Effects */}
               <div style={{ position: 'relative' }}>
@@ -2343,6 +2400,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                   />
                 )}
               </div>
+
+              {/* Meeting Prep — only shown when a prep template was picked at scheduling time */}
+              {meetingPrep && (
+                <button className="bhv-btn"
+                  style={{ ...s.controlBtn, ...(showMeetingPrep ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                  onClick={() => setShowMeetingPrep(v => !v)}
+                  title="Meeting prep"
+                >
+                  <ClipboardList size={20} />
+                </button>
+              )}
 
               {/* Auto Cam */}
               <div style={{ position: 'relative' }}>
@@ -2926,6 +2994,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           cooldownMs={REACTION_COOLDOWN_MS}
           accent={accent}
         />
+      )}
+
+      {deviceErrorToast && (
+        <Toast message={deviceErrorToast} onDone={() => setDeviceErrorToast(null)} durationMs={5000} />
       )}
     </div>
   )

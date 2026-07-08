@@ -32,7 +32,7 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Fonts | Roboto (Google Fonts) — Thin (100) / Light (300) / Regular (400) |
 | Backend | Node.js + Express 5 |
 | Meeting Intelligence | Fathom API |
-| Background AI | MediaPipe Selfie Segmentation |
+| Background AI | MediaPipe Tasks Vision `ImageSegmenter` (GPU-delegated), with the legacy MediaPipe Selfie Segmentation API as an automatic fallback — see `components/segmentation/` |
 | Desktop | Electron 42 + electron-builder |
 | Window activation | `beehive-ctl` native helper (`NSRunningApplication`) — bring the shared window's app to the foreground |
 
@@ -119,7 +119,7 @@ Anyone in a meeting can invite anyone else — no account required on either sid
     - **Sting mode theming** — selecting **Sting** turns the BEEHIVE logo, the active lobby tab (Start Now / Schedule, whichever is currently selected), the "Start Sting" button, and the Schedule tab's "Create Meeting & Get Link" button red (`STING_RED`, `#ef4444`, defined once in `roomUtils.ts`) — the selection persists across tabs, so switching from Start Now to Schedule keeps the red theme applied. Tuned for contrast: the original `#a91b1b` measured only ~2.3–2.7:1 against this app's dark backgrounds — under WCAG AA's 3:1 minimum for large text — `#ef4444` measures ~4.8–5.2:1, clearing AA for normal text while still reading unambiguously as red
 
 **Signature button convention:** every primary-action button in the app follows one rule — **signature gold (`#f5a623`) by default, `STING_RED` when the surrounding context is in Sting mode.** This is `components/roomStyles.ts`'s shared `primaryBtn` (`background: '#f5a623', color: '#000'` — black text for AA contrast on the light gold fill; the same black-on-red pairing also clears AA against `STING_RED`), overridden per-button with `subtext === 'Sting' ? STING_RED : ...` wherever a Meet/Sting toggle is in scope. In-meeting components without direct access to `subtext` (`InviteModal`, `ReactionComposer`) receive it as an `accent` prop computed once in `MeetingRoom` (`const accent = subtext === 'Sting' ? STING_RED : '#f5a623'`) so their primary buttons stay in sync with the room's mode. Applies to: Lobby's Start/Join/Register buttons, Schedule's Create Meeting/Send Invite buttons, the in-room chat send button, the Invite modal's Copy Link button, and the reaction composer's Send button. `AuthScreen`'s buttons use the same `#f5a623` for visual consistency but have no Sting override — there's no Meet/Sting context before signing in. Verified consistent across **every version of the app** (macOS desktop, web desktop browser, mobile web): there is no platform-specific style override anywhere in the codebase (no `isMobile`/`isElectron` branch changes a button's color) — web, desktop, and mobile all render the same `roomStyles.ts`/`AuthScreen.tsx` styles from the same React bundle, so a color fix here is a color fix everywhere at once.
-  - **Schedule** — pick date + time + **duration**, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately. Also includes the **Smart Meeting Preparation** assistant (below)
+  - **Schedule** — pick date + time (`TimePicker.tsx` — a custom two-column hour/minute dropdown, used because Safari renders no dropdown at all for a native `<input type="time">`; identical look/behavior across Safari, Firefox, Chrome, and the desktop app) + **duration**, add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately. Also includes the **Smart Meeting Preparation** assistant (below). Clicking **Send Email Invite** opens the mail client, shows a "Meeting set up successfully" toast, and returns the host to the **Start Now** tab, where the meeting's name and date/time now appear as a dismissible **Next meeting** card above the usual start controls (persisted in `localStorage` so it survives a page reload; cleared via its own **×**)
 - Invite preview — guests visiting a `?room=ROOM_ID` link see the room name and live participant count before joining
 - **Register CTA (Beta)** — the register control card-flips the lobby card to the `RegisterPanel`, which — during the private Beta — shows a **`Beta`** badge and a "Request access from X Spark" button (`mailto:studio@xspark.co.za`) instead of a self-serve form (see [Authentication](#authentication))
 - **Post-meeting register** — guests who joined via room link are prompted to request Beta access when they return to the lobby after a meeting ends (same card-flip animation)
@@ -141,6 +141,7 @@ Inside the **Schedule** tab, once the basics (name / date / time / duration / at
 - **Live readiness dashboard** — a real-time score (documents-ready 60% + attendees invited 20% + duration set 20%), a colour-coded progress bar, a **Missing** list, and an **estimated prep time** (~4 min per outstanding document + fixed costs for gaps)
 - **Rule-based smart recommendations** — genuine deterministic logic, e.g. "your agenda has 12 topics for a 30-minute meeting (~2.5 min each) — consider increasing the duration or trimming the agenda", plus prompts to add attendees / set a duration
 - **Extensibility** — adding a meeting type is a single entry in `MEETING_TEMPLATES` (no component changes)
+- **Follows the meeting into the room** — whatever template/checklist/agenda was selected while scheduling is available **during** the meeting itself, not just at scheduling time. `MeetingPrep` reports its current selection upward (`onChange`); `SchedulePanel` persists it (`saveMeetingPrep`/`loadMeetingPrep` in `roomUtils.ts`, keyed by room id in `localStorage`) at the moment the room is created (and again if the selection changes before the invite is sent). Once in the meeting, a **Meeting prep** button (`ClipboardList` icon, only shown when a template was actually picked) toggles a floating `MeetingPrepWindow` — top-left, alongside the other floating windows — showing the agenda and an interactive checklist (checking items off updates the same stored entry). It collapses to a small pill (click to re-expand) rather than fully closing, so it can stay reachable through the whole meeting without permanently occupying screen space
 - **Scope (v1):** all preparation content is deterministic template data — **no language model is called**. The PRD's history-aware behaviours (e.g. "your third meeting with this client", auto-attaching relevant files, generated briefings, and persisted / shareable personal & organisation templates) need a backend + model + stored history and are intentionally left for a later phase rather than mocked
 
 ### In Meeting
@@ -207,7 +208,8 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 **Emoji panel** appears as an absolute chip above the scroll row; tapping any emoji sends it and closes the panel.
 
 #### In-meeting Features
-- 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`); camera and mic **auto-enable on join** (`<LiveKitRoom video audio>`) — `@livekit/components-react`'s `useLiveKitRoom` defaults both to `false`, which silently required a manual click on the camera/mic buttons after every join (looked like "video isn't working" to anyone expecting Zoom/Teams/Meet-style default-on camera)
+- 🎥 HD video conferencing via LiveKit (`GridLayout` + `ParticipantTile`); camera and mic **start off by default on join** (`<LiveKitRoom video={false} audio={false}>`, `RoomPage.tsx`) — participants opt in via the Mic/Camera toggle buttons once in the room, rather than the room requesting device access immediately on connect
+- **Mic/camera device-error visibility** — every `TrackToggle` (mic and camera, across the mobile row, minimised presenter bar, and full desktop bar) wires an `onDeviceError` handler. Without it, a failed `setMicrophoneEnabled`/`setCameraEnabled` call (blocked OS permission, no device present, device already claimed by another app) fails **silently** — the button just doesn't change state, with nothing in the UI or console to explain why, which looks exactly like "the button doesn't work" from a bug report with no way to diagnose it. The handler logs the real error to the console and surfaces a plain-language `Toast` ("Microphone access is blocked…", "No microphone found…", etc.) so a failure is always visible instead of silent
 - 🖱️ **Apple Dock magnification** (desktop) — hovering the controls bar magnifies icons with a Gaussian bell-curve wave; a two-pass cumulative X-shift pushes neighbours apart so gaps between icons are always preserved at any zoom level; spring-pop entry, fast cursor-tracking, and a micro-bounce settle on leave; `transform-origin: center` keeps click hit-areas aligned with visuals at all scales
 - 😊 **Emoji reactions** — two modes triggered by the `Smile` button:
   - **Quick tap**: emoji floats up immediately (👍 ❤️ 😂 🎉 👏 🔥); visible to all participants via Supabase Realtime
@@ -217,14 +219,25 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
 - 🎙️ **Background-noise suppression** — the mic is automatically run through LiveKit's Krisp noise-filter processor, which filters ambient/background noise and isolates the speaker's voice; applied to every mic track this participant publishes (including after toggling the mic off and back on, which creates a fresh track); the ~5–6 MB Krisp WASM/ML payload is **lazy-loaded** on first mic publish via dynamic `import()` — it never bloats the initial page load; silently skipped on unsupported browsers/platforms, so it never blocks the mic
 - 🔗 Invite link — opens a share modal showing the plain `?room=ROOM_ID` link; anyone can copy and share it; recipients join directly with no account required
 - 📽️ Video quality selector — Low (360p) / Medium (720p) / High (1080p)
-- 🎨 Background Effects (`Layers` button, amber when active) — uses **MediaPipe Selfie Segmentation**; four modes:
+- 🎨 Background Effects (`Layers` button, amber when active) — four modes:
   - **None** — restores original camera track
-  - **Blur** — background blurred; intensity slider (2–20 px); Flip toggle
+  - **Blur** — background blurred with a portrait-lens depth-of-field falloff (see below); intensity slider (2–20 px); Flip toggle
   - **Image** — upload any photo; cover-fitted as background; Flip toggle
   - **Virtual** — 8 procedurally drawn scene presets (Office, Beach, City, Forest, Mountains, Space, Sunset, Studio)
   - **Aspect-ratio-correct pipeline** — the output canvas is sized from the **real camera resolution** (preserving 16:9 / whatever the webcam reports, capped at 1280 px wide), so nothing is stretched or squashed. `replaceTrack` swaps the published LiveKit video track with `canvas.captureStream(30)`
-  - **Clean blur** — the blurred layer is drawn with an overscan so the blur kernel's faded edges fall outside the frame, eliminating the dark-vignette rim a naive canvas blur produces
-  - **High-contrast cutout** — MediaPipe's soft, semi-transparent mask edges are **thresholded into a crisp cutout** (with a thin anti-alias band, processed at ≤320 px for speed then upscaled), and a subtle dark rim shadow is composited around the attendee on Image/Virtual backgrounds — so the attendee stands out sharply instead of haloing/blending into the scene
+
+  **Segmentation engine** (`components/segmentation/`) — a `SegmentationEngine` interface with two interchangeable implementations, so the rendering pipeline never knows or cares which one is active:
+  - **MediaPipe Tasks Vision `ImageSegmenter`** (`tasksVisionEngine.ts`) — the current, actively-maintained Google API. GPU-delegated by default, automatically retrying on CPU if GPU init fails. Converts its confidence-mask output (`MPMask`, raw `Float32Array`) into a small drawable canvas so the rest of the pipeline is unaffected by which engine produced it.
+  - **Legacy MediaPipe Selfie Segmentation** (`legacyEngine.ts`) — the original CDN-loaded API (`modelSelection: 0`, the higher-quality of its two model options), kept as a permanent automatic fallback, not a temporary migration shim: if Tasks Vision fails to initialize for any reason (model URL unreachable, GPU/browser incompatibility, WASM load failure), `createSegmentationEngine()` silently falls back to this proven engine so a video call never breaks over a segmentation hiccup. Which engine is active, and rolling frame-time/FPS, are logged to the console (`[segmentation] using MediaPipe Tasks Vision...` / `[segmentation:*] avg frame time: ...`) — a debugging breadcrumb, not a UI feature.
+
+  **Mask quality pipeline** (`RoomPage.tsx`'s `processMask()`) — three stages applied to every frame's raw mask, regardless of which engine produced it:
+  1. **Confidence ramp** — a wide smoothstep curve (not a hard threshold) crushes low-confidence "junk" (person-adjacent objects like pillows or chair backs, which MediaPipe scores as mid-confidence) toward invisible, while keeping genuinely soft edges — hair strands, finger edges — soft rather than binarized. A prior hard-threshold version of this caused a visible "cut-out pasted on" look; the smoothstep ramp is what fixed it.
+  2. **Feather** — a small blur (`ctx.filter`, not a pixel loop) softens the ramped edge so it blends into the background instead of cutting.
+  3. **Temporal smoothing** — an exponential moving average across frames, implemented via canvas alpha compositing (`lighter` blend mode, mathematically exact, no per-pixel JS) with correct decay in both directions — a transient misclassification fades out within a few frames rather than sticking on screen permanently (an earlier, naive temporal-blend attempt got this wrong: `source-over` compositing can only ever *grow* a mask, never shrink it, which caused visible ghost smears until fixed).
+  - **Clean blur** — the blurred layer is drawn with an overscan so the blur kernel's faded edges fall outside the frame, eliminating the dark-vignette rim a naive canvas blur produces.
+  - **Depth-of-field blur** — instead of one uniform blur radius, background near the subject's silhouette stays relatively sharp while background farther away gets progressively softer, mimicking a portrait lens's focus falloff. There's no real depth data (a single 2D confidence mask, no stereo/LiDAR), so the "nearness" cue is faked by blurring the subject's own already-smoothed mask with a large radius — the result is a continuous, artifact-free falloff, because it's mathematically guaranteed to align with the actual silhouette (it *is* that silhouette, just softened further) rather than a second, independently-computed halo.
+  - **Subtle background color match** — the subject's exposure/saturation is nudged a few percent toward the background's average tone (sampled once per background change, not per frame, and tightly capped) so they don't look like two mismatched exposures pasted together.
+  - **Subtle foreground contrast** — a small, flat contrast boost on the subject only, for a bit of "portrait pop" without a beauty-filter look.
 - 📸 Auto Cam — floating window (bottom-right), two modes:
   - **Auto Centre** — follows the active speaker (1.5 s debounce); crosshair name tag
   - **2 in 1** — local (You) left, active speaker right; "Waiting…" when no remote speaker
@@ -382,6 +395,7 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 - Fathom API key proxied through backend (never reaches client)
 - Electron: `contextIsolation: true`, `nodeIntegration: false`, `contextBridge` only
 - `beehive://` deep-link handler validates token structure before loading into renderer
+- **Unique per-connection LiveKit identity** — the client generates a random UUID as each participant's LiveKit `identity` (`livekit_react_hooks.tsx`'s `useJoinRoom`), sent alongside `displayName` to `/api/livekit/token`. Freeform display names collide easily (two tabs sharing one signed-in profile, two people typing the same name), and LiveKit disconnects the earlier participant whenever a second one joins with an identity already in use — this surfaced as "their mic doesn't work" with no visible error. `displayName` is still used for LiveKit's `name` field (what's shown in the UI); the `participant_left` webhook matches on `participant.name` accordingly, not `participant.identity`
 
 ---
 
@@ -389,7 +403,7 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/api/livekit/token` | Generate LiveKit JWT; body: `{ roomName, displayName }` |
+| `POST` | `/api/livekit/token` | Generate LiveKit JWT; body: `{ roomName, displayName, identity }` — `identity` is a client-generated UUID (falls back to `displayName` if omitted, for older clients); see [Security](#security) |
 | `POST` | `/api/livekit/webhook` | LiveKit webhook receiver (`egress_ended`, `participant_left`) |
 | `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
 | `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
@@ -412,8 +426,11 @@ beehive/
 │   ├── InviteModal.tsx                 #   plain ?room=ROOM_ID link + copy button
 │   ├── Lobby.tsx                       #   lobby (Start Now / Schedule + card-flip register)
 │   ├── SchedulePanel.tsx               #   schedule + duration + email-invite panel
+│   ├── TimePicker.tsx                  #   cross-browser 24h time dropdown (Safari has no native one)
 │   ├── MeetingPrep.tsx                 #   Smart Meeting Preparation (type cards + prep panel)
 │   ├── meetingTemplates.ts             #   meeting-type template data (agenda/docs/questions/…)
+│   ├── MeetingPrepWindow.tsx           #   in-meeting floating prep checklist/agenda (collapsible)
+│   ├── Toast.tsx                       #   self-dismissing confirmation banner (e.g. "Meeting set up successfully")
 │   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
 │   ├── ParticipantsWindow.tsx          #   draggable/dockable window + strip
 │   ├── BackgroundMenu.tsx              #   background-effects menu
@@ -424,6 +441,12 @@ beehive/
 │   ├── ElectronWindowPicker.tsx        #   desktop window picker
 │   ├── ReactionComposer.tsx            #   long-press emoji reaction composer popover
 │   ├── DesktopHandoff.tsx              #   web → desktop sign-in handoff + OS-aware download link
+│   ├── BuiltByFooter.tsx               #   shared "Built by X Spark" credit (sign-in + lobby)
+│   ├── segmentation/                   #   virtual-background segmentation engines
+│   │   ├── types.ts                    #     SegmentationEngine interface
+│   │   ├── tasksVisionEngine.ts        #     MediaPipe Tasks Vision adapter (GPU-delegated)
+│   │   ├── legacyEngine.ts             #     legacy MediaPipe Selfie Segmentation (fallback)
+│   │   └── createSegmentationEngine.ts #     tries Tasks Vision, falls back to legacy
 │   ├── roomUtils.ts                    #   constants, helpers, drawVirtualScene
 │   └── roomStyles.ts                   #   shared `s` styles object
 ├── livekit_react_hooks.tsx             # Hooks: useAuth, useProfile, useCreateRoom,
@@ -449,10 +472,24 @@ beehive/
 ├── livekit_supabase_schema.sql         # Base Supabase schema
 ├── livekit_database_recommendation.md  # ADR: Supabase vs Firebase
 ├── index.html                          # App shell + Roboto font + --vh + zoom-to-fit
+├── public/                             # Static assets served as-is by Vite (currently empty)
 ├── vite.config.ts                      # base: './' for Electron file:// compat
 ├── package.json                        # main: electron/main.cjs; build config
+├── render.yaml                         # Render deploy config — see Deployment below
 └── .env                                # Local secrets (git-ignored)
 ```
+
+---
+
+## Deployment
+
+The live web app deploys via [Render](https://render.com) ([`render.yaml`](./render.yaml)):
+
+- **Branch**: `staging` — every push auto-deploys (this is also the branch used for local development; `main` is not currently kept in sync and should not be assumed to reflect the live site)
+- **Build**: `npm install && npm run build` (Vite build → `dist/`)
+- **Start**: `node livekit_node_backend.js` — the same Express server that also serves the built frontend as static files in production (see `livekit_node_backend.js`'s `SERVE FRONTEND` section)
+- **Env vars**: configured in the Render dashboard (`sync: false` in `render.yaml`), not committed — see [Environment Variables](#environment-variables) for the full list
+- Live URL: `https://beehive-fu8w.onrender.com` (also `VITE_WEB_BASE_URL`, used for invite-link generation)
 
 ---
 
@@ -731,7 +768,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Mobile web responsive — zoom-to-fit viewport, iOS safe-area, small-phone button sizing, no horizontal overflow (all modern iPhone sizes)
 - [ ] Mobile native app (React Native + LiveKit mobile SDK)
 - [x] Fathom integration — meeting summaries, action items, transcript viewer
-- [x] Background effects — Blur / Image upload / Virtual scenes (MediaPipe segmentation); aspect-ratio-correct output (no stretch), overscan blur (no vignette), thresholded high-contrast attendee cutout with separating rim shadow
+- [x] Background effects — Blur / Image upload / Virtual scenes; MediaPipe Tasks Vision segmentation (GPU-delegated) with automatic fallback to the legacy MediaPipe API; aspect-ratio-correct output (no stretch), overscan blur (no vignette), feathered + temporally-smoothed attendee cutout (no hard cutout/halo), portrait-lens depth-of-field falloff on the Blur background, subtle background color match + foreground contrast
 - [x] File sharing — drag-to-drop or paperclip; send to all or select attendees; Supabase Storage
 - [x] Schedule meeting — date/time/duration picker, email chip invites, shareable link, mailto integration
 - [x] Smart Meeting Preparation (v1) — ~21 meeting-type cards; per-type agenda/checklist/questions/goals/attendees/risks; editable agenda + interactive checklist (add/remove/custom); live readiness score + prep-time estimate; rule-based recommendations (agenda-vs-duration pacing, missing attendees). Template-data-driven, no LLM

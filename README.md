@@ -660,6 +660,8 @@ npm run dev:frontend    # → http://localhost:5173
 
 > **Port note:** BeeHive owns port **5173**. If another project also uses Vite on 5173, move that project's `.claude/launch.json` to a different port (e.g. 5174) to avoid conflicts.
 
+> **`npm install` also runs a full build** — `postinstall` runs `npm run build` (`vite build` → `dist/`) automatically after every install. This is what lets `livekit_node_backend.js` serve a working `dist/` in production without a separate manual build step, but it does mean a fresh `npm install` takes noticeably longer than just resolving dependencies.
+
 **Desktop app:**
 ```bash
 npm run electron:dev
@@ -775,6 +777,7 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] File sharing — drag-to-drop or paperclip; send to all or select attendees; Supabase Storage
 - [x] Schedule meeting — date/time/duration picker, email chip invites, shareable link, mailto integration
 - [x] Smart Meeting Preparation (v1) — ~21 meeting-type cards; per-type agenda/checklist/questions/goals/attendees/risks; editable agenda + interactive checklist (add/remove/custom); live readiness score + prep-time estimate; rule-based recommendations (agenda-vs-duration pacing, missing attendees). Template-data-driven, no LLM
+- [x] Meeting prep follows into the room — the selected template's checklist/agenda is available during the meeting itself via a collapsible floating `MeetingPrepWindow`, not just at scheduling time
 - [ ] Smart Meeting Preparation (AI phase) — history-aware suggestions, auto-attach relevant files, generated briefings/questions, persisted & shareable personal + organisation templates (needs backend + model + stored history)
 - [x] Electron desktop app — native file open, window capture without OS dialog, drag-to-present with preview confirmation
 - [ ] Self-hosted LiveKit option (Africa-first / data sovereignty)

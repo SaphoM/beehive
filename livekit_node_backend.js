@@ -11,6 +11,55 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 dotenv.config()
 
 const app = express()
+
+// ============================================================
+// SECURITY HEADERS
+// Render's declarative `headers:` block in render.yaml only applies to
+// *static site* services — this is a `runtime: node` web service with a
+// custom startCommand, so headers must be set by the app itself. (Earlier
+// attempts at these headers lived in render.yaml / a Netlify _headers file,
+// neither of which this Node/Render deploy ever actually applies — hence
+// the site scoring an F despite that history.)
+// ============================================================
+app.use((_req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(self), microphone=(self), display-capture=(self), fullscreen=(self), geolocation=(), payment=(), usb=()'
+  )
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      // cdn.jsdelivr.net: legacy MediaPipe Selfie Segmentation <script> loader
+      // (components/roomUtils.ts's ensureMediaPipe) and the Tasks Vision WASM
+      // runtime fetch; 'wasm-unsafe-eval' is required to instantiate that WASM.
+      "script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'",
+      // MediaPipe's GPU-delegated inference can spin up Workers from blob URLs.
+      "worker-src 'self' blob:",
+      // Inline <style> blocks (RoomPage.tsx/Toast.tsx use `<style>{...}</style>`
+      // for keyframes/hover rules) require 'unsafe-inline' here — style-src
+      // 'unsafe-inline' cannot execute script, so this is a low-risk allowance.
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      // data:: desktopCapturer thumbnails (base64); blob:: local media/canvas.
+      "img-src 'self' data: blob:",
+      "media-src 'self' blob:",
+      // Supabase (DB/Realtime/Storage) + LiveKit Cloud (signaling) + MediaPipe
+      // asset hosts. WebRTC media itself (audio/video) isn't gated by connect-src.
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.livekit.cloud wss://*.livekit.cloud https://cdn.jsdelivr.net https://storage.googleapis.com",
+      "frame-ancestors 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; ')
+  )
+  next()
+})
+
 app.use(express.json())
 
 const supabase = createClient(

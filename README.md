@@ -389,6 +389,7 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 ---
 
 ### Security
+- **HTTP security headers** (`livekit_node_backend.js` middleware, applied to every response) — `Strict-Transport-Security`, `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`. **Must live here, not in `render.yaml`**: Render's declarative `headers:` config only applies to `runtime: static` services — this is `runtime: node` with a custom `startCommand`, so a `headers:` block there is silently ignored (this is why the live site scored an F on header scans despite an earlier attempt having put them there — see the callout in `render.yaml`). The CSP's `script-src` is `'self'` with no `unsafe-inline`: the one inline `<script>` `index.html` used to have (viewport zoom-to-fit / `--vh` setup) was externalized to `public/viewport-init.js` specifically so this could be avoided; `style-src` does need `'unsafe-inline'`, because a few components (`RoomPage.tsx`, `Toast.tsx`) render genuine inline `<style>{...}</style>` blocks for keyframes/hover rules — CSP `unsafe-inline` for styles can't execute script, so this is a low-risk, deliberate allowance rather than an oversight. `connect-src`/`script-src` explicitly allow the exact external hosts the app actually loads from (Supabase, LiveKit Cloud, `cdn.jsdelivr.net` + `storage.googleapis.com` for MediaPipe) — audited via a full-codebase grep for every external URL reference, not guessed
 - Row Level Security (RLS) on all Supabase tables — including `usage` and `audit_logs`, which shipped in the base schema without it (Supabase's advisor flagged `usage` as publicly readable/writable; `audit_logs` had the identical gap). Fixed via `supabase/migrations/002_enable_rls_usage_audit_logs.sql`. Neither table is touched by any client-side code, so RLS-with-no-policies (default-deny) is correct — there's no legitimate client read/write case to add a policy for
 - **Default grants revoked too** — RLS-with-no-policies already denies `anon`/`authenticated` regardless of table grants, but both roles still held Supabase's default full CRUD grants on `usage`/`audit_logs`, leaving RLS as the only barrier. `supabase/migrations/003_revoke_public_grants_usage_audit_logs.sql` revokes those grants as defense-in-depth, so a future permissive policy added to either table by mistake still wouldn't expose them
 - Passwordless auth — no password storage, no brute-force surface
@@ -474,8 +475,9 @@ beehive/
 │   └── icon.icns                       # macOS app icon
 ├── livekit_supabase_schema.sql         # Base Supabase schema
 ├── livekit_database_recommendation.md  # ADR: Supabase vs Firebase
-├── index.html                          # App shell + Roboto font + --vh + zoom-to-fit
-├── public/                             # Static assets served as-is by Vite (currently empty)
+├── index.html                          # App shell + Roboto font + viewport-init.js + module entry
+├── public/                             # Static assets served as-is by Vite
+│   └── viewport-init.js                #   --vh + zoom-to-fit (externalized from index.html for CSP script-src)
 ├── vite.config.ts                      # base: './' for Electron file:// compat
 ├── package.json                        # main: electron/main.cjs; build config
 ├── render.yaml                         # Render deploy config — see Deployment below

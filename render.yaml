@@ -1,3 +1,12 @@
+# Security headers (HSTS, CSP, X-Frame-Options, etc.) do NOT belong in a
+# `headers:` block here — Render's declarative headers config only applies
+# to `type: web` services with `runtime: static`. This is `runtime: node`
+# with a custom startCommand, so a `headers:` block here is silently
+# ignored. The actual headers are set as Express middleware in
+# livekit_node_backend.js — that's the only place that reaches the live
+# response for this service. (A prior attempt put them here; the live site
+# scored an F on security-header scans because this file's `headers:`
+# never applied.)
 services:
   - type: web
     name: beehive

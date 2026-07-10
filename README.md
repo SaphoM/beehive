@@ -354,10 +354,12 @@ npm run electron:build:mac   # → release/BeeHive-1.0.0-arm64.dmg  (Apple Silic
 npm run electron:build:win   # → release/*.exe (NSIS installer)
 ```
 
+**Code signing / entitlements (macOS, important):** this project has no paid "Developer ID Application" certificate, so `electron-builder` **skips code signing entirely** for every mac build — and skipping signing also means it skips applying `hardenedRuntime` + `entitlements.mac.plist`, even though both are configured in `package.json`'s `build.mac`. A build in that state has **zero entitlements at all**: no `com.apple.security.device.camera`/`microphone`, so macOS TCC silently denies camera/mic access to the packaged app — no error, no prompt, the buttons just don't work, which is easy to misdiagnose as an app bug rather than a packaging one. `electron/afterSign.cjs` (wired via `build.afterSign`) fixes this automatically: it checks for a real Developer ID identity, and if none is found (the case here), ad-hoc re-signs the app with `entitlements.mac.plist` itself, before the DMG is packaged (so the DMG's contents are correct too, not just the raw `.app`). If a paid certificate is ever added to this machine, the hook detects it and steps aside rather than overwriting a proper signature.
+
 **Installing the built app (macOS):**
 1. Open `release/BeeHive-1.0.0-arm64.dmg`
 2. Drag BeeHive to Applications
-3. First launch: right-click → Open (bypasses Gatekeeper — app is unsigned)
+3. First launch: right-click → Open (bypasses Gatekeeper — app is ad-hoc signed, not notarized)
 4. If multiple instances appear in the dock, quit all and relaunch once; the single-instance lock prevents duplicates from v1.0.0 onward
 
 **API routing in packaged builds:**
@@ -471,7 +473,8 @@ beehive/
 │   ├── beehive-ctl.m                   # native helper — activate a window by CGWindowNumber
 │   ├── dock.html                       # Floating Control Dock UI (plain HTML/JS, separate window)
 │   ├── dockPreload.cjs                 # contextBridge — exposes window.dockAPI to dock.html
-│   └── entitlements.mac.plist          # macOS hardened runtime entitlements
+│   ├── entitlements.mac.plist          # macOS hardened runtime entitlements
+│   └── afterSign.cjs                   # electron-builder hook — ad-hoc re-sign w/ entitlements when unsigned
 ├── assets/
 │   └── icon.icns                       # macOS app icon
 ├── livekit_supabase_schema.sql         # Base Supabase schema

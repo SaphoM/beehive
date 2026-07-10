@@ -47,6 +47,7 @@
     "appId": "co.xspark.beehive",
     "productName": "BeeHive",
     "copyright": "Copyright © 2025 X Spark",
+    "afterSign": "electron/afterSign.cjs",
     "protocols": [
       {
         "name": "BeeHive",

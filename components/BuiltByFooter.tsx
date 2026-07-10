@@ -1,6 +1,8 @@
 // Small branding credit — bottom-right corner of the app's entry screens
 // (sign-in and lobby). Uses the app's standard grey/font-size convention
-// (#555, 11px, Roboto) so it reads as part of the UI, not an ad.
+// (#555, 11px, Roboto) so it reads as part of the UI, not an ad — except
+// "X Spark" itself, which is in the app's signature gold (#f5a623) to tie
+// the credit back to the brand.
 export function BuiltByFooter() {
   return (
     <a
@@ -13,7 +15,7 @@ export function BuiltByFooter() {
         fontWeight: 300, textDecoration: 'none',
       }}
     >
-      Built by X Spark
+      Built by <span style={{ color: '#f5a623' }}>X Spark</span>
     </a>
   )
 }

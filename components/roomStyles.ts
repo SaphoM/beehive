@@ -100,7 +100,7 @@ export const s: Record<string, React.CSSProperties> = {
   fathomDetail: { padding: '0 16px 14px', display: 'flex', flexDirection: 'column' as const, gap: 12 },
   fathomSection: { display: 'flex', flexDirection: 'column' as const, gap: 6 },
   fathomSectionTitle: { color: '#444', fontSize: 9, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 1.5, textTransform: 'uppercase' as const },
-  fathomSummaryText: { color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, lineHeight: 1.6, whiteSpace: 'pre-wrap' as const, maxHeight: 160, overflowY: 'auto' as const },
+  fathomSummaryText: { color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, lineHeight: 1.6, maxHeight: 220, overflowY: 'auto' as const },
   fathomActionItem: { display: 'flex', alignItems: 'flex-start', gap: 8 },
   fathomAssignee: { color: '#3a3a3a', fontSize: 11, fontFamily: "'Roboto', sans-serif", flexShrink: 0 },
   fathomTranscriptToggle: { background: 'none', border: '1px solid #222', borderRadius: 6, color: '#444', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' as const },

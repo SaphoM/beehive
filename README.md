@@ -377,14 +377,15 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 
 **Features (Lobby → "Recent meetings"):**
 - Meeting list — title, date, duration, attendees
-- AI-generated summary
+- AI-generated summary — rendered by a small purpose-built markdown renderer (`FathomPanel.tsx`'s `FathomSummary`/`renderInline`/`renderBold`), not a general markdown library. Fathom's `default_summary.markdown_formatted` field is real markdown (`##`/`###` headers, `**bold**` — including bold nested inside link text — `[text](url)` links, `  - ` bullets), and was previously dumped into a plain `<div>` as literal text, so summaries showed raw `##`/`**`/`[...]( ...)` syntax instead of clean formatted prose. The renderer covers exactly the subset confirmed present in real API responses (verified by fetching live data and scanning for any other markdown syntax — tables, code fences, numbered lists, italics — none found); action items and transcript lines are plain text from the API and need no such handling
 - Action items with assignee and completion status
 - On-demand transcript viewer
 - "Open in Fathom ↗" deep-link
 - Cursor-based pagination ("Load more")
 
 **API:** `https://api.fathom.ai/external/v1` — proxied through Node.js backend (API key never reaches client).  
-**Required env var:** `FATHOM_API_KEY`
+**Required env var:** `FATHOM_API_KEY`  
+**Note on `limit`:** Fathom's `/meetings` endpoint appears to enforce its own floor of 10 results regardless of a smaller requested `limit` — confirmed by calling Fathom's API directly with the same key, bypassing this app's proxy entirely, and seeing the same behavior. Not a bug in this codebase; the proxy forwards the client's `limit` correctly.
 
 ---
 

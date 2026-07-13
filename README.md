@@ -145,6 +145,19 @@ Inside the **Schedule** tab, once the basics (name / date / time / duration / at
 - **Follows the meeting into the room** — whatever template/checklist/agenda was selected while scheduling is available **during** the meeting itself, not just at scheduling time. `MeetingPrep` reports its current selection upward (`onChange`); `SchedulePanel` persists it (`saveMeetingPrep`/`loadMeetingPrep` in `roomUtils.ts`, keyed by room id in `localStorage`) at the moment the room is created (and again if the selection changes before the invite is sent). Once in the meeting, a **Meeting prep** button (`ClipboardList` icon, only shown when a template was actually picked) toggles a floating `MeetingPrepWindow` — top-left, alongside the other floating windows — showing the agenda and an interactive checklist (checking items off updates the same stored entry). It collapses to a small pill (click to re-expand) rather than fully closing, so it can stay reachable through the whole meeting without permanently occupying screen space
 - **Scope (v1):** all preparation content is deterministic template data — **no language model is called**. The PRD's history-aware behaviours (e.g. "your third meeting with this client", auto-attaching relevant files, generated briefings, and persisted / shareable personal & organisation templates) need a backend + model + stored history and are intentionally left for a later phase rather than mocked
 
+#### Waiting Room & Host-Delegated Admit Rights (scheduled meetings only)
+
+The meeting creator of a **scheduled** meeting controls who's let in. This is **new capability, not a refinement** of anything that existed before — join was previously fully frictionless for every room. It's deliberately scoped to the Schedule tab only: **Start Now stays exactly as instant as it's always been** — no host concept, no gate, no waiting room.
+
+- **How host identity works without requiring sign-in**: rooms can be created by anonymous guests as well as signed-in users, so "host" can't rely on a Supabase auth session. Scheduling a meeting (`SchedulePanel.tsx` → `useScheduleRoom` → `POST /api/rooms/schedule`) mints a random `host_secret` **server-side** and returns it once; the creator's browser stores it in `localStorage` under `beehive:hostSecret:<roomId>` and sends it back on every subsequent join to that room from that device. The secret is **never** part of the shareable invite link, and never lands on any client-readable table — it lives in a dedicated `room_hosts` table with RLS enabled and **zero policies at all** (not even SELECT), reachable only by the backend's service-role client. Losing that browser's `localStorage` means losing "automatic host" status on that device; there's no recovery flow for that yet (see Roadmap).
+- **Why admission state is its own table, not a `room_participants` column**: `room_participants` already has a fully permissive `UPDATE ... USING (true)` RLS policy (supports other legitimate client updates like `is_active`/`left_at`, and is out of scope to tighten). Adding admission status directly there would let any attendee self-admit with one anon-key REST call. `admission_requests` has permissive SELECT/INSERT (anyone can request to join, and both the waiting attendee and the host/co-hosts need to read live status via Realtime) but **no UPDATE policy for anon/authenticated at all** — status only ever changes through `POST /api/rooms/:roomId/admit`, using the backend's service-role client. Verified directly: a PATCH via the anon key against a real pending request updates zero rows and leaves it unchanged.
+- **The gate lives in `/api/livekit/token`**, not the UI: `rooms.requires_admission` (false by default; true only on rooms created via `/api/rooms/schedule`) decides whether this endpoint applies any gate at all. A matching `hostSecret` issues a token immediately (and upserts that identity's `room_participants` role to `'host'`). Otherwise it upserts a `pending` `admission_requests` row (idempotent per `(room_id, identity)`, so retries/reconnects don't pile up duplicates) and responds **202** with no token; a `'denied'` row responds **403**; an `'admitted'` row (e.g. a reconnect) issues a token normally.
+- **Waiting screen** (`components/WaitingRoom.tsx`): shown the instant a join attempt comes back pending. Subscribes to that one `admission_requests` row via Realtime and, the moment its `status` flips to `'admitted'`, automatically retries the join with the **same identity** as the original request (so it resolves the row that was just decided, rather than filing a new one) and proceeds straight into the meeting — no manual "try again" step. A `'denied'` decision shows a plain terminal message instead.
+- **Waiting Room panel** (`components/AdmissionRequestsWindow.tsx`, `DoorOpen` icon in the control bar) — shown only to whoever's own `room_participants.role` is `'host'` or `'co-host'` in this specific meeting (derived from the same live `useParticipants` list the Participants window already uses — no extra subscription). Lists everyone currently held at the door, live-updating via Realtime, with Admit/Deny buttons.
+- **Delegating admit rights**: in the Participants window, the room's actual creator (checked via a valid `hostSecret` present in `localStorage` for this room — a co-host has none, so this control never appears for them) gets a crown toggle next to each other participant to make/unmake them a co-host. `POST /api/rooms/:roomId/grant-co-host` requires the `hostSecret` specifically, not just a role check — a co-host can admit people but can never mint more co-hosts, keeping one clear locus of control.
+- **`room_participants.role`** (`'host' | 'co-host' | 'participant'`) already existed in the schema from the very first migration but had never been read or written anywhere until this feature — every row was just `'participant'`. This wires it up for real rather than adding a redundant column.
+- Verified end-to-end via Playwright (schedule → attendee hits the waiting screen with no LiveKit connection → host sees the request in the panel → admits → attendee proceeds automatically) and via direct `curl` against every endpoint, including both negative security tests (self-admit via the anon key, reading `room_hosts` via the anon key) — both correctly rejected.
+
 ### In Meeting
 
 #### Header — Desktop
@@ -297,7 +310,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - Targeted files render as download cards only for named recipients; "To: …" label on targeted shares
 - 💬 Real-time chat sidebar (Supabase Realtime). `useChat` (`livekit_react_hooks.tsx`) merges its initial fetch into state by message `id` rather than overwriting it outright, and dedupes realtime-appended messages the same way — makes the hook safe against React StrictMode's dev-only double-mount (two initial fetches can be in flight at once; a plain overwrite risked a slow one clobbering an already-arrived realtime message back out of view). Both the initial fetch and the realtime subscription log to the console on failure (`CHANNEL_ERROR`/`TIMED_OUT`, or a failed insert) instead of failing silently
 - 📴 Leave call — marks participant inactive in Supabase and broadcasts a **"[Name] left"** system event to the chat for all remaining attendees
-- 👋 **Join / leave notifications** — horizontal-rule system messages in the chat sidebar: green **"[Name] joined"** on entry, grey **"[Name] left"** on exit; written to `chat_messages` with `display_name: '__SYSTEM__'`
+- 👋 **Join / leave notifications** — horizontal-rule system messages in the chat sidebar: green **"[Name] joined"** on entry, grey **"[Name] left"** on exit; written to `chat_messages` with `display_name: '__SYSTEM__'`. The effect that announces a join also marks the participant's `room_participants` row inactive in its cleanup (the fallback for tab-closed/navigated-away, alongside the explicit Leave button's own deactivation) — React StrictMode's dev-only mount→cleanup→remount cycle used to run that cleanup once immediately after the very first mount with nothing to ever flip the row back to active (that only happens once, server-side, before this component even mounts), silently leaving the row `is_active: false` for the rest of the session. Invisible for most things, but it broke anything reading that row afterward — notably the waiting-room feature's host/co-host detection, which made a meeting's own creator unable to see their own admit controls. Fixed by deferring the deactivation by one tick (`setTimeout(0)`) and cancelling it on remount — StrictMode's remount happens synchronously within the same effects flush, before any timer fires, so it reliably cancels the synthetic deactivation while a genuine unmount (no remount to cancel it) still deactivates, just one tick later
 - ⏱️ **Auto-end when alone** — if you are the only active participant for 10 minutes, a countdown warning banner appears at the top of the screen (`You're alone — call ends in Xs`); clicking **Stay** resets the timer; the call ends automatically when the countdown reaches zero. "Alone" is determined from `liveKitParticipants` (the live WebRTC room roster — the same source the header's participant count and the floating dock use), **not** the Supabase `room_participants.is_active` flag, which is only flipped by the LiveKit `participant_left` webhook (or an explicit leave) and can drift stale on any webhook delivery hiccup — a previous version used that flag here, and a stale row could make this feature think everyone else had left and start the countdown while the header/video grid still correctly showed multiple live participants, kicking a genuinely active meeting out early
 - 🔴 **Meeting ended state** — when the last participant leaves, `rooms.ended_at` is set and `rooms.is_active` is set to false; any subsequent visitor opening the invite link sees a "Meeting Ended" summary card (with end time) and a "Start a new meeting" button — the name input and join button are hidden, preventing re-join
   - **Re-checked at the moment of clicking Join, not just on page load** — the lobby only *hides* the Join button based on a one-time snapshot fetched when the invite page loads (`useRoomInfo`), which goes stale if the meeting ends while that tab sits open (host leaves, or the alone-timer above fires). `useJoinRoom`'s `joinRoom` re-fetches `ended_at`/`is_active` fresh at join time and refuses to proceed if the room has since ended — the actual gate, not the button's visibility. On this specific outcome, `handleJoin` (`RoomPage.tsx`) refreshes the invite preview so the lobby flips straight to the "Meeting Ended" card instead of a generic "failed to join" alert. `joinRoom`'s result carries this reason on the resolved value itself (`{ error: ENDED_MEETING_ERROR }` vs. `{ token, ... }`) rather than the hook's separate `error` state — reading that state right after `await`ing the call would see whatever it was *before* this click, since React doesn't re-render mid-await. Verified against the live DB: ending a room between page-load and the Join click is correctly blocked, with no participant/token created for the dead meeting
@@ -411,7 +424,10 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/api/livekit/token` | Generate LiveKit JWT; body: `{ roomName, displayName, identity }` — `identity` is a client-generated UUID (falls back to `displayName` if omitted, for older clients); see [Security](#security) |
+| `POST` | `/api/rooms/schedule` | Create a waiting-room-gated scheduled room; body: `{ name, organisation }`; returns `{ room, hostSecret }` — see [Waiting Room](#waiting-room--host-delegated-admit-rights-scheduled-meetings-only) |
+| `POST` | `/api/livekit/token` | Generate LiveKit JWT; body: `{ roomName, displayName, identity, hostSecret? }` — `identity` is a client-generated UUID (falls back to `displayName` if omitted, for older clients); see [Security](#security). On a `requires_admission` room without a valid `hostSecret`, responds **202** `{ status: 'pending', requestId }` (no token) instead of issuing one, or **403** if previously denied |
+| `POST` | `/api/rooms/:roomId/admit` | Admit or deny a waiting attendee; body: `{ requestId, decision: 'admit'\|'deny', actingDisplayName?, hostSecret? }` — authorized via a matching `hostSecret` or an already-admitted `host`/`co-host` role |
+| `POST` | `/api/rooms/:roomId/grant-co-host` | Delegate (or revoke) admit rights; body: `{ displayName, grant, hostSecret }` — requires `hostSecret` specifically, not just a role check |
 | `POST` | `/api/livekit/webhook` | LiveKit webhook receiver (`egress_ended`, `participant_left`) |
 | `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
 | `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
@@ -439,8 +455,10 @@ beehive/
 │   ├── meetingTemplates.ts             #   meeting-type template data (agenda/docs/questions/…)
 │   ├── MeetingPrepWindow.tsx           #   in-meeting floating prep checklist/agenda (collapsible)
 │   ├── Toast.tsx                       #   self-dismissing confirmation banner (e.g. "Meeting set up successfully")
+│   ├── WaitingRoom.tsx                 #   full-screen "waiting for the host" view (scheduled meetings)
+│   ├── AdmissionRequestsWindow.tsx     #   host/co-host floating panel — admit/deny waiting attendees
 │   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
-│   ├── ParticipantsWindow.tsx          #   draggable/dockable window + strip
+│   ├── ParticipantsWindow.tsx          #   draggable/dockable window + strip; host-only co-host toggle
 │   ├── BackgroundMenu.tsx              #   background-effects menu
 │   ├── AutoCamWindow.tsx               #   auto-cam floating window
 │   ├── SpeakingIndicator.tsx           #   active-speaker chip + video (dual-window in presentation mode)
@@ -467,7 +485,8 @@ beehive/
 │   └── migrations/
 │       ├── 001_auth_system.sql         # Auth schema additions (applied)
 │       ├── 002_enable_rls_usage_audit_logs.sql         # RLS fix — see Security (applied)
-│       └── 003_revoke_public_grants_usage_audit_logs.sql # Grant revocation — see Security (applied)
+│       ├── 003_revoke_public_grants_usage_audit_logs.sql # Grant revocation — see Security (applied)
+│       └── 004_waiting_room.sql        # rooms.requires_admission, room_hosts, admission_requests (applied)
 ├── scripts/
 │   └── seed-dev.js                     # Create 6 X Spark dev users via Supabase Admin API
 ├── electron/
@@ -527,6 +546,14 @@ The live web app deploys via [Render](https://render.com) ([`render.yaml`](./ren
 | `roles` | `admin` / `user` roles |
 | `user_roles` | User ↔ Role junction; default `user` role assigned on signup |
 | `invitations` | *(legacy)* Tokenised invitation schema — table still exists in the migration, but the app no longer reads/writes it; invites are now plain `?room=ROOM_ID` links (see [Invitations](#invitations)) |
+
+**Waiting room tables** ([`supabase/migrations/004_waiting_room.sql`](./supabase/migrations/004_waiting_room.sql)):
+
+| Table | Purpose |
+|-------|---------|
+| `rooms.requires_admission` | New column, default `false`. `true` only on rooms created via `POST /api/rooms/schedule` — the explicit signal the shared join path (`useJoinRoom`) uses to decide whether to gate a room at all |
+| `room_hosts` | `room_id` → `host_secret`. RLS enabled with **zero policies** — completely inaccessible to `anon`/`authenticated` (and their default table grants are explicitly revoked too, defense-in-depth), reachable only via the backend's service-role client |
+| `admission_requests` | Pending/admitted/denied join requests, keyed uniquely by `(room_id, identity)`. SELECT/INSERT permissive, **no UPDATE policy for anon/authenticated at all** — status only ever changes via `POST /api/rooms/:roomId/admit` |
 
 ---
 
@@ -711,6 +738,8 @@ npm run electron:dev
 
 > Accessed from the Participants window. Only available to the room host / co-host role.
 
+The `host`/`co-host` role this section assumes now actually exists (see [Waiting Room & Host-Delegated Admit Rights](#waiting-room--host-delegated-admit-rights-scheduled-meetings-only) under Features) — everything below (mute controls, groups, breakaways) is still unbuilt and would layer on top of it.
+
 ### Mute Controls
 
 | Action | Scope | Description |
@@ -761,7 +790,9 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 - [x] Web → desktop sign-in handoff — "Open in desktop app" button on the web lobby hands off the live session via `beehive://` (web-only, optional)
 - [x] Desktop app download link — OS-aware "Download for macOS/Windows" fallback beneath the handoff button (excludes touch devices, incl. iPadOS); link target configurable via env, defaults to GitHub Releases
 - [x] Background-noise suppression — Krisp noise filter on the mic (lazy-loaded, ~5–6 MB payload split into its own chunk so it never affects initial page load)
-- [ ] Host role — host/co-host permissions
+- [x] Host role — waiting room + host-delegated admit rights, scheduled meetings only (`host`/`co-host`/`participant` on `room_participants.role`, gated join in `/api/livekit/token`, `WaitingRoom` + `AdmissionRequestsWindow`); Start Now stays fully frictionless
+- [ ] Recover "host" status if the creator's browser/localStorage is lost (no recovery flow yet — see the Waiting Room section under Features)
+- [ ] Mute controls, group system, breakaway discussions — the rest of "Planned: Host Controls & Group Management" below, not yet built
 - [ ] Mute controls — individual, mute all, multi-select mute
 - [ ] Group system — auto-labelled, renameable, group mute
 - [ ] Breakaway discussions — timed sub-rooms with auto-recall

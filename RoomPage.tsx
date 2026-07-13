@@ -46,7 +46,7 @@ type DockAction =
   | { type: 'toggle-mic' | 'toggle-cam' | 'toggle-hand' | 'stop-share' | 'leave' | 'open-chat' | 'open-participants' }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2, ClipboardList } from 'lucide-react'
+import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2, ClipboardList, DoorOpen } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -76,11 +76,13 @@ import {
 } from './livekit_react_hooks'
 
 import { Lobby } from './components/Lobby'
+import { WaitingRoom } from './components/WaitingRoom'
 import { InviteModal } from './components/InviteModal'
 import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
+import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
 import { Toast } from './components/Toast'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
@@ -111,7 +113,7 @@ export default function RoomPage() {
   const { user } = useAuth()
   const { profile } = useProfile(user?.id ?? null)
 
-  const [view, setView] = useState<'lobby' | 'room'>('lobby')
+  const [view, setView] = useState<'lobby' | 'room' | 'waiting'>('lobby')
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
   const [livekitRoomName, setLivekitRoomName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -119,6 +121,10 @@ export default function RoomPage() {
   const [joinRoomId, setJoinRoomId] = useState<string | null>(null)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
   const [showProfileSetup, setShowProfileSetup] = useState(false)
+  // Set when a scheduled (waiting-room-gated) meeting's token request comes
+  // back pending — `identity` is reused verbatim on the post-admission retry
+  // so it lands on the same admission_requests row instead of filing a new one.
+  const [waitingInfo, setWaitingInfo] = useState<{ requestId: string; identity: string } | null>(null)
 
   // Derive display name from auth profile or email prefix
   useEffect(() => {
@@ -162,7 +168,11 @@ export default function RoomPage() {
     const room = await createRoom(`Meeting ${new Date().toLocaleTimeString()}`, 'X Spark')
     if (!room) return alert('Failed to create room')
     const result = await joinRoom(room.id, displayName)
-    if ('error' in result) return alert(result.error)
+    // Start Now's own createRoom() never sets requires_admission (only
+    // /api/rooms/schedule does), so joinRoom can't actually return the
+    // pending branch here — this check exists purely so the 'error' narrow
+    // above is type-safe, not because it can happen in practice.
+    if ('error' in result || 'pending' in result) return alert('error' in result ? result.error : 'Unexpected pending state')
     window.history.pushState({}, '', `?room=${room.id}`)
     setActiveRoomId(room.id)
     setLivekitRoomName(result.livekitRoomName)
@@ -174,6 +184,11 @@ export default function RoomPage() {
     if (!displayName.trim()) return alert('Enter your name first')
     if (!joinRoomId) return
     const result = await joinRoom(joinRoomId, displayName)
+    if ('pending' in result) {
+      setWaitingInfo({ requestId: result.requestId, identity: result.identity })
+      setView('waiting')
+      return
+    }
     if ('error' in result) {
       // The room may have ended after this invite page loaded (useRoomInfo's
       // ended_at is a one-time snapshot from mount) — joinRoom re-checks
@@ -191,6 +206,33 @@ export default function RoomPage() {
     setView('room')
   }
 
+  // Called by WaitingRoom the instant the host/co-host admits this attendee —
+  // retries with the exact same identity so it resolves the already-admitted
+  // admission_requests row instead of filing a new pending one.
+  const handleAdmitted = async () => {
+    if (!joinRoomId || !waitingInfo) return
+    const result = await joinRoom(joinRoomId, displayName, waitingInfo.identity)
+    if ('pending' in result || 'error' in result) {
+      // Shouldn't happen right after being admitted, but fall back to the
+      // lobby rather than getting stuck on a waiting screen that will never
+      // resolve if it somehow does.
+      setWaitingInfo(null)
+      setView('lobby')
+      if ('error' in result) alert(result.error)
+      return
+    }
+    setWaitingInfo(null)
+    setActiveRoomId(joinRoomId)
+    setLivekitRoomName(result.livekitRoomName)
+    setToken(result.token)
+    setView('room')
+  }
+
+  const handleWaitingDenied = () => {
+    setWaitingInfo(null)
+    setView('lobby')
+  }
+
   const handleLeave = () => {
     window.history.pushState({}, '', '/')
     setView('lobby')
@@ -199,6 +241,18 @@ export default function RoomPage() {
     setToken(null)
     // Prompt unauthenticated users (frictionless room join) to register after the meeting
     if (!user) setShowProfileSetup(true)
+  }
+
+  if (view === 'waiting' && waitingInfo) {
+    return (
+      <WaitingRoom
+        requestId={waitingInfo.requestId}
+        roomName={inviteRoom?.name}
+        subtext={subtext}
+        onAdmitted={handleAdmitted}
+        onDenied={handleWaitingDenied}
+      />
+    )
   }
 
   if (view === 'room' && token && activeRoomId && livekitRoomName) {
@@ -311,6 +365,21 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   })()
 
   const participants = useParticipants(roomId)
+  // "My" role in this room, per the waiting-room feature — derived from the
+  // same live participants list already fetched above rather than a new
+  // subscription. Only ever non-'participant' in a waiting-room-gated
+  // (scheduled) meeting: the host's row gets role 'host' at token-issuance
+  // time, a co-host's gets 'co-host' via the grant endpoint; Start Now
+  // meetings never touch this column, so it's always 'participant' there.
+  const myRole = participants.find(p => p.is_active && p.display_name === displayName)?.role ?? 'participant'
+  const canAdmit = myRole === 'host' || myRole === 'co-host'
+  // Only the room's actual creator holds this — set once in useScheduleRoom
+  // at scheduling time, on that one device. A co-host can admit/deny but has
+  // no secret, matching the backend's "delegation itself is host-only" rule.
+  const [myHostSecret] = useState<string | null>(() => {
+    try { return localStorage.getItem(`beehive:hostSecret:${roomId}`) } catch { return null }
+  })
+  const [showAdmissionRequests, setShowAdmissionRequests] = useState(false)
   const { messages, sendMessage } = useChat(roomId)
   const recordings = useRecordings(roomId)
   const [chatInput, setChatInput] = useState('')
@@ -1430,14 +1499,31 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // StrictMode mounts effects twice in dev, which double-inserted the
   // "joined" announcement — guard so one join announces exactly once.
   const joinAnnouncedRef = useRef<string | null>(null)
+  // StrictMode's synthetic mount→cleanup→mount cycle (dev only) also made
+  // this cleanup mark the participant inactive with nothing to ever flip it
+  // back — "active" is only ever set once, server-side, at the moment of
+  // joining, well before this component mounts. That's invisible for most
+  // things (LiveKit's own connection is unaffected), but it silently broke
+  // anything that reads this row's is_active/role afterward — notably the
+  // waiting-room feature's host/co-host detection, which the row's is_active
+  // being (wrongly) false made permanently invisible to its own creator.
+  // Deferred via setTimeout(0): React's double-invoke happens synchronously
+  // within the same effects flush, before any timer fires, so a genuine
+  // remount (the StrictMode case) reaches the cancellation below first; a
+  // real unmount (tab closed, navigated away) has no remount to cancel it,
+  // so the deactivation still happens, just one tick later.
+  const deactivateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     const key = `${roomId}:${displayName}`
     if (joinAnnouncedRef.current !== key) {
       joinAnnouncedRef.current = key
       supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__JOIN__${displayName}` }).then(() => {})
     }
+    if (deactivateTimerRef.current) { clearTimeout(deactivateTimerRef.current); deactivateTimerRef.current = null }
     return () => {
-      supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName).then(() => {})
+      deactivateTimerRef.current = setTimeout(() => {
+        supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName).then(() => {})
+      }, 0)
     }
   }, [roomId, displayName])
 
@@ -1902,6 +1988,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
             onClose={() => setShowParticipants(false)}
             onDock={() => setParticipantsDocked(true)}
             onDirectChat={name => { openDm(name); setShowChat(true) }}
+            roomId={roomId}
+            isHost={!!myHostSecret}
+            hostSecret={myHostSecret}
+            supabaseParticipants={participants}
           />
         )}
 
@@ -2073,6 +2163,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               roomId={roomId}
               prep={meetingPrep}
               onClose={() => setShowMeetingPrep(false)}
+            />
+          )}
+
+          {/* Waiting-room admission requests — host/co-host only */}
+          {showAdmissionRequests && canAdmit && overlayMode !== 'hidden' && (
+            <AdmissionRequestsWindow
+              roomId={roomId}
+              hostSecret={myHostSecret}
+              actingDisplayName={displayName}
+              onClose={() => setShowAdmissionRequests(false)}
             />
           )}
 
@@ -2310,6 +2410,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                           <ClipboardList size={isSmallPhone ? 16 : 18} />
                         </button>
                       )}
+                      {/* Waiting Room — host/co-host only */}
+                      {canAdmit && (
+                        <button
+                          style={{ ...mb, ...(showAdmissionRequests ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                          onClick={() => setShowAdmissionRequests(v => !v)}
+                          title="Waiting room"
+                        >
+                          <DoorOpen size={isSmallPhone ? 16 : 18} />
+                        </button>
+                      )}
                       {/* Auto Cam */}
                       <button
                         style={{ ...mb, ...(autoCamMode ? { background: '#1a2e4a', border: '1px solid #4299e1' } : {}) }}
@@ -2445,6 +2555,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                   title="Meeting prep"
                 >
                   <ClipboardList size={20} />
+                </button>
+              )}
+
+              {/* Waiting Room — host/co-host only, waiting-room-gated meetings only */}
+              {canAdmit && (
+                <button className="bhv-btn"
+                  style={{ ...s.controlBtn, ...(showAdmissionRequests ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                  onClick={() => setShowAdmissionRequests(v => !v)}
+                  title="Waiting room"
+                >
+                  <DoorOpen size={20} />
                 </button>
               )}
 

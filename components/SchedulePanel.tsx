@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useCreateRoom } from '../livekit_react_hooks'
+import { useScheduleRoom } from '../livekit_react_hooks'
 import { WEB_BASE, STING_RED, saveMeetingPrep } from './roomUtils'
 import { s } from './roomStyles'
 import { MeetingPrep, type MeetingPrepSummary } from './MeetingPrep'
@@ -13,7 +13,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   isSting: boolean
   onScheduled?: (meeting: { name: string; date: string; time: string; link: string }) => void
 }) {
-  const { createRoom, loading } = useCreateRoom()
+  const { scheduleRoom, loading } = useScheduleRoom()
   const [roomName, setRoomName] = useState('')
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
@@ -41,7 +41,10 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
 
   const handleCreate = async () => {
     if (!displayName.trim()) { alert('Enter your name first'); return }
-    const room = await createRoom(meetingName)
+    // Scheduled meetings go through the backend (not a direct client insert)
+    // so they come out waiting-room-gated — only Start Now's own room
+    // creation (RoomPage.tsx) stays a direct, ungated client insert.
+    const room = await scheduleRoom(meetingName)
     if (!room) return
     setLink(`${WEB_BASE}?room=${room.id}`)
     setCreatedRoomId(room.id)

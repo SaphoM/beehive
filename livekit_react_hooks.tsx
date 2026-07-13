@@ -187,6 +187,47 @@ export function useCreateRoom() {
 }
 
 // ============================================================
+// SCHEDULED ROOM CREATION (waiting-room-gated — Schedule tab only)
+// ============================================================
+// Deliberately separate from useCreateRoom() above, which Start Now still
+// calls directly — that path stays exactly as frictionless as it is today.
+// This one goes through the backend (not a direct client insert) because
+// the host_secret it mints has to land in a table with zero client grants
+// (room_hosts — see supabase/migrations/004_waiting_room.sql), which only
+// the backend's service-role key can write to.
+export function useScheduleRoom() {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const scheduleRoom = useCallback(async (name: string, organisation?: string) => {
+    setLoading(true)
+    setError(null)
+
+    const resp = await fetch(`${API_BASE}/api/rooms/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, organisation }),
+    })
+    setLoading(false)
+
+    if (!resp.ok) {
+      setError('Failed to schedule meeting')
+      return null
+    }
+
+    const { room, hostSecret } = await resp.json()
+    // Never sent anywhere else, never part of the shareable invite link —
+    // stored only in the creator's own browser, keyed by room id, and read
+    // back by RoomPage's join flow to prove host identity on that one device.
+    try { localStorage.setItem(`beehive:hostSecret:${room.id}`, hostSecret) } catch { /* storage unavailable — creator just won't auto-resume as host on this device */ }
+
+    return room as Room
+  }, [])
+
+  return { scheduleRoom, loading, error }
+}
+
+// ============================================================
 // ROOM INFO (for invite preview)
 // ============================================================
 export function useRoomInfo(roomId: string | null) {
@@ -237,7 +278,12 @@ export function useJoinRoom() {
   // the hook's `error` state right after awaiting this would silently see
   // the previous call's stale value. Returning the reason inline sidesteps
   // that race entirely.
-  const joinRoom = useCallback(async (roomId: string, displayName: string) => {
+  // `identity` is optional so a waiting-room retry (after the host admits
+  // this attendee) can reuse the exact same identity from the original
+  // pending request — admission_requests is keyed by (room_id, identity),
+  // so a fresh random identity on retry would file as a brand new pending
+  // request instead of picking up the one that was just admitted.
+  const joinRoom = useCallback(async (roomId: string, displayName: string, identityOverride?: string) => {
     setLoading(true)
     setError(null)
 
@@ -250,7 +296,7 @@ export function useJoinRoom() {
     // participant row and fetch a token for a meeting that's already over —
     // this is the actual gate that prevents joining a dead meeting.
     const [{ data: room, error: roomError }, { data: { session } }] = await Promise.all([
-      supabase.from('rooms').select('livekit_room_name, name, ended_at, is_active').eq('id', roomId).single(),
+      supabase.from('rooms').select('livekit_room_name, name, ended_at, is_active, requires_admission').eq('id', roomId).single(),
       supabase.auth.getSession(), // local cache — no server roundtrip
     ])
 
@@ -278,10 +324,51 @@ export function useJoinRoom() {
     // looked like "their mic doesn't work". Display names are freeform and
     // collide easily, so identity is a random UUID instead; displayName is
     // still sent separately and used as LiveKit's "name" field for display.
-    const identity = crypto.randomUUID()
+    const identity = identityOverride ?? crypto.randomUUID()
 
-    // Insert fresh participant row and fetch LiveKit token in parallel —
-    // the token only needs roomName + displayName, not the participant row ID.
+    if (room.requires_admission) {
+      // Waiting-room-gated (scheduled meeting created via /api/rooms/schedule):
+      // the backend, not this client, owns room_participants for the host
+      // row and for admitted attendees (see /api/livekit/token and /admit) —
+      // so this path never inserts one directly the way the ungated branch
+      // below does. Any host_secret this device holds for this room (set
+      // once, at scheduling time, in useScheduleRoom) rides along here.
+      let hostSecret: string | null = null
+      try { hostSecret = localStorage.getItem(`beehive:hostSecret:${roomId}`) } catch { /* storage unavailable — joins as a regular attendee */ }
+
+      const tokenRes = await fetch(`${API_BASE}/api/livekit/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity, hostSecret }),
+      })
+
+      if (tokenRes.status === 202) {
+        const { requestId } = await tokenRes.json()
+        setLoading(false)
+        return { pending: true as const, requestId, identity }
+      }
+      if (tokenRes.status === 403) {
+        const body = await tokenRes.json().catch(() => ({}))
+        const reason = body.error || 'The host did not admit you to this meeting'
+        setError(reason)
+        setLoading(false)
+        return { error: reason }
+      }
+      if (!tokenRes.ok) {
+        setError('Failed to get access token')
+        setLoading(false)
+        return { error: 'Failed to get access token' }
+      }
+
+      const { token } = await tokenRes.json()
+      setLoading(false)
+      return { token, livekitRoomName: room.livekit_room_name, roomName: room.name }
+    }
+
+    // Ungated (Start Now, or any pre-existing scheduled room) — unchanged
+    // from before this feature existed. Insert fresh participant row and
+    // fetch LiveKit token in parallel — the token only needs roomName +
+    // displayName, not the participant row ID.
     // auth_user_id, NOT user_id: user_id FKs to the legacy public.users table,
     // but session.user.id is an auth.users id with no matching public.users
     // row — writing it there violated the FK, so a SIGNED-IN user's

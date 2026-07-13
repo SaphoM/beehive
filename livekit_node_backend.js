@@ -5,6 +5,7 @@ import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync } from 'fs'
+import { randomUUID } from 'crypto'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -68,12 +69,53 @@ const supabase = createClient(
 )
 
 // ============================================================
+// SCHEDULE A ROOM (waiting-room-gated — Schedule tab only)
+// POST /api/rooms/schedule
+// Body: { name, organisation }
+// ============================================================
+// Distinct from the client-side useCreateRoom() insert Start Now still uses
+// directly — that path stays exactly as frictionless as it is today
+// (requires_admission defaults false on a direct client insert). This one
+// mints a host_secret server-side, in a table with zero client grants (see
+// migration 004), and is the only way a room ends up with
+// requires_admission: true. The secret is returned once, in this response,
+// and never touches any client-readable table — SchedulePanel.tsx stores it
+// in localStorage, and it rides back to this backend on every subsequent
+// token request for this room to prove host identity.
+app.post('/api/rooms/schedule', async (req, res) => {
+  const { name, organisation } = req.body
+  if (!name) return res.status(400).json({ error: 'name is required' })
+
+  const livekitRoomName = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+
+  const { data: room, error: roomError } = await supabase
+    .from('rooms')
+    .insert({ name, livekit_room_name: livekitRoomName, organisation, requires_admission: true })
+    .select()
+    .single()
+
+  if (roomError || !room) {
+    console.error('[schedule] room insert failed:', roomError?.message)
+    return res.status(500).json({ error: 'Failed to create room' })
+  }
+
+  const hostSecret = randomUUID()
+  const { error: hostError } = await supabase.from('room_hosts').insert({ room_id: room.id, host_secret: hostSecret })
+  if (hostError) {
+    console.error('[schedule] room_hosts insert failed:', hostError.message)
+    return res.status(500).json({ error: 'Failed to provision host' })
+  }
+
+  return res.json({ room, hostSecret })
+})
+
+// ============================================================
 // GENERATE LIVEKIT TOKEN
 // POST /api/livekit/token
-// Body: { roomName, displayName }
+// Body: { roomName, displayName, identity, hostSecret? }
 // ============================================================
 app.post('/api/livekit/token', async (req, res) => {
-  const { roomName, displayName, identity } = req.body
+  const { roomName, displayName, identity, hostSecret } = req.body
 
   if (!roomName || !displayName) {
     return res.status(400).json({ error: 'roomName and displayName are required' })
@@ -89,6 +131,70 @@ app.post('/api/livekit/token', async (req, res) => {
   // only for older clients that don't send one.
   const participantIdentity = identity || displayName
 
+  // Waiting-room gate — only applies to rooms scheduled via /api/rooms/schedule
+  // (requires_admission: true). Start Now and pre-existing scheduled rooms
+  // fall through untouched, exactly as before this feature existed.
+  const { data: room } = await supabase
+    .from('rooms')
+    .select('id, requires_admission')
+    .eq('livekit_room_name', roomName)
+    .single()
+
+  if (room?.requires_admission) {
+    let isHost = false
+    if (hostSecret) {
+      const { data: hostRow } = await supabase
+        .from('room_hosts')
+        .select('host_secret')
+        .eq('room_id', room.id)
+        .single()
+      isHost = hostRow?.host_secret === hostSecret
+    }
+
+    if (isHost) {
+      await supabase.from('room_participants').insert({
+        room_id: room.id,
+        display_name: displayName,
+        is_active: true,
+        joined_at: new Date().toISOString(),
+        role: 'host',
+      })
+      // Falls through to normal token issuance below.
+    } else {
+      // Upsert this identity's admission request — idempotent across
+      // repeat calls (initial request, retries, reconnects) thanks to the
+      // (room_id, identity) unique constraint.
+      const { data: existing } = await supabase
+        .from('admission_requests')
+        .select('id, status')
+        .eq('room_id', room.id)
+        .eq('identity', participantIdentity)
+        .maybeSingle()
+
+      if (!existing) {
+        const { data: created, error: reqError } = await supabase
+          .from('admission_requests')
+          .insert({ room_id: room.id, identity: participantIdentity, display_name: displayName })
+          .select('id, status')
+          .single()
+        if (reqError) {
+          console.error('[token] admission_requests insert failed:', reqError.message)
+          return res.status(500).json({ error: 'Failed to request admission' })
+        }
+        return res.status(202).json({ status: 'pending', requestId: created.id })
+      }
+
+      if (existing.status === 'denied') {
+        return res.status(403).json({ error: 'The host did not admit you to this meeting', requestId: existing.id })
+      }
+      if (existing.status === 'pending') {
+        return res.status(202).json({ status: 'pending', requestId: existing.id })
+      }
+      // status === 'admitted' — falls through to normal token issuance
+      // below (covers reconnects after being let in).
+    }
+  }
+
   const token = new AccessToken(
     process.env.LIVEKIT_API_KEY,
     process.env.LIVEKIT_API_SECRET,
@@ -103,6 +209,106 @@ app.post('/api/livekit/token', async (req, res) => {
   })
 
   return res.json({ token: await token.toJwt() })
+})
+
+// ============================================================
+// ADMIT / DENY a waiting attendee
+// POST /api/rooms/:roomId/admit
+// Body: { requestId, decision: 'admit'|'deny', actingDisplayName, hostSecret? }
+// ============================================================
+// Authorizes the caller either via a matching hostSecret, or by confirming
+// their own room_participants row already has role 'host'/'co-host' — the
+// only two ways to prove "I'm allowed to admit people into this room".
+app.post('/api/rooms/:roomId/admit', async (req, res) => {
+  const { roomId } = req.params
+  const { requestId, decision, actingDisplayName, hostSecret } = req.body
+  if (!requestId || (decision !== 'admit' && decision !== 'deny')) {
+    return res.status(400).json({ error: 'requestId and a valid decision are required' })
+  }
+
+  let authorized = false
+  if (hostSecret) {
+    const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
+    authorized = hostRow?.host_secret === hostSecret
+  }
+  if (!authorized && actingDisplayName) {
+    // room_participants has no identity column — role is looked up by
+    // display_name here, same limitation the participant_left webhook
+    // already lives with elsewhere in this file (see its comment above).
+    // Acceptable here because only an already-admitted host/co-host reaches
+    // this branch at all, and a display_name collision can only ever widen
+    // who's treated as a co-host within a room they're already inside, not
+    // grant entry to anyone new.
+    const { data: rows } = await supabase
+      .from('room_participants')
+      .select('role')
+      .eq('room_id', roomId)
+      .eq('display_name', actingDisplayName)
+      .eq('is_active', true)
+    authorized = (rows ?? []).some(r => r.role === 'host' || r.role === 'co-host')
+  }
+  if (!authorized) return res.status(403).json({ error: 'Not authorized to admit participants in this room' })
+
+  const status = decision === 'admit' ? 'admitted' : 'denied'
+  const { data: updated, error: updateError } = await supabase
+    .from('admission_requests')
+    .update({ status, decided_at: new Date().toISOString() })
+    .eq('id', requestId)
+    .eq('room_id', roomId)
+    .select()
+    .single()
+
+  if (updateError || !updated) {
+    console.error('[admit] update failed:', updateError?.message)
+    return res.status(500).json({ error: 'Failed to record decision' })
+  }
+
+  if (decision === 'admit') {
+    await supabase.from('room_participants').insert({
+      room_id: roomId,
+      display_name: updated.display_name,
+      is_active: true,
+      joined_at: new Date().toISOString(),
+      role: 'participant',
+    })
+  }
+
+  return res.json({ ok: true })
+})
+
+// ============================================================
+// GRANT / REVOKE CO-HOST (delegated admit rights)
+// POST /api/rooms/:roomId/grant-co-host
+// Body: { displayName, grant: boolean, hostSecret }
+// ============================================================
+// Requires hostSecret specifically, not just a role check — delegation
+// itself stays host-only ("by permission of the main attendee"), so a
+// co-host can admit people but can never mint more co-hosts themselves.
+app.post('/api/rooms/:roomId/grant-co-host', async (req, res) => {
+  const { roomId } = req.params
+  const { displayName, grant, hostSecret } = req.body
+  if (!displayName || typeof grant !== 'boolean' || !hostSecret) {
+    return res.status(400).json({ error: 'displayName, grant, and hostSecret are required' })
+  }
+
+  const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
+  if (hostRow?.host_secret !== hostSecret) {
+    return res.status(403).json({ error: 'Not authorized to grant co-host in this room' })
+  }
+
+  const { error: updateError } = await supabase
+    .from('room_participants')
+    .update({ role: grant ? 'co-host' : 'participant' })
+    .eq('room_id', roomId)
+    .eq('display_name', displayName)
+    .eq('is_active', true)
+
+  if (updateError) {
+    console.error('[grant-co-host] update failed:', updateError.message)
+    return res.status(500).json({ error: 'Failed to update role' })
+  }
+
+  return res.json({ ok: true })
 })
 
 // ============================================================

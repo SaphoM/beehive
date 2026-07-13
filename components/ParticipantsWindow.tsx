@@ -1,12 +1,54 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Mic, MicOff, Video, VideoOff, MessageSquare } from 'lucide-react'
+import { X, Mic, MicOff, Video, VideoOff, MessageSquare, Crown } from 'lucide-react'
 import { ParticipantTile, useTracks, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
 
-export function ParticipantsWindow({ onClose, onDock, onDirectChat }: { onClose: () => void; onDock: () => void; onDirectChat?: (name: string) => void }) {
+// Same API_BASE resolution used elsewhere for backend calls from the client.
+const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+  ? 'http://localhost:3001'
+  : ''
+
+interface SupabaseParticipant { display_name: string | null; role: string | null; is_active: boolean | null }
+
+export function ParticipantsWindow({ onClose, onDock, onDirectChat, roomId, isHost, hostSecret, supabaseParticipants }: {
+  onClose: () => void
+  onDock: () => void
+  onDirectChat?: (name: string) => void
+  // The co-host toggle below is entirely optional — only meaningful in a
+  // waiting-room-gated (scheduled) meeting, and only the room's actual
+  // creator (isHost, backed by a locally-held hostSecret) can use it, per
+  // the backend's "delegation itself is host-only" rule. Undefined/false on
+  // Start Now meetings, where this component renders exactly as before.
+  roomId?: string
+  isHost?: boolean
+  hostSecret?: string | null
+  supabaseParticipants?: SupabaseParticipant[]
+}) {
   const lkParticipants = useLiveKitParticipants()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+  const [busyName, setBusyName] = useState<string | null>(null)
+
+  // room_participants has no identity column — matched by display_name,
+  // same limitation this whole feature already lives with server-side.
+  const roleFor = (name: string) =>
+    supabaseParticipants?.find(p => p.is_active && p.display_name === name)?.role ?? 'participant'
+
+  const toggleCoHost = async (name: string) => {
+    if (!roomId || !hostSecret) return
+    setBusyName(name)
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/grant-co-host`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: name, grant: roleFor(name) !== 'co-host', hostSecret }),
+      })
+    } catch (e) {
+      console.error('[participants] grant-co-host failed:', e)
+    } finally {
+      setBusyName(null)
+    }
+  }
   const [pos, setPos] = useState({ x: 24, y: 24 })
   const [dragging, setDragging] = useState(false)
   const [nearDock, setNearDock] = useState(false)
@@ -85,6 +127,25 @@ export function ParticipantsWindow({ onClose, onDock, onDirectChat }: { onClose:
                           <MessageSquare size={12} />
                         </button>
                       )}
+                      {/* Delegated admit rights — host-only, and never shown on
+                          the host's own tile (roleFor() is 'host' there, not
+                          'participant'/'co-host'). */}
+                      {isHost && roomId && hostSecret && (() => {
+                        const name = participant.name || participant.identity
+                        const role = roleFor(name)
+                        if (role === 'host') return null
+                        const isCoHost = role === 'co-host'
+                        return (
+                          <button
+                            onClick={() => toggleCoHost(name)}
+                            disabled={busyName === name}
+                            title={isCoHost ? 'Remove co-host' : 'Make co-host'}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: isCoHost ? '#f5a623' : '#555', display: 'flex', alignItems: 'center', padding: 0 }}
+                          >
+                            <Crown size={12} />
+                          </button>
+                        )
+                      })()}
                     </div>
                   </div>
                 </div>

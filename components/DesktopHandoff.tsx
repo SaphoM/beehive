@@ -33,6 +33,18 @@ export function canOfferDesktopHandoff(): boolean {
   return true
 }
 
+// The meeting invite currently in the web page's URL (?room=ID), if any —
+// carried into the deep link so "Open in desktop app" continues into the
+// SAME meeting rather than dropping the user in the desktop lobby. Lives in
+// the deep link's *query* (electron/main.cjs's handleDeepLink forwards all
+// query params through to the renderer verbatim, where RoomPage reads
+// ?room= on mount exactly as it does on the web); the *hash* stays
+// reserved for auth tokens.
+function currentRoomQuery(): string {
+  const room = new URLSearchParams(window.location.search).get('room')
+  return room ? `?room=${encodeURIComponent(room)}` : ''
+}
+
 // Build the deep link that opens the desktop app with the given session.
 // Tokens live in the URL *hash* so they are never sent to a server or captured
 // in server access logs — same reasoning as the web auth-callback flow.
@@ -48,15 +60,16 @@ export function buildDesktopHandoffUrl(session: Session): string {
   }
   if (session.expires_in != null) params.expires_in = String(session.expires_in)
   if (session.expires_at != null) params.expires_at = String(session.expires_at)
-  return `beehive://auth/confirm#${new URLSearchParams(params).toString()}`
+  return `beehive://auth/confirm${currentRoomQuery()}#${new URLSearchParams(params).toString()}`
 }
 
 // Launch the desktop app. With a session, the app opens signed in; without one
-// it opens to its own sign-in. If the app isn't installed the OS simply ignores
+// it opens to its own sign-in. Any ?room= invite in the current page's URL is
+// carried through either way. If the app isn't installed the OS simply ignores
 // the beehive:// navigation, so this is safe to call unconditionally.
 export function openInDesktopApp(session: Session | null): void {
   if (!canOfferDesktopHandoff()) return
-  window.location.href = session ? buildDesktopHandoffUrl(session) : 'beehive://'
+  window.location.href = session ? buildDesktopHandoffUrl(session) : `beehive://${currentRoomQuery()}`
 }
 
 // ============================================================

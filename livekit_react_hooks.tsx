@@ -193,7 +193,7 @@ export function useRoomInfo(roomId: string | null) {
   const [room, setRoom] = useState<{ name: string; participantCount: number; ended_at: string | null } | null>(null)
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (!roomId) return
     setLoading(true)
     Promise.all([
@@ -207,30 +207,63 @@ export function useRoomInfo(roomId: string | null) {
     })
   }, [roomId])
 
-  return { room, loading }
+  useEffect(() => { refresh() }, [refresh])
+
+  // Exposed so a join attempt that discovers the room ended *after* this
+  // component mounted (see useJoinRoom's ENDED_MEETING check) can flip the
+  // lobby straight to the "Meeting Ended" card instead of just an alert —
+  // this snapshot is otherwise only ever fetched once, on mount.
+  return { room, loading, refresh }
 }
 
 // ============================================================
 // LIVEKIT TOKEN
 // ============================================================
+// Distinct sentinel so callers (RoomPage's handleJoin) can tell "this
+// meeting ended" apart from other join failures and react accordingly
+// (flip the lobby to the "Meeting Ended" card) rather than a generic alert.
+export const ENDED_MEETING_ERROR = 'This meeting has ended'
+
 export function useJoinRoom() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Returns the failure reason directly on the resolved value, rather than
+  // relying solely on the `error` state above. `handleJoin` needs to branch
+  // on *this specific call's* outcome the instant the promise resolves — but
+  // by then, `error` as read from the hook's own closure in the caller is
+  // whatever it was when that render happened, not what setError() below
+  // just set (React doesn't re-render synchronously mid-await), so checking
+  // the hook's `error` state right after awaiting this would silently see
+  // the previous call's stale value. Returning the reason inline sidesteps
+  // that race entirely.
   const joinRoom = useCallback(async (roomId: string, displayName: string) => {
     setLoading(true)
     setError(null)
 
-    // Fetch room info and local session in parallel — no dependency between them
+    // Fetch room info and local session in parallel — no dependency between them.
+    // ended_at/is_active are the authoritative, freshly-fetched check: the
+    // lobby's "Join Meeting" button is only *hidden* based on a snapshot taken
+    // whenever the invite page loaded (useRoomInfo), which goes stale if the
+    // meeting ends while that tab sits open. Without re-checking here, a
+    // click on an already-stale-but-still-visible button would insert a
+    // participant row and fetch a token for a meeting that's already over —
+    // this is the actual gate that prevents joining a dead meeting.
     const [{ data: room, error: roomError }, { data: { session } }] = await Promise.all([
-      supabase.from('rooms').select('livekit_room_name, name').eq('id', roomId).single(),
+      supabase.from('rooms').select('livekit_room_name, name, ended_at, is_active').eq('id', roomId).single(),
       supabase.auth.getSession(), // local cache — no server roundtrip
     ])
 
     if (roomError || !room) {
       setError('Room not found')
       setLoading(false)
-      return null
+      return { error: 'Room not found' }
+    }
+
+    if (room.ended_at || room.is_active === false) {
+      setError(ENDED_MEETING_ERROR)
+      setLoading(false)
+      return { error: ENDED_MEETING_ERROR }
     }
 
     // Deactivate any stale active records for this display name in this room
@@ -276,7 +309,7 @@ export function useJoinRoom() {
     if (!tokenRes.ok) {
       setError('Failed to get access token')
       setLoading(false)
-      return null
+      return { error: 'Failed to get access token' }
     }
 
     const { token } = await tokenRes.json()

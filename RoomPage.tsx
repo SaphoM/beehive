@@ -64,6 +64,7 @@ import '@livekit/components-styles'
 import {
   useCreateRoom,
   useJoinRoom,
+  ENDED_MEETING_ERROR,
   useParticipants,
   useChat,
   useRecordings,
@@ -130,7 +131,7 @@ export default function RoomPage() {
 
   const { createRoom, loading: creating } = useCreateRoom()
   const { joinRoom, loading: joining } = useJoinRoom()
-  const { room: inviteRoom } = useRoomInfo(joinRoomId)
+  const { room: inviteRoom, refresh: refreshInviteRoom } = useRoomInfo(joinRoomId)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -160,7 +161,7 @@ export default function RoomPage() {
     const room = await createRoom(`Meeting ${new Date().toLocaleTimeString()}`, 'X Spark')
     if (!room) return alert('Failed to create room')
     const result = await joinRoom(room.id, displayName)
-    if (!result) return alert('Failed to get access token')
+    if ('error' in result) return alert(result.error)
     window.history.pushState({}, '', `?room=${room.id}`)
     setActiveRoomId(room.id)
     setLivekitRoomName(result.livekitRoomName)
@@ -172,7 +173,17 @@ export default function RoomPage() {
     if (!displayName.trim()) return alert('Enter your name first')
     if (!joinRoomId) return
     const result = await joinRoom(joinRoomId, displayName)
-    if (!result) return alert('Failed to join room — link may be invalid')
+    if ('error' in result) {
+      // The room may have ended after this invite page loaded (useRoomInfo's
+      // ended_at is a one-time snapshot from mount) — joinRoom re-checks
+      // freshly and reports this specific reason on the resolved value
+      // itself (not the hook's separate error state, which a stale closure
+      // here would read as whatever it was *before* this click), so refresh
+      // the invite preview to flip straight to the "Meeting Ended" card
+      // instead of a generic alert that leaves the now-stale Join button right there.
+      if (result.error === ENDED_MEETING_ERROR) { refreshInviteRoom(); return }
+      return alert(result.error)
+    }
     setActiveRoomId(joinRoomId)
     setLivekitRoomName(result.livekitRoomName)
     setToken(result.token)

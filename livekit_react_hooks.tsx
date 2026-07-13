@@ -328,23 +328,51 @@ export function useChat(roomId: string) {
   useEffect(() => {
     if (!roomId) return
 
-    // Initial fetch
+    // Initial fetch — merged into existing state by id rather than a blind
+    // overwrite. React StrictMode (dev only) double-mounts this effect, so
+    // two of these fetches can be in flight at once; a plain `setMessages(data)`
+    // risks a slow/duplicate fetch resolving *after* a realtime insert has
+    // already appended a message, wiping it back out of view (looks exactly
+    // like "sent a message and it didn't stick"). Merging by id makes this
+    // safe regardless of fetch/realtime ordering.
     supabase
       .from('chat_messages')
       .select('*')
       .eq('room_id', roomId)
       .order('created_at', { ascending: true })
-      .then(({ data }) => setMessages(data ?? []))
+      .then(({ data, error }) => {
+        if (error) { console.error('[chat] initial fetch failed:', error.message); return }
+        setMessages((prev) => {
+          const byId = new Map(prev.map((m) => [m.id, m]))
+          for (const m of data ?? []) byId.set(m.id, m)
+          return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+        })
+      })
 
-    // Real-time subscription
+    // Real-time subscription — supabase.channel(topic) already reuses an
+    // existing channel for the same topic internally (RealtimeClient.channel()
+    // checks getChannels() itself), so React StrictMode's dev-only double
+    // mount/cleanup/mount doesn't create duplicate channels here. The
+    // subscribe callback below logs errors that were previously silent: a
+    // channel that never reaches SUBSCRIBED (e.g. CHANNEL_ERROR/TIMED_OUT)
+    // would mean inserts succeed (confirmed working via the REST API
+    // directly) but are never delivered to this listener — indistinguishable
+    // from "the message didn't send" without this log.
     const channel = supabase
       .channel(`chat:${roomId}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `room_id=eq.${roomId}` },
-        (payload) => setMessages((prev) => [...prev, payload.new as ChatMessage])
+        (payload) => setMessages((prev) => {
+          const incoming = payload.new as ChatMessage
+          return prev.some((m) => m.id === incoming.id) ? prev : [...prev, incoming]
+        })
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`[chat] realtime subscription ${status} for room ${roomId}:`, err)
+        }
+      })
 
     return () => { supabase.removeChannel(channel) }
   }, [roomId])
@@ -354,12 +382,13 @@ export function useChat(roomId: string) {
     // getSession() reads from local storage — no server roundtrip needed for a chat insert
     const { data: { session } } = await supabase.auth.getSession()
 
-    await supabase.from('chat_messages').insert({
+    const { error } = await supabase.from('chat_messages').insert({
       room_id: roomId,
       user_id: session?.user?.id,
       display_name: displayName,
       message,
     })
+    if (error) console.error('[chat] sendMessage insert failed:', error.message)
     setLoading(false)
   }, [roomId])
 

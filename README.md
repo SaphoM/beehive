@@ -293,7 +293,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - **Send to:** All participants or select individual attendees by name
   - Uploads to Supabase Storage (`shared-files` bucket, 50 MB limit); URL shared via Supabase Realtime
   - Targeted files render as download cards only for named recipients; "To: …" label on targeted shares
-- 💬 Real-time chat sidebar (Supabase Realtime)
+- 💬 Real-time chat sidebar (Supabase Realtime). `useChat` (`livekit_react_hooks.tsx`) merges its initial fetch into state by message `id` rather than overwriting it outright, and dedupes realtime-appended messages the same way — makes the hook safe against React StrictMode's dev-only double-mount (two initial fetches can be in flight at once; a plain overwrite risked a slow one clobbering an already-arrived realtime message back out of view). Both the initial fetch and the realtime subscription log to the console on failure (`CHANNEL_ERROR`/`TIMED_OUT`, or a failed insert) instead of failing silently
 - 📴 Leave call — marks participant inactive in Supabase and broadcasts a **"[Name] left"** system event to the chat for all remaining attendees
 - 👋 **Join / leave notifications** — horizontal-rule system messages in the chat sidebar: green **"[Name] joined"** on entry, grey **"[Name] left"** on exit; written to `chat_messages` with `display_name: '__SYSTEM__'`
 - ⏱️ **Auto-end when alone** — if you are the only active participant for 10 minutes, a countdown warning banner appears at the top of the screen (`You're alone — call ends in Xs`); clicking **Stay** resets the timer; the call ends automatically when the countdown reaches zero

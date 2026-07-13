@@ -1436,15 +1436,25 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   }, [])
   const WARN_AT = 60 * 1000
 
+  // Uses liveKitParticipants (the live WebRTC room roster — the same source
+  // the header's participant count and the floating dock already use), not
+  // the Supabase `room_participants.is_active` flag. That flag is only ever
+  // flipped by the LiveKit `participant_left` webhook (or an explicit leave),
+  // both of which can lag or, on any webhook delivery hiccup, never fire at
+  // all — leaving a stale row that never gets marked inactive. When that
+  // drifts, this effect saw "alone" while the header/video grid correctly
+  // showed multiple live participants, kicking everyone out of a meeting
+  // that clearly wasn't empty. liveKitParticipants reflects who's actually
+  // connected to the room right now — no possibility of staleness.
   useEffect(() => {
-    const activeCount = participants.filter(p => p.is_active).length
+    const activeCount = liveKitParticipants.length
     if (activeCount <= 1) {
       if (aloneStartRef.current === null) aloneStartRef.current = Date.now()
     } else {
       aloneStartRef.current = null
       setAloneCountdown(null)
     }
-  }, [participants])
+  }, [liveKitParticipants])
 
   useEffect(() => {
     const interval = setInterval(() => {

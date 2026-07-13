@@ -10,6 +10,7 @@ declare global {
       getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
       stopFloating: () => void
       requestMediaPermissions: () => Promise<{ camera: string; mic: string }>
+      openMediaPrivacySettings?: (kind: 'camera' | 'microphone') => Promise<boolean>
       presentationControl: (direction: 'next' | 'prev') => Promise<boolean>
       toggleFullscreen: () => Promise<boolean>
       getFullscreen: () => Promise<boolean>
@@ -330,26 +331,39 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // which looks exactly like "the button doesn't work" with no way to diagnose
   // it from a bug report. onDeviceError below makes that failure visible.
   const [deviceErrorToast, setDeviceErrorToast] = useState<string | null>(null)
-  const handleMicDeviceError = useCallback((error: Error) => {
-    console.error('[mic] setMicrophoneEnabled failed:', error)
+  // Once a permission is explicitly denied, neither getUserMedia() (web) nor
+  // askForMediaAccess() (Electron/macOS) can ever show that prompt again —
+  // that's deliberate OS/browser security behavior, not something an app can
+  // override by asking harder. The most useful thing left to do is take the
+  // user straight to the exact settings screen instead of just saying
+  // "blocked": Electron can deep-link to System Settings' Privacy pane
+  // directly; on the web there's no equivalent cross-browser deep link, so
+  // the toast points at the address-bar permission icon instead.
+  const handleDeviceError = useCallback((kind: 'camera' | 'microphone', error: Error) => {
+    console.error(`[${kind}] setEnabled failed:`, error)
+    if (error.name === 'NotAllowedError') {
+      if (window.electronAPI?.openMediaPrivacySettings) {
+        window.electronAPI.openMediaPrivacySettings(kind)
+        setDeviceErrorToast(
+          `${kind === 'microphone' ? 'Microphone' : 'Camera'} access is blocked. Opening System Settings — ` +
+          `turn it on for BeeHive there, then relaunch the app.`
+        )
+      } else {
+        setDeviceErrorToast(
+          `${kind === 'microphone' ? 'Microphone' : 'Camera'} access is blocked — click the permission icon ` +
+          `in your browser's address bar to allow it, then reload the page.`
+        )
+      }
+      return
+    }
     setDeviceErrorToast(
-      error.name === 'NotAllowedError'
-        ? 'Microphone access is blocked — check your OS/browser permission settings.'
-        : error.name === 'NotFoundError'
-        ? 'No microphone found — check it’s connected and not disabled.'
-        : `Microphone error: ${error.message || error.name}`
+      error.name === 'NotFoundError'
+        ? `No ${kind} found — check it's connected and not disabled.`
+        : `${kind === 'microphone' ? 'Microphone' : 'Camera'} error: ${error.message || error.name}`
     )
   }, [])
-  const handleCameraDeviceError = useCallback((error: Error) => {
-    console.error('[camera] setCameraEnabled failed:', error)
-    setDeviceErrorToast(
-      error.name === 'NotAllowedError'
-        ? 'Camera access is blocked — check your OS/browser permission settings.'
-        : error.name === 'NotFoundError'
-        ? 'No camera found — check it’s connected and not disabled.'
-        : `Camera error: ${error.message || error.name}`
-    )
-  }, [])
+  const handleMicDeviceError = useCallback((error: Error) => handleDeviceError('microphone', error), [handleDeviceError])
+  const handleCameraDeviceError = useCallback((error: Error) => handleDeviceError('camera', error), [handleDeviceError])
   const [showQuality, setShowQuality] = useState(false)
   const [quality, setQuality] = useState('Medium (720p)')
   const [floatingReactions, setFloatingReactions] = useState<{
@@ -1823,7 +1837,8 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
             style={{ ...s.pill, fontSize: isMobile ? 11 : 12, padding: isMobile ? '2px 8px' : '3px 10px' }}
             onClick={() => !isMobile && setShowParticipants(v => !v)}
           >
-            {isSmallPhone ? activeCount : `${activeCount} ${activeCount === 1 ? 'participant' : 'participants'}`}
+            <span style={{ color: '#f5a623', fontWeight: 600 }}>{activeCount}</span>
+            {!isSmallPhone && ` ${activeCount === 1 ? 'participant' : 'participants'}`}
           </button>
         </div>
 

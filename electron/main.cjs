@@ -171,6 +171,22 @@ ipcMain.handle('request-media-permissions', async () => {
 })
 
 // ---------------------------------------------------------------------------
+// IPC: open macOS's camera/microphone Privacy settings directly
+// Once a user has explicitly denied camera/mic access, neither
+// askForMediaAccess() nor a browser's getUserMedia() can ever show that
+// permission prompt again — this is deliberate OS/browser security behavior,
+// not something an app can override. The only way to change it is the
+// Privacy & Security settings pane, so the best an app can do is take the
+// user straight there instead of just saying "blocked".
+// ---------------------------------------------------------------------------
+ipcMain.handle('open-media-privacy-settings', (_, kind) => {
+  if (process.platform !== 'darwin') return false
+  const pane = kind === 'microphone' ? 'Privacy_Microphone' : 'Privacy_Camera'
+  shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`)
+  return true
+})
+
+// ---------------------------------------------------------------------------
 // IPC: list available windows + screens for screen sharing
 // Returns sanitised objects (NativeImage can't cross the context bridge)
 // ---------------------------------------------------------------------------

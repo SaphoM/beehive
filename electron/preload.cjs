@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Returns { camera: 'granted'|'denied'|'restricted'|'not-determined', mic: ... }
   requestMediaPermissions: () => ipcRenderer.invoke('request-media-permissions'),
 
+  // Open macOS's Privacy & Security settings straight to the Camera or
+  // Microphone pane — the only way to change a permission the user already
+  // explicitly denied (see the main-process handler for why).
+  openMediaPrivacySettings: (kind) => ipcRenderer.invoke('open-media-privacy-settings', kind),
+
   // Drive the presenter's slideshow (Keynote / PowerPoint) — 'next' | 'prev'
   presentationControl: (direction) => ipcRenderer.invoke('presentation-control', direction),
 

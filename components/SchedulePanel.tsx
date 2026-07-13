@@ -125,7 +125,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
                 fontSize: 12, padding: '5px 12px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif",
               }}
             >
-              {d < 60 ? `${d}m` : `${d / 60}h${d % 60 ? ` ${d % 60}m` : ''}`}
+              {d < 60 ? `${d}m` : `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}m` : ''}`}
             </button>
           ))}
         </div>
@@ -185,9 +185,17 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
         </div>
       ) : (
         <button
-          style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}
+          style={{
+            ...s.primaryBtn, margin: 0,
+            ...(isSting ? { background: STING_RED } : {}),
+            // Greyed out until the essentials (name/date/time) are filled in —
+            // matches the same formReady gate that shows the prep assistant,
+            // so the button and the prep cards agree on "ready to schedule".
+            ...(!formReady ? { background: '#2a2a2a', color: '#666', cursor: 'not-allowed' } : {}),
+          }}
           onClick={handleCreate}
-          disabled={loading}
+          disabled={loading || !formReady}
+          title={!formReady ? 'Enter your name, date, and time first' : undefined}
         >
           {loading ? 'Creating…' : 'Create Meeting & Get Link'}
         </button>

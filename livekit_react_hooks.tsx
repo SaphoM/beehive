@@ -248,11 +248,19 @@ export function useJoinRoom() {
     const identity = crypto.randomUUID()
 
     // Insert fresh participant row and fetch LiveKit token in parallel —
-    // the token only needs roomName + displayName, not the participant row ID
-    const [, tokenRes] = await Promise.all([
+    // the token only needs roomName + displayName, not the participant row ID.
+    // auth_user_id, NOT user_id: user_id FKs to the legacy public.users table,
+    // but session.user.id is an auth.users id with no matching public.users
+    // row — writing it there violated the FK, so a SIGNED-IN user's
+    // participant row silently never got inserted (guests, with null, were
+    // fine). Downstream, anything reading room_participants (file-share
+    // recipient list, invite-preview count, participant_left bookkeeping)
+    // simply never saw authenticated participants. auth_user_id is the
+    // bridge column 001_auth_system.sql added for this, FK'd to auth.users.
+    const [{ error: participantError }, tokenRes] = await Promise.all([
       supabase.from('room_participants').insert({
         room_id: roomId,
-        user_id: session?.user?.id ?? null,
+        auth_user_id: session?.user?.id ?? null,
         display_name: displayName,
         is_active: true,
         joined_at: new Date().toISOString(),
@@ -263,6 +271,7 @@ export function useJoinRoom() {
         body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity }),
       }),
     ])
+    if (participantError) console.error('[join] participant insert failed:', participantError.message)
 
     if (!tokenRes.ok) {
       setError('Failed to get access token')
@@ -382,9 +391,17 @@ export function useChat(roomId: string) {
     // getSession() reads from local storage — no server roundtrip needed for a chat insert
     const { data: { session } } = await supabase.auth.getSession()
 
+    // auth_user_id, NOT user_id: user_id FKs to the legacy public.users table,
+    // but session.user.id is an auth.users id — no auth user has a row in
+    // public.users, so writing it to user_id violated the FK and the insert
+    // was rejected. Net effect: every SIGNED-IN user's messages silently
+    // failed to send, while guests (null user_id) worked fine — which made
+    // it look like "chat is broken" only for authenticated accounts.
+    // auth_user_id is the bridge column 001_auth_system.sql added for
+    // exactly this, with the correct FK to auth.users.
     const { error } = await supabase.from('chat_messages').insert({
       room_id: roomId,
-      user_id: session?.user?.id,
+      auth_user_id: session?.user?.id ?? null,
       display_name: displayName,
       message,
     })

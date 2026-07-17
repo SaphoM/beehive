@@ -290,6 +290,17 @@ function createDockWindow() {
 
   dockWindow = new BrowserWindow({
     width, height, x, y,
+    // Non-activating NSPanel — the load-bearing setting for a control bar
+    // floating over another app's full-screen presentation. A normal window
+    // ACTIVATES its owning app on mouse-down (before/regardless of
+    // acceptsFirstMouse, which only controls whether that same click also
+    // reaches the button); activating BeeHive while Keynote/PowerPoint is
+    // mid-slideshow makes macOS drop the presentation out of full screen —
+    // so every dock click, even mute, was collapsing the show. A panel with
+    // the non-activating style mask receives clicks WITHOUT ever activating
+    // BeeHive, which is exactly how screen-recorder control bars (Loom
+    // etc.) stay clickable over full-screen apps.
+    type: 'panel',
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -299,11 +310,6 @@ function createDockWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     show: false,
-    // Explicit, not just relying on the default — a window that isn't
-    // focusable can still be *shown* above a full-screen space but macOS
-    // won't reliably route it real mouse-down events, which is the other
-    // half of "visible but not clickable" alongside acceptsFirstMouse below.
-    focusable: true,
     webPreferences: {
       preload: path.join(__dirname, 'dockPreload.cjs'),
       contextIsolation: true,

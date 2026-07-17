@@ -81,7 +81,7 @@ import {
 import { Lobby } from './components/Lobby'
 import { WaitingRoom } from './components/WaitingRoom'
 import { InviteModal } from './components/InviteModal'
-import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
+import { DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
@@ -389,7 +389,6 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   const [chatInput, setChatInput] = useState('')
   const [showChat, setShowChat] = useState(() => window.innerWidth > 768)
   const [showParticipants, setShowParticipants] = useState(false)
-  const [participantsDocked, setParticipantsDocked] = useState(false)
   // Meeting-prep checklist/agenda picked back at scheduling time (if any) —
   // loaded once per room, since it's set once at scheduling and only ever
   // edited from within this same window (MeetingPrepWindow writes back to
@@ -1398,6 +1397,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
   const [shareMenu, setShareMenu] = useState(false)
   const [isSharing, setIsSharing] = useState(false)
+
+  // Once a share (local or remote) actually ends, auto-close the attendees
+  // strip if it's open — it was most likely opened to check on people while
+  // a screen dominated the main area. Safe in a way the old auto-OPEN
+  // behavior wasn't (see the comment near hasRemoteScreenShare above): this
+  // can only ever turn the strip off, never force it back on, so it can't
+  // reproduce the "won't stay closed" bug that removal fixed.
+  useEffect(() => {
+    if (!isSharing && !hasRemoteScreenShare) setShowParticipants(false)
+  }, [isSharing, hasRemoteScreenShare])
+
   // True when sharing the WHOLE screen (vs. a single window). The presenter's own
   // local preview must be suppressed in this mode, otherwise the app window — which
   // is on the captured screen — mirrors itself into infinity (hall-of-mirrors echo).
@@ -2115,7 +2125,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           <span style={{ ...s.roomTitle, fontSize: isMobile ? 12 : 16, letterSpacing: isMobile ? 2 : 3 }}>{APP_NAME}</span>
           <button
             style={{ ...s.pill, fontSize: isMobile ? 11 : 12, padding: isMobile ? '2px 8px' : '3px 10px' }}
-            onClick={() => !isMobile && setShowParticipants(v => !v)}
+            onClick={() => setShowParticipants(v => !v)}
           >
             <span style={{ color: '#f5a623', fontWeight: 600 }}>{activeCount}</span>
             {!isSmallPhone && ` ${activeCount === 1 ? 'participant' : 'participants'}`}
@@ -2167,27 +2177,23 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         </div>
       )}
 
-      {/* Docked participants strip */}
-      {showParticipants && participantsDocked && (
+      {/* Attendees strip — always the horizontal, always-scrollable bar
+          docked directly under the header, in every view (desktop, mobile,
+          fullscreen). Opens only on an explicit click (header pill, dock
+          button); see the auto-close effect above for when it closes
+          itself. */}
+      {showParticipants && (
         <DockedParticipantsStrip
-          onUndock={() => setParticipantsDocked(false)}
-          onClose={() => { setShowParticipants(false); setParticipantsDocked(false) }}
+          onClose={() => setShowParticipants(false)}
+          onDirectChat={name => { openDm(name); setShowChat(true) }}
+          roomId={roomId}
+          isHost={!!myHostSecret}
+          hostSecret={myHostSecret}
+          supabaseParticipants={participants}
         />
       )}
 
       <div style={s.roomBody}>
-        {/* Floating participants window */}
-        {showParticipants && !participantsDocked && (
-          <ParticipantsWindow
-            onClose={() => setShowParticipants(false)}
-            onDock={() => setParticipantsDocked(true)}
-            onDirectChat={name => { openDm(name); setShowChat(true) }}
-            roomId={roomId}
-            isHost={!!myHostSecret}
-            hostSecret={myHostSecret}
-            supabaseParticipants={participants}
-          />
-        )}
 
         {/* Drop overlay */}
         {dragOver && (

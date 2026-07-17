@@ -181,7 +181,9 @@ ipcMain.handle('request-media-permissions', async () => {
 // ---------------------------------------------------------------------------
 ipcMain.handle('open-media-privacy-settings', (_, kind) => {
   if (process.platform !== 'darwin') return false
-  const pane = kind === 'microphone' ? 'Privacy_Microphone' : 'Privacy_Camera'
+  const pane = kind === 'microphone' ? 'Privacy_Microphone'
+    : kind === 'screen' ? 'Privacy_ScreenCapture'
+    : 'Privacy_Camera'
   shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`)
   return true
 })
@@ -297,14 +299,40 @@ function createDockWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     show: false,
+    // Explicit, not just relying on the default — a window that isn't
+    // focusable can still be *shown* above a full-screen space but macOS
+    // won't reliably route it real mouse-down events, which is the other
+    // half of "visible but not clickable" alongside acceptsFirstMouse below.
+    focusable: true,
     webPreferences: {
       preload: path.join(__dirname, 'dockPreload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Without this, macOS treats the dock's FIRST click (while it's
+      // inactive, which it deliberately always is — see showInactive()
+      // below) as just "activate this window", swallowing the click instead
+      // of delivering it to the button. That's the exact "not controllable"
+      // symptom while a full-screen app (Keynote, PowerPoint) holds focus:
+      // every click looked dead because it was only ever waking the window.
+      acceptsFirstMouse: true,
     },
   })
-  dockWindow.setAlwaysOnTop(true, 'floating')
+  // 'screen-saver' level, not 'floating': full-screen presentation windows
+  // (Keynote/PowerPoint slideshows, Preview's full-screen PDF view) stack
+  // ABOVE the 'floating' level, which buried the dock exactly when the
+  // presenter needed it most — mid-slideshow. visibleOnFullScreen (below)
+  // only makes the dock follow onto the full-screen Space; this level is
+  // what keeps it on top once there. Same approach screen-annotation
+  // overlay tools use.
+  dockWindow.setAlwaysOnTop(true, 'screen-saver')
   dockWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // Belt-and-braces: nothing in this codebase ever calls setIgnoreMouseEvents,
+  // so this should already be false — but window objects get REUSED across
+  // show/hide cycles (createDockWindow returns the existing instance if not
+  // destroyed), and an overlay window that's visible-but-unclickable is
+  // indistinguishable from a stuck ignore-mouse-events state without
+  // explicitly asserting it's off, every time the window is (re)created.
+  dockWindow.setIgnoreMouseEvents(false)
   dockWindow.loadFile(path.join(__dirname, 'dock.html'))
   dockWindow.on('closed', () => { dockWindow = null })
   return dockWindow
@@ -325,11 +353,16 @@ ipcMain.on('dock-state', (_, state) => {
 })
 
 // Dock window → main window's renderer (toggle-mic, leave, open-chat, …).
-// Actions that need the presenter to actually SEE something (chat,
-// participants, leaving) also bring BeeHive's main window forward; pure
-// background actions (mute, raise hand, stop share) don't steal focus so the
-// presenter can keep looking at the shared app.
-const FOCUS_ON_ACTION = new Set(['open-chat', 'open-participants', 'leave'])
+// Only 'leave' brings BeeHive's main window forward — the meeting is ending
+// anyway, so there's nothing left to protect. 'open-chat'/'open-participants'
+// used to do this too, but activating BeeHive while another app (Keynote,
+// PowerPoint) holds a true macOS full-screen Space forces the OS to switch
+// away from that Space — which looks exactly like "closing" the presentation
+// out from under the presenter, mid-slideshow, just to peek at a chat
+// message. The state change (opening the panel) still happens either way;
+// it's simply visible next time the presenter switches back to BeeHive on
+// their own terms, instead of being yanked there involuntarily.
+const FOCUS_ON_ACTION = new Set(['leave'])
 ipcMain.on('dock-action', (_, action) => {
   if (FOCUS_ON_ACTION.has(action?.type) && mainWindow) {
     mainWindow.show()

@@ -8,3 +8,6 @@ release/
 electron/bin/
 electron/backend.bundle.mjs
 .DS_Store
+
+# Local tool config
+.claude/

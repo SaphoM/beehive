@@ -42,6 +42,14 @@
   .meta .share-elapsed { color: #48bb78; font-size: 10px; font-weight: 300; opacity: 0.8; }
   .quality-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .speaking { color: #f5c518; font-size: 10px; font-weight: 300; max-width: 110px; overflow: hidden; text-overflow: ellipsis; -webkit-app-region: no-drag; }
+  /* cursor:pointer was already set below on every button — if it ever
+     looked like there was no hand cursor over a full-screen app, that's a
+     macOS/Chromium cursor-repaint quirk when this window sits above another
+     app's exclusive full-screen surface, not a missing style. The bigger,
+     more reliable signal added here is a much stronger :hover treatment
+     (scale + glow + solid border, not just a faint tint) so exactly where
+     the mouse is reads unmistakably even against a bright, uncontrollable
+     background behind a semi-transparent dock. */
   button {
     -webkit-app-region: no-drag;
     background: rgba(255, 255, 255, 0.06);
@@ -56,28 +64,114 @@
     cursor: pointer;
     flex-shrink: 0;
     position: relative;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s, box-shadow 0.12s;
   }
-  button:hover { background: rgba(255, 255, 255, 0.12); }
+  button:hover {
+    background: rgba(255, 255, 255, 0.24);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #fff;
+    transform: scale(1.12);
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+  }
+  button:active { transform: scale(0.96); }
   button.active-red { background: rgba(197, 48, 48, 0.25); border-color: #e57373; color: #e57373; }
+  button.active-red:hover { background: rgba(197, 48, 48, 0.45); border-color: #e57373; box-shadow: 0 0 0 4px rgba(229, 115, 115, 0.18); }
   button.active-green { background: rgba(72, 187, 120, 0.2); border-color: #68d391; color: #68d391; }
+  button.active-green:hover { background: rgba(72, 187, 120, 0.38); border-color: #68d391; box-shadow: 0 0 0 4px rgba(104, 211, 145, 0.18); }
   button.active-blue { background: rgba(66, 153, 225, 0.22); border-color: #4299e1; color: #4299e1; }
   button.pill { border-radius: 16px; width: auto; padding: 0 12px; font-size: 11px; font-weight: 600; font-family: inherit; }
   button.leave { background: #c53030; border-color: #c53030; color: #fff; }
-  button.leave:hover { background: #b91c1c; }
+  button.leave:hover { background: #e53e3e; border-color: #fff; box-shadow: 0 0 0 4px rgba(229, 62, 62, 0.25); }
+  /* Arm-then-confirm state for Leave/Stop-sharing (see armConfirm() below) —
+     a stray click on this small, densely-packed bar must never actually end
+     the call or the share; a SECOND deliberate click within the window does.
+     Widens to a text pill so the confirm step is impossible to miss, and
+     pulses to draw the eye back to it. */
+  button.confirm-armed {
+    width: auto !important;
+    border-radius: 16px !important;
+    padding: 0 12px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    background: #7a1f1f !important;
+    border-color: #fff !important;
+    animation: confirm-pulse 0.9s ease-in-out infinite;
+  }
+  @keyframes confirm-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(229, 62, 62, 0.55); }
+    50% { box-shadow: 0 0 0 6px rgba(229, 62, 62, 0); }
+  }
+  button.minimize { width: 26px; height: 26px; background: rgba(255, 255, 255, 0.03); }
+  button.minimize svg { width: 12px; height: 12px; }
   .badge {
     position: absolute; top: -3px; right: -3px;
     min-width: 14px; height: 14px; border-radius: 8px;
     background: #f5c518; color: #000; font-size: 9px; font-weight: 700;
     display: flex; align-items: center; justify-content: center; padding: 0 3px;
   }
+  /* Attendees' raised hands — the one meeting signal a presenter must not
+     miss while BeeHive is hidden behind the shared app. Gold + pulsing so it
+     reads at a glance; clicking it brings BeeHive forward on the hands list. */
+  .hands-chip {
+    -webkit-app-region: no-drag;
+    display: flex; align-items: center; gap: 5px;
+    background: rgba(245, 197, 24, 0.16);
+    border: 1px solid #f5c518;
+    border-radius: 16px;
+    padding: 5px 12px;
+    color: #f5c518; font-size: 11px; font-weight: 600;
+    cursor: pointer; flex-shrink: 0;
+    max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+    animation: hands-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes hands-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 197, 24, 0.45); }
+    50% { box-shadow: 0 0 0 5px rgba(245, 197, 24, 0); }
+  }
   .count { font-size: 10px; margin-left: 2px; }
   svg { width: 15px; height: 15px; }
   .hidden { display: none !important; }
+
+  /* Minimized state — the full bar collapses to a small round bubble. The
+     bubble itself stays a drag region (like the body) so it can still be
+     repositioned by grabbing its padding; the actual expand button inside
+     it is no-drag so a plain click registers as a click, not a drag —
+     exactly the same drag/no-drag split the full dock already uses. */
+  .bubble {
+    -webkit-app-region: drag;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 10, 10, 0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 50%;
+    width: 52px;
+    height: 52px;
+    padding: 5px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  }
+  .bubble button {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
+  .bubble .badge { top: 0; right: 0; }
+  .bubble .hand-dot {
+    position: absolute; bottom: 1px; right: 1px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #f5c518; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; border: 2px solid #0a0a0a;
+    animation: hands-pulse 1.6s ease-in-out infinite;
+  }
 </style>
 </head>
 <body>
   <div class="dock" id="dock">
+    <button class="minimize" id="btnMinimize" title="Minimise control panel"></button>
+
     <div class="meta">
       <span class="timer" id="meetingTimer">0:00</span>
       <span class="share-label" id="shareLabel">Sharing</span>
@@ -90,6 +184,7 @@
     <button id="btnMic" title="Mute / unmute"></button>
     <button id="btnCam" title="Camera on / off"></button>
     <button id="btnHand" title="Raise / lower hand"></button>
+    <div class="hands-chip hidden" id="handsChip" title="Raised hands — click to open BeeHive on the participants list"></div>
 
     <div class="divider" id="slideDivider"></div>
     <button id="btnPrev" title="Previous slide"></button>
@@ -110,6 +205,10 @@
     <button class="leave" id="btnLeave" title="Leave meeting"></button>
   </div>
 
+  <div class="bubble hidden" id="bubble" title="Drag to move · click to expand controls">
+    <button id="btnExpand" title="Expand control panel"></button>
+  </div>
+
   <script>
     const icons = {
       mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
@@ -121,7 +220,15 @@
       chevRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>',
       chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
       users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-      phoneOff: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1-1a1 1 0 0 1 1.05-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V19a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h2.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.25 1l-1.02 1.03a16 16 0 0 0 2.63 3.41z"/><line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2"/></svg>',
+      // Was a hand-drawn filled blob with an unrelated stroked line crossing
+      // it — every other icon here is a clean stroke-only Lucide outline, so
+      // the mismatched fill style rendered as a garbled shape at 15px
+      // ("damaged" icon). Swapped for the real Lucide phone-off glyph, same
+      // stroke/viewBox convention as every sibling icon (and the same icon
+      // RoomPage.tsx imports from lucide-react for Leave elsewhere in the app).
+      phoneOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1-1a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 17.72V20a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4 2h2.28a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.5 9.66"/><line x1="23" x2="1" y1="1" y2="23"/></svg>',
+      chevDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+      chevUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>',
     }
     const el = id => document.getElementById(id)
     el('btnMic').innerHTML = icons.mic
@@ -132,13 +239,15 @@
     el('btnChat').innerHTML = icons.chat
     el('btnParticipants').innerHTML = icons.users
     el('btnLeave').innerHTML = icons.phoneOff
+    el('btnMinimize').innerHTML = icons.chevDown
+    el('btnExpand').innerHTML = icons.chevUp
 
     let state = {
       micOn: true, camOn: true, handRaised: false,
       chatUnread: 0, participantCount: 0,
       speakingName: null, connectionQuality: 'unknown',
       shareLabel: 'Sharing', shareElapsed: '0:00', meetingElapsed: '0:00',
-      canControlSlides: false,
+      canControlSlides: false, raisedHandNames: [],
     }
 
     function render() {
@@ -151,6 +260,17 @@
       el('btnCam').innerHTML = state.camOn ? icons.cam : icons.camOff
       el('btnCam').className = state.camOn ? '' : 'active-red'
       el('btnHand').className = state.handRaised ? 'active-green' : ''
+
+      const hands = state.raisedHandNames || []
+      const handsChip = el('handsChip')
+      if (hands.length === 0) {
+        handsChip.classList.add('hidden')
+      } else {
+        handsChip.classList.remove('hidden')
+        handsChip.textContent = hands.length <= 2
+          ? '✋ ' + hands.join(', ')
+          : '✋ ' + hands.length + ' hands up'
+      }
 
       el('slideDivider').classList.toggle('hidden', !state.canControlSlides)
       el('btnPrev').classList.toggle('hidden', !state.canControlSlides)
@@ -172,7 +292,70 @@
       const pCount = el('btnParticipants').querySelector('.count')
       if (pCount) pCount.textContent = state.participantCount
       else { const c = document.createElement('span'); c.className = 'count'; c.textContent = state.participantCount; el('btnParticipants').appendChild(c) }
+
+      renderBubbleBadges()
     }
+
+    // Minimised bubble mirrors the two signals a presenter can't afford to
+    // miss even while collapsed: unread chat and raised hands. Everything
+    // else (mic/cam state, timers) is one click away via expand.
+    function renderBubbleBadges() {
+      const btnExpand = el('btnExpand')
+      let badge = btnExpand.querySelector('.badge')
+      if (state.chatUnread > 0) {
+        if (badge) badge.textContent = state.chatUnread
+        else { badge = document.createElement('div'); badge.className = 'badge'; badge.textContent = state.chatUnread; btnExpand.appendChild(badge) }
+      } else if (badge) badge.remove()
+
+      let dot = btnExpand.querySelector('.hand-dot')
+      const hands = (state.raisedHandNames || []).length
+      if (hands > 0) {
+        if (!dot) { dot = document.createElement('div'); dot.className = 'hand-dot'; btnExpand.appendChild(dot) }
+        dot.textContent = '✋'
+      } else if (dot) dot.remove()
+    }
+
+    let minimized = false
+    function setMinimized(v) {
+      minimized = v
+      el('dock').classList.toggle('hidden', minimized)
+      el('bubble').classList.toggle('hidden', !minimized)
+    }
+
+    // A stray click anywhere on this small, densely-packed bar must never
+    // actually end the call or kill the share — only Leave/Stop-sharing get
+    // this treatment (mic/cam/hand/chat/participants/slides are all
+    // reversible, so a single click staying single-click is correct for
+    // them). First click arms the button (widens to a pulsing "Sure?" /
+    // "End meeting?" pill); the SAME button clicked again within the window
+    // is what actually fires the action. Clicking anything else — another
+    // control, empty space, dragging the bar — disarms it immediately.
+    const armedResets = []
+    function armConfirm(btn, { normalHTML, normalClass, confirmText, timeoutMs = 2500, onConfirm }) {
+      let armed = false, timer = null
+      const reset = () => {
+        if (!armed) return
+        armed = false
+        clearTimeout(timer)
+        btn.className = normalClass
+        btn.innerHTML = normalHTML
+      }
+      btn.addEventListener('click', () => {
+        if (!armed) {
+          armed = true
+          btn.className = normalClass + ' confirm-armed'
+          btn.textContent = confirmText
+          timer = setTimeout(reset, timeoutMs)
+        } else {
+          reset()
+          onConfirm()
+        }
+      })
+      armedResets.push({ btn, reset })
+    }
+    document.addEventListener('click', e => {
+      for (const { btn, reset } of armedResets) if (e.target !== btn) reset()
+    }, true) // capture phase — disarms BEFORE any other button's own click handler runs
 
     window.dockAPI.onState(s => { state = { ...state, ...s }; render() })
 
@@ -181,10 +364,20 @@
     el('btnHand').onclick = () => window.dockAPI.sendAction({ type: 'toggle-hand' })
     el('btnChat').onclick = () => window.dockAPI.sendAction({ type: 'open-chat' })
     el('btnParticipants').onclick = () => window.dockAPI.sendAction({ type: 'open-participants' })
-    el('btnStop').onclick = () => window.dockAPI.sendAction({ type: 'stop-share' })
-    el('btnLeave').onclick = () => window.dockAPI.sendAction({ type: 'leave' })
+    el('handsChip').onclick = () => window.dockAPI.sendAction({ type: 'open-participants' })
     el('btnPrev').onclick = () => window.dockAPI.presentationControl('prev')
     el('btnNext').onclick = () => window.dockAPI.presentationControl('next')
+    el('btnMinimize').onclick = () => setMinimized(true)
+    el('btnExpand').onclick = () => setMinimized(false)
+
+    armConfirm(el('btnStop'), {
+      normalHTML: 'Stop', normalClass: 'pill leave', confirmText: 'Sure?',
+      onConfirm: () => window.dockAPI.sendAction({ type: 'stop-share' }),
+    })
+    armConfirm(el('btnLeave'), {
+      normalHTML: icons.phoneOff, normalClass: 'leave', confirmText: 'End meeting?',
+      onConfirm: () => window.dockAPI.sendAction({ type: 'leave' }),
+    })
 
     render()
   </script>

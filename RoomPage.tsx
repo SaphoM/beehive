@@ -10,7 +10,7 @@ declare global {
       getScreenAccessStatus: () => Promise<'granted' | 'denied' | 'restricted' | 'not-determined'>
       stopFloating: () => void
       requestMediaPermissions: () => Promise<{ camera: string; mic: string }>
-      openMediaPrivacySettings?: (kind: 'camera' | 'microphone') => Promise<boolean>
+      openMediaPrivacySettings?: (kind: 'camera' | 'microphone' | 'screen') => Promise<boolean>
       presentationControl: (direction: 'next' | 'prev') => Promise<boolean>
       toggleFullscreen: () => Promise<boolean>
       getFullscreen: () => Promise<boolean>
@@ -41,6 +41,9 @@ interface DockState {
   shareElapsed: string
   meetingElapsed: string
   canControlSlides: boolean
+  // First names of OTHER participants with raised hands — the presenter's own
+  // hand already shows as the dock's hand-button active state.
+  raisedHandNames: string[]
 }
 type DockAction =
   | { type: 'toggle-mic' | 'toggle-cam' | 'toggle-hand' | 'stop-share' | 'leave' | 'open-chat' | 'open-participants' }
@@ -83,6 +86,7 @@ import { BackgroundMenu } from './components/BackgroundMenu'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
 import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
+import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
@@ -700,6 +704,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   const mainAreaRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Full-screen mode covers the header/sidebar/Participants window with a
+  // fixed full-viewport overlay (see the comment above) — leaving attendees,
+  // raised hands, and controls unreachable while presenting full-screen. This
+  // floating HUD is mounted inside that same overlay (see mainAreaRef render
+  // below) so it stays visible and usable in full-screen; it doesn't change
+  // how the regular Participants window behaves outside full-screen.
+  const [showFullscreenHud, setShowFullscreenHud] = useState(false)
+  useEffect(() => {
+    if (isFullscreen) setShowFullscreenHud(true)
+  }, [isFullscreen])
+
   const goNativeFullscreen = useCallback(async (on: boolean) => {
     // Prefer Electron's true OS fullscreen (removes the title bar / fills monitor)
     if (window.electronAPI?.toggleFullscreen) {
@@ -881,14 +896,69 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
   const bgActive = bgEffect !== 'none' || bgFlip
 
+  // Uploaded background image persists across meetings and app restarts —
+  // stored in localStorage as a downscaled JPEG data-URL (≤1600px wide keeps
+  // it comfortably inside the ~5 MB quota; the compositing canvas is capped
+  // at 1280 wide anyway, so nothing visible is lost). It stays until the
+  // user explicitly removes it via the ✕ next to the filename.
+  const BG_IMAGE_KEY = 'beehive:bgImage'
+  const BG_IMAGE_NAME_KEY = 'beehive:bgImageName'
+
+  useEffect(() => {
+    try {
+      const dataUrl = localStorage.getItem(BG_IMAGE_KEY)
+      const name = localStorage.getItem(BG_IMAGE_NAME_KEY)
+      if (dataUrl && name) {
+        const img = new Image()
+        img.onload = () => { bgUploadedImageRef.current = img }
+        img.src = dataUrl
+        setBgUploadedImageName(name)
+      }
+    } catch { /* storage unavailable — image upload still works per-session */ }
+  }, [])
+
   const handleImageUpload = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
-    img.onload = () => { bgUploadedImageRef.current = img; URL.revokeObjectURL(url) }
+    img.onload = () => {
+      bgUploadedImageRef.current = img
+      URL.revokeObjectURL(url)
+      try {
+        const maxW = 1600
+        const scale = Math.min(1, maxW / img.width)
+        const c = document.createElement('canvas')
+        c.width = Math.round(img.width * scale)
+        c.height = Math.round(img.height * scale)
+        c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height)
+        localStorage.setItem(BG_IMAGE_KEY, c.toDataURL('image/jpeg', 0.85))
+        localStorage.setItem(BG_IMAGE_NAME_KEY, file.name)
+      } catch { /* quota exceeded / storage unavailable — session-only, don't block the effect */ }
+    }
     img.src = url
     setBgUploadedImageName(file.name)
     setBgEffect('image')
   }, [])
+
+  const handleImageRemove = useCallback(() => {
+    bgUploadedImageRef.current = null
+    setBgUploadedImageName('')
+    try {
+      localStorage.removeItem(BG_IMAGE_KEY)
+      localStorage.removeItem(BG_IMAGE_NAME_KEY)
+    } catch { /* ignore */ }
+    setBgEffect(prev => (prev === 'image' ? 'none' : prev))
+  }, [])
+
+  // The camera track's presence must be a dependency of the pipeline effect:
+  // if a background effect (or Flip) is toggled while the camera is OFF, the
+  // effect body runs once, finds no track, and returns — and with deps of
+  // only [bgActive, localParticipant] nothing ever re-ran it when the camera
+  // came on, so background/flip silently did nothing for the rest of the
+  // session (clicks looked completely dead). useLocalParticipant re-renders
+  // this component on local track publish/unpublish, so deriving the
+  // track's presence per render and putting it in the deps restarts the
+  // pipeline the moment the camera track appears.
+  const camTrackReady = !!localParticipant.getTrackPublication(Track.Source.Camera)?.track
 
   useEffect(() => {
     const pub = localParticipant.getTrackPublication(Track.Source.Camera)
@@ -942,6 +1012,12 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const haloCtx = haloCanvas.getContext('2d')!
     const bgLightCanvas = document.createElement('canvas')
     const bgLightCtx = bgLightCanvas.getContext('2d')!
+    // Final alpha matte — the post-EMA smoothed mask, closed and
+    // opacity-saturated (see the MATTE_* constants below). This is what the
+    // subject cutout actually composites with; smoothFront stays the raw
+    // smoothed mask so the EMA and the DOF halo are unaffected.
+    const matteCanvas = document.createElement('canvas')
+    const matteCtx = matteCanvas.getContext('2d')!
     let maskSeeded = false
 
     // A visible fake shadow around the cutout was a crutch for the old hard-
@@ -982,9 +1058,38 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     //    plain source-over blend can NEVER decay a pixel back toward
     //    transparent — src alpha 0 leaves dst untouched — which made every
     //    transient misclassification stick on screen permanently.
-    const RAMP_LO = 70, RAMP_HI = 190
-    const FEATHER_PX = 3
+    // Retuned for the Tasks Vision engine's RAW confidence distribution: the
+    // legacy engine's masks arrived post-processed and near-binary, so LO=70
+    // (27%) cost nothing — but raw confidences on motion-blurred hands, hair
+    // wisps, and glasses legitimately sit in the 0.2–0.5 band, and the old
+    // floor was amputating them (hands turning transparent mid-gesture, hair
+    // edges vanishing). 45/175 keeps junk suppression below ~18% confidence
+    // while letting genuine mid-confidence body pixels through the ramp.
+    const RAMP_LO = 35, RAMP_HI = 175 // LO lowered from 45 with the matte
+    // saturation below in place: flyaway hair / wisps sit at raw confidence
+    // ~0.15–0.35, and the old floor culled the bottom of that band. Interior
+    // opacity no longer depends on the ramp being conservative (the matte
+    // boost guarantees it), so the floor can favor hair. Sub-0.14 junk is
+    // still crushed by the smoothstep.
+    const FEATHER_PX = 2 // was 3 — the matte close blur below adds ~1px of
+    // post-EMA softening, so the pre-EMA feather shrinks to keep total edge
+    // softness where it shipped instead of stacking into "helmet hair".
     const TEMPORAL_ALPHA = 0.65 // weight of the new frame each blend
+    // Final-matte shaping, applied AFTER temporal smoothing (order matters:
+    // the EMA sees the raw feathered mask, the composite sees this):
+    //  • close blur — a ~1px blur before saturation acts as a morphological
+    //    CLOSE: transient pinholes inside hands/arms (the "floating holes"
+    //    artifact) get filled by neighboring alpha before the boost locks
+    //    them opaque, and the edge gains a touch of sub-pixel smoothing.
+    //  • opacity boost — matte α = min(1, (1 + MATTE_OPACITY_BOOST)·α) via a
+    //    'lighter' self-composite. Raw confidences inside the torso/hands can
+    //    dip to ~0.6 for a few frames, which used to render the BODY itself
+    //    faintly translucent (background showing through clothing) — the
+    //    boost saturates anything above ~0.67 to fully opaque, while the
+    //    sub-0.5 hair band keeps graded translucency, i.e. a real alpha
+    //    matte rather than a binary cutout.
+    const MATTE_CLOSE_BLUR_PX = 1
+    const MATTE_OPACITY_BOOST = 0.5
     const HALO_BLUR_PX = 18 // large-radius blur of the mask -> soft "nearness to subject" falloff, for the depth blur below
 
     // Depth-of-field blur (background effect only) — see onResults' 'blur'
@@ -1004,8 +1109,11 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
     const processMask = (mask: any) => {
       const nw = mask.width || 256, nh = mask.height || 256
-      const mw = Math.min(480, nw), mh = Math.round(mw * nh / nw)
-      for (const c of [maskCanvas, featherCanvas, smoothFront, smoothBack, haloCanvas]) {
+      // 512 matches the Tasks Vision adapter's SEG_INPUT_W exactly, so its
+      // mask passes through 1:1 with no wasteful near-identity resample;
+      // the legacy engine's input-resolution masks downscale to it as before.
+      const mw = Math.min(512, nw), mh = Math.round(mw * nh / nw)
+      for (const c of [maskCanvas, featherCanvas, smoothFront, smoothBack, haloCanvas, matteCanvas]) {
         if (c.width !== mw || c.height !== mh) {
           c.width = mw; c.height = mh
           maskSeeded = false // resized — old smoothed contents no longer match
@@ -1063,18 +1171,39 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       haloCtx.drawImage(smoothFront, 0, 0)
       haloCtx.filter = 'none'
 
-      return smoothFront
+      // Final matte: close (blur fills pinholes / sub-pixel-smooths the
+      // edge), then saturate opacity via 'lighter' self-add — see the
+      // MATTE_* constants above. Two small GPU draws, no readback.
+      matteCtx.clearRect(0, 0, mw, mh)
+      matteCtx.filter = `blur(${MATTE_CLOSE_BLUR_PX}px)`
+      matteCtx.drawImage(smoothFront, 0, 0)
+      matteCtx.filter = 'none'
+      matteCtx.globalCompositeOperation = 'lighter'
+      matteCtx.globalAlpha = MATTE_OPACITY_BOOST
+      matteCtx.drawImage(matteCanvas, 0, 0)
+      matteCtx.globalCompositeOperation = 'source-over'
+      matteCtx.globalAlpha = 1
+
+      return matteCanvas
     }
 
-    const onResults = (results: any) => {
+    // Receives the mask itself — the SegmentationEngine interface already
+    // unwraps each engine's native result shape (legacyEngine passes
+    // results.segmentationMask, tasksVisionEngine its converted canvas).
+    // This callback previously kept the pre-interface signature and read
+    // `results.segmentationMask` off what was already the bare mask —
+    // undefined — so processMask threw on EVERY frame, on BOTH engines
+    // (the circuit-breaker downgraded tasks-vision → legacy, which then
+    // failed identically), and no background effect rendered at all. That
+    // one stale line was the entire "virtual background regressed" outage.
+    const onResults = (maskInput: CanvasImageSource) => {
       if (!running || !W) return
       const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
 
       // Hoisted so the depth-of-field blur background pass (below) can read
       // haloCanvas, which processMask() populates as a side effect — must run
-      // before the background layer, not after (it used to be called inline
-      // down in the attendee-layer block; same single call, just relocated).
-      const mask = processMask(results.segmentationMask)
+      // before the background layer, not after.
+      const mask = processMask(maskInput)
 
       ctx.save()
       ctx.clearRect(0, 0, W, H)
@@ -1201,15 +1330,42 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       if (video.videoWidth) setupDims()
       else video.addEventListener('loadedmetadata', setupDims, { once: true })
 
-      const sendFrame = async () => {
-        if (!running) return
-        if (video.readyState >= 2) {
-          if (!W) setupDims()
-          try { await seg.send(video) } catch {}
-        }
-        if (running) requestAnimationFrame(sendFrame)
+      // Frame pacing: requestVideoFrameCallback fires exactly once per NEW
+      // camera frame. The old requestAnimationFrame loop fired at the
+      // DISPLAY's refresh rate — on a 120 Hz ProMotion Mac that segmented
+      // the same 30 fps camera frame up to 4×, which (a) quadrupled
+      // inference cost for nothing, and (b) ran the temporal-smoothing EMA
+      // 4× per camera frame, compounding α=0.65 into an effective ~0.985 —
+      // i.e. almost NO smoothing, which is exactly the mask flicker /
+      // "breathing edges" this pipeline's EMA exists to prevent. It also
+      // means smoothing strength silently varied with the viewer's monitor.
+      // The busy flag drops frames rather than queueing them if inference
+      // ever runs slower than the camera — latency stays bounded during
+      // fast movement instead of building a backlog.
+      let busy = false
+      const processFrame = async () => {
+        if (busy || video.readyState < 2) return
+        busy = true
+        if (!W) setupDims()
+        try { await seg!.send(video) } catch {}
+        busy = false
       }
-      sendFrame()
+      const hasRVFC = typeof (video as any).requestVideoFrameCallback === 'function'
+      if (hasRVFC) {
+        const onFrame = async () => {
+          if (!running) return
+          await processFrame()
+          ;(video as any).requestVideoFrameCallback(onFrame)
+        }
+        ;(video as any).requestVideoFrameCallback(onFrame)
+      } else {
+        const sendFrame = async () => {
+          if (!running) return
+          await processFrame()
+          if (running) requestAnimationFrame(sendFrame)
+        }
+        sendFrame()
+      }
     }
 
     init()
@@ -1222,11 +1378,20 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current).catch(() => {})
       }
     }
-  }, [bgActive, localParticipant])
+  }, [bgActive, localParticipant, camTrackReady])
 
-  useEffect(() => {
-    if (hasRemoteScreenShare) setShowParticipants(true)
-  }, [hasRemoteScreenShare])
+  // Used to force the Participants window open the instant any remote
+  // screen share started (so attendee cameras stayed visible while the
+  // shared screen filled the main area). But `hasRemoteScreenShare` flips
+  // false→true→false→true across ordinary presenter actions — switching the
+  // shared window/source (ScreenShareBar's Switch button republishes the
+  // track), a brief resubscribe hiccup — and each false→true edge re-ran
+  // this effect and force-reopened the window even after the user had just
+  // explicitly closed it via the X. That's the two symptoms reported
+  // together: opens without being clicked, and "won't stay closed". The
+  // Participants window now only ever opens from an explicit user action
+  // (header pill, dock button, hands-chip, FullscreenHud) — removed rather
+  // than gated, since any condition here could still refire unexpectedly.
 
   const [autoCamMode, setAutoCamMode] = useState<'center' | 'split' | null>(null)
   const [showAutoCamMenu, setShowAutoCamMenu] = useState(false)
@@ -1605,14 +1770,30 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     }
   }, [pendingFile, startShare])
 
-  const checkScreenPermission = useCallback(async (): Promise<boolean> => {
-    if (!window.electronAPI) return true
+  // Deliberately NOT a pre-flight gate. Two macOS facts make gating on
+  // getMediaAccessStatus('screen') !== 'granted' self-defeating:
+  //   1. The OS's own "BeeHive would like to record your screen" prompt only
+  //      appears when the app actually ATTEMPTS a capture — a gate that
+  //      refuses to attempt while not-yet-granted therefore guarantees the
+  //      prompt can never appear, an unbreakable loop.
+  //   2. For the 'screen' service specifically, macOS reports 'denied' even
+  //      when the user has simply never been asked, so "not granted" cannot
+  //      be read as "the user said no".
+  // So: capture attempts always proceed (triggering the OS prompt when one
+  // is owed), and this helper is called AFTER an attempt to warn — via
+  // non-blocking toast, never alert(), which can wedge the renderer across
+  // the focus loss/regain of a trip to System Settings — that macOS is
+  // still withholding real pixels (attendees would see black frames).
+  const notifyScreenPermissionProblem = useCallback(async () => {
+    if (!window.electronAPI) return
     const status = await window.electronAPI.getScreenAccessStatus()
-    if (status !== 'granted') {
-      alert('Screen Recording permission is required.\n\nGo to System Settings → Privacy & Security → Screen Recording and enable BeeHive, then relaunch the app.')
-      return false
+    if (status === 'granted') return
+    if (window.electronAPI.openMediaPrivacySettings) {
+      window.electronAPI.openMediaPrivacySettings('screen')
+      setDeviceErrorToast('macOS is still blocking screen capture, so attendees may see a black screen. In the Settings pane that just opened, enable BeeHive under Screen & System Audio Recording, then quit (⌘Q) and reopen BeeHive.')
+    } else {
+      setDeviceErrorToast('macOS is still blocking screen capture — enable BeeHive in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen the app.')
     }
-    return true
   }, [])
 
   const shareDesktopSource = useCallback(async (sourceId: string, isEntireScreen = false, windowTitle = '') => {
@@ -1621,7 +1802,6 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     // sources on macOS — an exact native window ID, not a guessable title match.
     const windowIdMatch = /^window:(\d+):/.exec(sourceId)
     controlWindowIdRef.current = windowIdMatch ? parseInt(windowIdMatch[1], 10) : null
-    if (!(await checkScreenPermission())) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -1648,10 +1828,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       setIsSharing(true)
       setSharingEntireScreen(isEntireScreen)
       rawTrack.addEventListener('ended', () => stopShareRef.current?.())
+      // Without Screen Recording permission, macOS doesn't make this capture
+      // FAIL — it silently delivers black frames, so the success path is
+      // exactly where the "attendees see nothing" case must be caught.
+      await notifyScreenPermissionProblem()
     } catch {
-      alert('Could not capture screen. Make sure BeeHive has Screen Recording permission in System Settings → Privacy & Security → Screen Recording.')
+      await notifyScreenPermissionProblem()
+      setDeviceErrorToast(prev => prev ?? 'Could not capture screen — close and reopen the share menu to try again.')
     }
-  }, [localParticipant, checkScreenPermission])
+  }, [localParticipant, notifyScreenPermissionProblem])
 
   // Share the primary/entire screen:
   //   • Electron — resolves the primary display via display_id sort and captures
@@ -1660,12 +1845,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   //     native picker opens with the full-screen option pre-selected, not tabs.
   const shareEntireScreen = useCallback(async () => {
     if (window.electronAPI) {
-      if (!(await checkScreenPermission())) return
+      // No permission pre-gate (see notifyScreenPermissionProblem) — this
+      // getDesktopSources call is itself what makes macOS show its
+      // Screen Recording prompt when the user has never been asked.
       const sources = await window.electronAPI.getDesktopSources({
         types: ['screen'],
         thumbnailSize: { width: 320, height: 180 },
       })
-      if (sources.length === 0) return
+      if (sources.length === 0) { await notifyScreenPermissionProblem(); return }
       // Primary display has the lowest numeric display_id on both macOS and Windows.
       const sorted = [...sources].sort((a, b) => {
         const ai = parseInt(a.display_id || '9999', 10)
@@ -1702,11 +1889,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         if (shouldHide) setRoomHidden(false)
       }
     }
-  }, [checkScreenPermission, shareDesktopSource, clearBeforeShare, localParticipant])
+  }, [notifyScreenPermissionProblem, shareDesktopSource, clearBeforeShare, localParticipant])
 
   const sharePresentationWindow = useCallback(async () => {
     if (!window.electronAPI) return
-    if (!(await checkScreenPermission())) return
     setDetectingWindow(true)
     try {
       const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
@@ -1723,7 +1909,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     } finally {
       setDetectingWindow(false)
     }
-  }, [checkScreenPermission])
+  }, [])
 
   const confirmAndShare = useCallback(async () => {
     if (!pendingSource) return
@@ -1843,6 +2029,11 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   useEffect(() => {
     if (showingDock) window.electronAPI?.showDock?.()
     else window.electronAPI?.hideDock?.()
+    // Leaving the meeting (Leave button, alone-timer, meeting ended) unmounts
+    // this component in one step while isSharing is still true — the effect
+    // body never re-runs with showingDock=false, so without this cleanup the
+    // dock window stayed floating over the lobby with frozen timers.
+    return () => { window.electronAPI?.hideDock?.() }
   }, [showingDock])
 
   // Currently-speaking participant (mirrors the logic SpeakingIndicator uses).
@@ -1879,12 +2070,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         shareElapsed: shareElapsedDisplay,
         meetingElapsed: elapsedDisplay,
         canControlSlides,
+        raisedHandNames: raisedHands
+          .filter(h => h.identity !== localParticipant.identity)
+          .map(h => h.name.split(' ')[0]),
       })
     }
     push()
     const t = setInterval(push, 1000)
     return () => clearInterval(t)
-  }, [showingDock, localParticipant, myHandRaised, dmUnread, activeCount, speakingName, connectionQuality, shareLabel, sharingEntireScreen, shareElapsedDisplay, elapsedDisplay, canControlSlides])
+  }, [showingDock, localParticipant, myHandRaised, dmUnread, activeCount, speakingName, connectionQuality, shareLabel, sharingEntireScreen, shareElapsedDisplay, elapsedDisplay, canControlSlides, raisedHands])
 
   // Actions dispatched from the dock — relayed here since only this renderer
   // holds the live LiveKit Room connection. Re-subscribes whenever any handler
@@ -2092,6 +2286,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           {/* Top-right button cluster: Laser pointer + Pop out + Expand/Collapse */}
           {(overlayMode !== 'hidden' || isFullscreen) && (
             <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 9100, display: 'flex', gap: 6 }}>
+              {/* Reopen the full-screen attendees/hands/reactions HUD once closed —
+                  only needed in full-screen, where it's otherwise unreachable */}
+              {isFullscreen && !showFullscreenHud && (
+                <button
+                  onClick={() => setShowFullscreenHud(true)}
+                  title="Show attendees"
+                  style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: '1px solid #333', borderRadius: 8, color: '#ccc', cursor: 'pointer' }}
+                >
+                  <Users size={17} />
+                </button>
+              )}
               {/* Laser pointer — desktop only (needs mouse cursor) */}
               {!isMobile && (
                 <button
@@ -2187,6 +2392,33 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
           {/* Speaking Indicator */}
           <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} isPresenting={isPresenting} />
+
+          {/* Full-screen HUD — floating attendees/hands/reactions/controls window,
+              mounted inside the full-screen overlay so it's reachable in Full
+              Presentation mode (see the isFullscreen comment above). */}
+          {isFullscreen && showFullscreenHud && (
+            <FullscreenHud
+              attendees={liveKitParticipants.map(p => ({
+                identity: p.identity,
+                name: p.identity === localParticipant.identity ? 'You' : (p.name || p.identity),
+                isSpeaking: p.isSpeaking,
+                isMicOn: p.isMicrophoneEnabled,
+                isCamOn: p.isCameraEnabled,
+              }))}
+              raisedHands={raisedHands}
+              onDismissHand={dismissHand}
+              onLowerAllHands={lowerAllHands}
+              myHandRaised={myHandRaised}
+              onToggleHand={toggleRaiseHand}
+              isMicOn={localParticipant.isMicrophoneEnabled}
+              onToggleMic={() => localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled)}
+              isCamOn={localParticipant.isCameraEnabled}
+              onToggleCam={() => localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled)}
+              onSendReaction={sendReaction}
+              onLeave={leaveWithNotification}
+              onClose={() => setShowFullscreenHud(false)}
+            />
+          )}
 
           {/* Remote laser pointer cursors */}
           {Array.from(remoteCursors.entries()).map(([name, cur]) => (
@@ -2311,7 +2543,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                       uploadedImageName={bgUploadedImageName}
                       onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
                       onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
-                      onImageUpload={handleImageUpload} onClose={() => setBgMenuOpen(false)}
+                      onImageUpload={handleImageUpload} onImageRemove={handleImageRemove} onClose={() => setBgMenuOpen(false)}
                     />
                   )}
                   {showAutoCamMenu && !autoCamMode && (
@@ -2344,7 +2576,6 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                       onSelectWindow={async () => {
                         setShareMenu(false)
                         if (window.electronAPI) {
-                          if (!(await checkScreenPermission())) return
                           const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
                           setDesktopSources(sources); setShowWindowPicker(true)
                         } else { await startShare() }
@@ -2542,7 +2773,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                     uploadedImageName={bgUploadedImageName}
                     onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
                     onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
-                    onImageUpload={handleImageUpload} onClose={() => setBgMenuOpen(false)}
+                    onImageUpload={handleImageUpload} onImageRemove={handleImageRemove} onClose={() => setBgMenuOpen(false)}
                   />
                 )}
               </div>
@@ -2668,7 +2899,6 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                     onSelectWindow={async () => {
                       setShareMenu(false)
                       if (window.electronAPI) {
-                        if (!(await checkScreenPermission())) return
                         const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
                         setDesktopSources(sources); setShowWindowPicker(true)
                       } else { await startShare() }

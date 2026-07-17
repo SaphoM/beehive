@@ -1,8 +1,8 @@
-import { X, FlipHorizontal, Upload } from 'lucide-react'
+import { X, FlipHorizontal, Upload, Trash2 } from 'lucide-react'
 import { s } from './roomStyles'
 import { VIRTUAL_PRESETS } from './roomUtils'
 
-export function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImageName, onEffect, onPreset, onFlip, onBlur, onImageUpload, onClose }: {
+export function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImageName, onEffect, onPreset, onFlip, onBlur, onImageUpload, onImageRemove, onClose }: {
   effect: 'none' | 'blur' | 'image' | 'virtual'
   presetId: string
   flip: boolean
@@ -13,6 +13,7 @@ export function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImag
   onFlip: () => void
   onBlur: (v: number) => void
   onImageUpload: (file: File) => void
+  onImageRemove: () => void
   onClose: () => void
 }) {
   const tabs = [
@@ -53,10 +54,13 @@ export function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImag
             />
             <span style={{ ...s.bgLabel, minWidth: 20, textAlign: 'right' as const }}>{blurLevel}</span>
           </div>
-          <div style={s.bgRow}>
+          {/* Whole row toggles — the tiny On/Off pill alone was a hard
+              target and read as "not clickable". The pill stops propagation
+              so a direct pill click doesn't double-toggle back. */}
+          <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
             <FlipHorizontal size={13} color="#888" />
             <span style={s.bgLabel}>Flip</span>
-            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
+            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
               {flip ? 'On' : 'Off'}
             </button>
           </div>
@@ -79,15 +83,27 @@ export function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImag
             </div>
           </label>
           {uploadedImageName && (
-            <div style={s.bgUploadedName}>{uploadedImageName}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ ...s.bgUploadedName, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{uploadedImageName}</div>
+              <button
+                onClick={onImageRemove}
+                title="Remove saved image"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', padding: 2, flexShrink: 0 }}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
           )}
           {!uploadedImageName && (
             <p style={s.bgHint}>Your photo replaces the background behind you.</p>
           )}
-          <div style={s.bgRow}>
+          {/* Whole row toggles — the tiny On/Off pill alone was a hard
+              target and read as "not clickable". The pill stops propagation
+              so a direct pill click doesn't double-toggle back. */}
+          <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
             <FlipHorizontal size={13} color="#888" />
             <span style={s.bgLabel}>Flip</span>
-            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
+            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
               {flip ? 'On' : 'Off'}
             </button>
           </div>
@@ -112,10 +128,13 @@ export function BackgroundMenu({ effect, presetId, flip, blurLevel, uploadedImag
               </button>
             ))}
           </div>
-          <div style={s.bgRow}>
+          {/* Whole row toggles — the tiny On/Off pill alone was a hard
+              target and read as "not clickable". The pill stops propagation
+              so a direct pill click doesn't double-toggle back. */}
+          <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
             <FlipHorizontal size={13} color="#888" />
             <span style={s.bgLabel}>Flip</span>
-            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={onFlip}>
+            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
               {flip ? 'On' : 'Off'}
             </button>
           </div>

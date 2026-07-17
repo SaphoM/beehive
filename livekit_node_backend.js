@@ -362,6 +362,22 @@ app.post('/api/livekit/webhook', async (req, res) => {
     }
   }
 
+  // LiveKit fires this once it has determined the room is actually empty and
+  // closed it server-side — the one signal that can't be skipped by a client
+  // exiting ungracefully (crash, force-quit, killed test process, etc). Every
+  // other place that ends a room (leaveWithNotification, the alone-timer) runs
+  // client-side JS that simply never executes in those cases, which is how
+  // rooms were accumulating with is_active still true long after everyone
+  // had actually left. This is the server-side backstop for that gap.
+  if (event.event === 'room_finished') {
+    const { room } = event
+    await supabase
+      .from('rooms')
+      .update({ ended_at: new Date().toISOString(), is_active: false })
+      .eq('livekit_room_name', room?.name)
+      .eq('is_active', true)
+  }
+
   res.status(200).json({ received: true })
 })
 

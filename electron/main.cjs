@@ -320,6 +320,10 @@ function createDockWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     show: false,
+    // Keep the dock out of Mission Control / the Spaces system entirely —
+    // one less way for the window manager to associate it with a Space
+    // transition when it's interacted with over a full-screen presentation.
+    hiddenInMissionControl: true,
     webPreferences: {
       preload: path.join(__dirname, 'dockPreload.cjs'),
       contextIsolation: true,
@@ -340,8 +344,15 @@ function createDockWindow() {
   // only makes the dock follow onto the full-screen Space; this level is
   // what keeps it on top once there. Same approach screen-annotation
   // overlay tools use.
-  dockWindow.setAlwaysOnTop(true, 'screen-saver')
-  dockWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  dockWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  // skipTransformProcessType is the critical option here: without it,
+  // setVisibleOnAllWorkspaces works by TRANSFORMING THE APP'S PROCESS TYPE
+  // (regular ⇄ UIElement) under the hood, and that transform is documented
+  // to cause app-activation / Space side effects — the exact "interacting
+  // with the dock yanks macOS away from the presentation's full-screen
+  // Space, which ends the slideshow" failure being fixed. With the skip,
+  // the window joins all workspaces without touching the process type.
+  dockWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
   // Belt-and-braces: nothing in this codebase ever calls setIgnoreMouseEvents,
   // so this should already be false — but window objects get REUSED across
   // show/hide cycles (createDockWindow returns the existing instance if not

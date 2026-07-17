@@ -301,6 +301,16 @@ function createDockWindow() {
     // BeeHive, which is exactly how screen-recorder control bars (Loom
     // etc.) stay clickable over full-screen apps.
     type: 'panel',
+    // The panel type alone wasn't enough: a non-activating panel still
+    // becomes the KEY WINDOW system-wide when clicked — taking key status
+    // away from Keynote's slideshow window without activating BeeHive —
+    // and Keynote treats its playback window resigning key as "end the
+    // show", so clicks still collapsed the presentation. focusable: false
+    // means this window can never become key at all: clicks are delivered
+    // purely as mouse events (all any dock button needs — there's no
+    // keyboard input here), and the presenting app keeps key status
+    // through every interaction.
+    focusable: false,
     frame: false,
     transparent: true,
     hasShadow: false,

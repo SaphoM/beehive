@@ -12,6 +12,7 @@ declare global {
       requestMediaPermissions: () => Promise<{ camera: string; mic: string }>
       openMediaPrivacySettings?: (kind: 'camera' | 'microphone' | 'screen') => Promise<boolean>
       presentationControl: (direction: 'next' | 'prev') => Promise<boolean>
+      stopPresentation?: () => Promise<boolean>
       toggleFullscreen: () => Promise<boolean>
       getFullscreen: () => Promise<boolean>
       onFullscreenChange: (cb: (v: boolean) => void) => () => void
@@ -81,7 +82,7 @@ import {
 import { Lobby } from './components/Lobby'
 import { WaitingRoom } from './components/WaitingRoom'
 import { InviteModal } from './components/InviteModal'
-import { DockedParticipantsStrip } from './components/ParticipantsWindow'
+import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
@@ -389,6 +390,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   const [chatInput, setChatInput] = useState('')
   const [showChat, setShowChat] = useState(() => window.innerWidth > 768)
   const [showParticipants, setShowParticipants] = useState(false)
+  const [participantsDocked, setParticipantsDocked] = useState(false)
   // Meeting-prep checklist/agenda picked back at scheduling time (if any) —
   // loaded once per room, since it's set once at scheduling and only ever
   // edited from within this same window (MeetingPrepWindow writes back to
@@ -966,7 +968,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
     if (!bgActive) {
       if (bgOrigTrackRef.current) {
-        ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current).catch(() => {})
+        // `replaceTrack`'s second argument (userProvidedTrack) defaults to
+        // true, which tells LiveKit "the app owns this track — don't stop
+        // it on unpublish/disconnect." That default is correct for the
+        // canvas track below (line ~1315 — we do manage that one), but this
+        // call restores the REAL camera track LiveKit itself originally
+        // created via setCameraEnabled(); leaving the default here silently
+        // reassigned that track's ownership away from LiveKit, so its own
+        // disconnect/unpublish logic stopped stopping it. Passing `false`
+        // hands ownership back, restoring the exact behavior a camera that
+        // never went through a background effect already has.
+        ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current, false).catch(() => {})
         bgOrigTrackRef.current = null
       }
       return
@@ -1374,7 +1386,13 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       video.srcObject = null
       try { seg?.close() } catch {}
       if (bgOrigTrackRef.current) {
-        ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current).catch(() => {})
+        // Same ownership fix as the !bgActive branch above — this cleanup
+        // runs on every unmount too (leaving the meeting while background
+        // effects are active), and the missing `false` here is what left
+        // the real camera's MediaStreamTrack marked "user provided," so
+        // LiveKit's own disconnect logic no longer stopped it — the camera
+        // LED stayed on and the track stayed live after Leave.
+        ;(lkTrack as any).replaceTrack(bgOrigTrackRef.current, false).catch(() => {})
       }
     }
   }, [bgActive, localParticipant, camTrackReady])
@@ -1458,6 +1476,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   }, [isPresenting])
 
   const stopShare = useCallback(async () => {
+    // Fire-and-forget — exits Keynote's/PowerPoint's slideshow if either is
+    // running (no-ops otherwise); never awaited so AppleScript's round-trip
+    // can't delay the UI's own stop-share flow.
+    window.electronAPI?.stopPresentation?.()
     try { await localParticipant.setScreenShareEnabled(false) } catch {}
     secondaryStream?.getTracks().forEach(t => t.stop())
     localShareStream?.getTracks().forEach(t => t.stop())
@@ -1660,6 +1682,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   }
 
   const leaveWithNotification = useCallback(async () => {
+    // Same fire-and-forget exit as stopShare — Leave should end a driven
+    // presentation exactly like Stop Sharing does, not just disconnect BeeHive.
+    window.electronAPI?.stopPresentation?.()
     try {
       await supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__LEAVE__${displayName}` })
       await supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName)
@@ -2125,7 +2150,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           <span style={{ ...s.roomTitle, fontSize: isMobile ? 12 : 16, letterSpacing: isMobile ? 2 : 3 }}>{APP_NAME}</span>
           <button
             style={{ ...s.pill, fontSize: isMobile ? 11 : 12, padding: isMobile ? '2px 8px' : '3px 10px' }}
-            onClick={() => setShowParticipants(v => !v)}
+            onClick={() => !isMobile && setShowParticipants(v => !v)}
           >
             <span style={{ color: '#f5a623', fontWeight: 600 }}>{activeCount}</span>
             {!isSmallPhone && ` ${activeCount === 1 ? 'participant' : 'participants'}`}
@@ -2177,14 +2202,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         </div>
       )}
 
-      {/* Attendees strip — always the horizontal, always-scrollable bar
-          docked directly under the header, in every view (desktop, mobile,
-          fullscreen). Opens only on an explicit click (header pill, dock
-          button); see the auto-close effect above for when it closes
-          itself. */}
-      {showParticipants && (
+      {/* Docked participants strip — always horizontal, always scrollable
+          (never a grid), directly under the header. Opens only on an
+          explicit click; see the auto-close effect above for when it
+          closes itself. */}
+      {showParticipants && participantsDocked && (
         <DockedParticipantsStrip
-          onClose={() => setShowParticipants(false)}
+          onUndock={() => setParticipantsDocked(false)}
+          onClose={() => { setShowParticipants(false); setParticipantsDocked(false) }}
           onDirectChat={name => { openDm(name); setShowChat(true) }}
           roomId={roomId}
           isHost={!!myHostSecret}
@@ -2194,6 +2219,21 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       )}
 
       <div style={s.roomBody}>
+        {/* Floating, detachable participants window — same always-horizontal,
+            always-scrollable row as the docked strip above; drag the ⠿ title
+            bar to reposition, drag toward the top to dock. */}
+        {showParticipants && !participantsDocked && (
+          <ParticipantsWindow
+            onClose={() => setShowParticipants(false)}
+            onDock={() => setParticipantsDocked(true)}
+            onDirectChat={name => { openDm(name); setShowChat(true) }}
+            roomId={roomId}
+            isHost={!!myHostSecret}
+            hostSecret={myHostSecret}
+            supabaseParticipants={participants}
+          />
+        )}
+
 
         {/* Drop overlay */}
         {dragOver && (

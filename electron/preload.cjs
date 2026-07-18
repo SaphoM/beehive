@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Drive the presenter's slideshow (Keynote / PowerPoint) — 'next' | 'prev'
   presentationControl: (direction) => ipcRenderer.invoke('presentation-control', direction),
 
+  // Exit Keynote's/PowerPoint's slideshow — called on Stop Sharing / Leave.
+  stopPresentation: () => ipcRenderer.invoke('stop-presentation'),
+
   // Native OS fullscreen (toggles macOS fullscreen, not just element fullscreen)
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
   getFullscreen: () => ipcRenderer.invoke('get-fullscreen'),

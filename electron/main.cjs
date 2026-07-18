@@ -353,25 +353,88 @@ function createDockWindow() {
   // Space, which ends the slideshow" failure being fixed. With the skip,
   // the window joins all workspaces without touching the process type.
   dockWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
-  // Belt-and-braces: nothing in this codebase ever calls setIgnoreMouseEvents,
-  // so this should already be false — but window objects get REUSED across
-  // show/hide cycles (createDockWindow returns the existing instance if not
-  // destroyed), and an overlay window that's visible-but-unclickable is
-  // indistinguishable from a stuck ignore-mouse-events state without
-  // explicitly asserting it's off, every time the window is (re)created.
-  dockWindow.setIgnoreMouseEvents(false)
+  // Every flag above (panel, non-focusable, hiddenInMissionControl,
+  // skipTransformProcessType) turned out NOT to be sufficient on its own in
+  // real testing: the dock is still a real on-screen window, and delivering
+  // a real OS click event to ANY window — even one that never activates its
+  // app or becomes key — was still enough for macOS to drop Keynote's/
+  // PowerPoint's true full-screen Space on some systems. The actual fix is
+  // below: make the window permanently click-through, so the WindowServer
+  // never delivers it a real click at all, and reach its buttons a
+  // completely different way (see watchDockClicks()).
+  dockWindow.setIgnoreMouseEvents(true)
   dockWindow.loadFile(path.join(__dirname, 'dock.html'))
-  dockWindow.on('closed', () => { dockWindow = null })
+  dockWindow.on('closed', () => { dockWindow = null; stopDockClickWatcher() })
   return dockWindow
+}
+
+// ---------------------------------------------------------------------------
+// Click-through dock + native click replay — see the big comment in
+// beehive-ctl.m's watch-clicks section for the full "why". Summary: the dock
+// window is permanently setIgnoreMouseEvents(true), so the OS never sees a
+// real click on it (which is what was dropping full-screen presentations).
+// A native helper OBSERVES global clicks (a mouse-only NSEvent global
+// monitor — no Accessibility permission needed, and it doesn't consume the
+// event, so Keynote/PowerPoint still receives every click completely
+// normally in parallel). Whenever one lands inside the dock's current
+// bounds, we replay it straight into the SAME window via sendInputEvent —
+// Electron delivers that directly to the renderer's DOM, so dock.html's
+// existing onclick handlers fire completely unmodified. The window itself
+// never touches the OS's real hit-testing/activation path a second time.
+// ---------------------------------------------------------------------------
+let dockClickWatcher = null
+
+function startDockClickWatcher() {
+  if (dockClickWatcher || process.platform !== 'darwin') return
+  const bin = beehiveCtlPath()
+  if (!bin) { console.warn('[dock] beehive-ctl unavailable — dock clicks will not register'); return }
+
+  dockClickWatcher = spawn(bin, ['watch-clicks'])
+  let buf = ''
+  dockClickWatcher.stdout.on('data', chunk => {
+    buf += chunk.toString('utf8')
+    let idx
+    while ((idx = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, idx); buf = buf.slice(idx + 1)
+      if (!line.trim()) continue
+      let msg
+      try { msg = JSON.parse(line) } catch { continue }
+      if (msg.ready || !dockWindow || dockWindow.isDestroyed()) continue
+
+      // NSEvent screen coords are bottom-left origin; Electron's are
+      // top-left origin — flip using the primary display's full height.
+      const displayHeight = screen.getPrimaryDisplay().bounds.height
+      const screenX = msg.x
+      const screenY = displayHeight - msg.y
+
+      const b = dockWindow.getBounds()
+      if (screenX < b.x || screenX > b.x + b.width || screenY < b.y || screenY > b.y + b.height) continue
+
+      const localX = Math.round(screenX - b.x)
+      const localY = Math.round(screenY - b.y)
+      dockWindow.webContents.sendInputEvent({
+        type: msg.type === 'down' ? 'mouseDown' : 'mouseUp',
+        x: localX, y: localY, button: 'left', clickCount: 1,
+      })
+    }
+  })
+  dockClickWatcher.on('exit', () => { dockClickWatcher = null })
+  dockClickWatcher.stderr?.on('data', d => console.warn('[watch-clicks]', d.toString()))
+}
+
+function stopDockClickWatcher() {
+  if (dockClickWatcher) { dockClickWatcher.kill(); dockClickWatcher = null }
 }
 
 ipcMain.on('dock-show', () => {
   const w = createDockWindow()
   w.showInactive() // visible without stealing focus from the shared app
+  startDockClickWatcher()
 })
 
 ipcMain.on('dock-hide', () => {
   if (dockWindow && !dockWindow.isDestroyed()) dockWindow.hide()
+  stopDockClickWatcher()
 })
 
 // Main window's renderer → dock window (mic/cam status, timer, sharing info…)
@@ -422,6 +485,40 @@ end if`
   return new Promise(resolve => {
     execFile('osascript', ['-e', script], err => {
       if (err) console.warn('[presentation-control]', err.message)
+      resolve(!err)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// IPC: exit Keynote's/PowerPoint's slideshow — fired when the user clicks
+// Stop Sharing or Leave (the only two dock actions meant to end the
+// presentation, per the same rule the click-through/replay fix above exists
+// to enforce for every OTHER button). Sends each app its own direct
+// AppleScript "stop"/"exit" command — the same permission category as the
+// prev/next-slide commands above (a normal Apple Event to a scriptable app,
+// not UI-scripting via System Events), so this needs no new permission
+// beyond whatever Automation access the user already granted Keynote/
+// PowerPoint for slide navigation. Silently no-ops if neither is running,
+// or if the exact command name doesn't match a given app version — matches
+// presentation-control's existing tolerant, try-wrapped design.
+// ---------------------------------------------------------------------------
+ipcMain.handle('stop-presentation', () => {
+  if (process.platform !== 'darwin') return false
+  const script = `
+tell application "System Events" to set procs to name of every process
+if procs contains "Keynote" then
+  try
+    tell application "Keynote" to stop the front slideshow
+  end try
+else if procs contains "Microsoft PowerPoint" then
+  try
+    tell application "Microsoft PowerPoint" to exit slide show (slide show view of slide show window 1)
+  end try
+end if`
+  return new Promise(resolve => {
+    execFile('osascript', ['-e', script], err => {
+      if (err) console.warn('[stop-presentation]', err.message)
       resolve(!err)
     })
   })
@@ -529,5 +626,6 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   backendProcess?.kill()
+  stopDockClickWatcher()
   if (dockWindow && !dockWindow.isDestroyed()) dockWindow.close()
 })

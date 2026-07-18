@@ -1207,8 +1207,33 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     // (the circuit-breaker downgraded tasks-vision → legacy, which then
     // failed identically), and no background effect rendered at all. That
     // one stale line was the entire "virtual background regressed" outage.
+    // If anything inside this callback throws, the resilience wrapper in
+    // createSegmentationEngine() (components/segmentation/createSegmentationEngine.ts)
+    // catches it as a "frame failed", counts it, and after 3 in a row downgrades
+    // engines — but once already on the legacy engine, there's no further
+    // fallback, so a callback that fails on EVERY frame (e.g. an edge case
+    // specific to some real camera's resolution/aspect ratio that the fake
+    // camera used for testing never triggers) fails silently, forever:
+    // trackReplaced never flips true, so the raw camera keeps publishing
+    // unprocessed with zero visible indication anything is wrong — reads
+    // exactly like "Blur is selected but does nothing." Wrapping the whole
+    // callback surfaces that failure instead of leaving it silent.
+    let reportedOnResultsError = false
     const onResults = (maskInput: CanvasImageSource) => {
       if (!running || !W) return
+      try {
+        onResultsInner(maskInput)
+      } catch (e) {
+        console.error('[background-effect] onResults failed:', e)
+        if (!reportedOnResultsError) {
+          reportedOnResultsError = true
+          setDeviceErrorToast(`Background effect error — ${(e as Error)?.message || 'unknown'}. Try a different effect or camera resolution.`)
+        }
+        throw e // still let the resilience wrapper count/react to this failure
+      }
+    }
+
+    const onResultsInner = (maskInput: CanvasImageSource) => {
       const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
 
       // Hoisted so the depth-of-field blur background pass (below) can read
@@ -1379,7 +1404,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       }
     }
 
-    init()
+    init().catch(e => {
+      // createSegmentationEngine() falls back to the legacy engine if Tasks
+      // Vision fails to init — but if THAT also throws (CDN unreachable,
+      // WASM/GPU totally unsupported), this promise was never caught before,
+      // so `seg` stayed unset and nothing ever ran: silent raw-camera passthrough
+      // with no indication why, same failure shape as onResults throwing.
+      console.error('[background-effect] init failed — segmentation unavailable:', e)
+      setDeviceErrorToast(`Background effect failed to start — ${(e as Error)?.message || 'unknown error'}.`)
+    })
 
     return () => {
       running = false

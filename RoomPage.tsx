@@ -110,6 +110,9 @@ import {
   type StoredMeetingPrep,
   STING_RED,
   type Subtext,
+  canvasFilterBlurWorks,
+  pyramidBlur,
+  type PyramidBlurCache,
 } from './components/roomUtils'
 import { createSegmentationEngine } from './components/segmentation/createSegmentationEngine'
 import type { SegmentationEngine } from './components/segmentation/types'
@@ -1031,6 +1034,19 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const matteCtx = matteCanvas.getContext('2d')!
     let maskSeeded = false
 
+    // Safari/WebKit renders `ctx.filter = 'blur(...)'` as a silent no-op (the
+    // property round-trips but nothing blurs — verified against the real
+    // WebKit engine), which reduced the whole Blur effect there to "sharp
+    // background + hard-edged cutout". Detected once by testing what the
+    // filter actually renders; when broken, every blur below goes through
+    // pyramidBlur() (repeated half-res downscales — plain drawImage, works
+    // everywhere) instead. Chromium/Electron keep the native path unchanged.
+    const nativeBlur = canvasFilterBlurWorks()
+    const blurCaches: Record<string, PyramidBlurCache> = {
+      feather: { levels: [] }, halo: { levels: [] }, matte: { levels: [] },
+      far: { levels: [] }, near: { levels: [] },
+    }
+
     // A visible fake shadow around the cutout was a crutch for the old hard-
     // edged mask; the feathered + temporally-smoothed mask below shouldn't
     // need it. Left as a one-line revert switch rather than deleted outright.
@@ -1149,9 +1165,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       } catch { /* tainted/unsupported — soft mask already drawn is the fallback */ }
 
       featherCtx.clearRect(0, 0, mw, mh)
-      featherCtx.filter = `blur(${FEATHER_PX}px)`
-      featherCtx.drawImage(maskCanvas, 0, 0)
-      featherCtx.filter = 'none'
+      if (nativeBlur) {
+        featherCtx.filter = `blur(${FEATHER_PX}px)`
+        featherCtx.drawImage(maskCanvas, 0, 0)
+        featherCtx.filter = 'none'
+      } else {
+        const b = pyramidBlur(blurCaches.feather, maskCanvas, mw, mh, FEATHER_PX)
+        if (b) featherCtx.drawImage(b.canvas, 0, 0, b.w, b.h, 0, 0, mw, mh)
+        else featherCtx.drawImage(maskCanvas, 0, 0)
+      }
 
       if (!maskSeeded) {
         smoothFrontCtx.clearRect(0, 0, mw, mh)
@@ -1178,17 +1200,29 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       // blurred far more broadly. A large blur of a mostly-binary shape yields a
       // smooth radial falloff outward from the shape boundary.
       haloCtx.clearRect(0, 0, mw, mh)
-      haloCtx.filter = `blur(${HALO_BLUR_PX}px)`
-      haloCtx.drawImage(smoothFront, 0, 0)
-      haloCtx.filter = 'none'
+      if (nativeBlur) {
+        haloCtx.filter = `blur(${HALO_BLUR_PX}px)`
+        haloCtx.drawImage(smoothFront, 0, 0)
+        haloCtx.filter = 'none'
+      } else {
+        const b = pyramidBlur(blurCaches.halo, smoothFront, mw, mh, HALO_BLUR_PX)
+        if (b) haloCtx.drawImage(b.canvas, 0, 0, b.w, b.h, 0, 0, mw, mh)
+        else haloCtx.drawImage(smoothFront, 0, 0)
+      }
 
       // Final matte: close (blur fills pinholes / sub-pixel-smooths the
       // edge), then saturate opacity via 'lighter' self-add — see the
       // MATTE_* constants above. Two small GPU draws, no readback.
       matteCtx.clearRect(0, 0, mw, mh)
-      matteCtx.filter = `blur(${MATTE_CLOSE_BLUR_PX}px)`
-      matteCtx.drawImage(smoothFront, 0, 0)
-      matteCtx.filter = 'none'
+      if (nativeBlur) {
+        matteCtx.filter = `blur(${MATTE_CLOSE_BLUR_PX}px)`
+        matteCtx.drawImage(smoothFront, 0, 0)
+        matteCtx.filter = 'none'
+      } else {
+        const b = pyramidBlur(blurCaches.matte, smoothFront, mw, mh, MATTE_CLOSE_BLUR_PX)
+        if (b) matteCtx.drawImage(b.canvas, 0, 0, b.w, b.h, 0, 0, mw, mh)
+        else matteCtx.drawImage(smoothFront, 0, 0)
+      }
       matteCtx.globalCompositeOperation = 'lighter'
       matteCtx.globalAlpha = MATTE_OPACITY_BOOST
       matteCtx.drawImage(matteCanvas, 0, 0)
@@ -1257,9 +1291,19 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         const nearBlur = bl * NEAR_MULT
 
         // Far backdrop — full resolution, same overscan anti-vignette trick as before.
-        ctx.filter = `blur(${farBlur}px)`
-        ctx.drawImage(video, -pad, -pad, W + pad * 2, H + pad * 2)
-        ctx.filter = 'none'
+        if (nativeBlur) {
+          ctx.filter = `blur(${farBlur}px)`
+          ctx.drawImage(video, -pad, -pad, W + pad * 2, H + pad * 2)
+          ctx.filter = 'none'
+        } else {
+          // pyramidBlur's edge sampling is clamped (drawImage), so there's no
+          // transparent-edge vignette and no overscan needed. Source rect must
+          // be the video's INTRINSIC size (camera can exceed the canvas cap —
+          // passing W,H would crop, not scale).
+          const b = pyramidBlur(blurCaches.far, video, video.videoWidth || W, video.videoHeight || H, farBlur)
+          if (b) ctx.drawImage(b.canvas, 0, 0, b.w, b.h, 0, 0, W, H)
+          else ctx.drawImage(video, 0, 0, W, H)
+        }
 
         // Near-focus pass — reduced working resolution (blur destroys detail
         // anyway, so downscale-before-blur/upscale-after is visually lossless
@@ -1274,9 +1318,18 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         // the near pass show through.
         const lpad = Math.max(2, nearBlur) * 2 * BG_WORK_SCALE
         bgLightCtx.clearRect(0, 0, lw, lh)
-        bgLightCtx.filter = `blur(${nearBlur * BG_WORK_SCALE}px)`
-        bgLightCtx.drawImage(video, -lpad, -lpad, lw + lpad * 2, lh + lpad * 2)
-        bgLightCtx.filter = 'none'
+        if (nativeBlur) {
+          bgLightCtx.filter = `blur(${nearBlur * BG_WORK_SCALE}px)`
+          bgLightCtx.drawImage(video, -lpad, -lpad, lw + lpad * 2, lh + lpad * 2)
+          bgLightCtx.filter = 'none'
+        } else {
+          // Intrinsic source size here too (see the far-pass note above); the
+          // radius still uses the reduced-res scale factor since the OUTPUT
+          // is the lw×lh working canvas.
+          const b = pyramidBlur(blurCaches.near, video, video.videoWidth || lw, video.videoHeight || lh, nearBlur * BG_WORK_SCALE)
+          if (b) bgLightCtx.drawImage(b.canvas, 0, 0, b.w, b.h, 0, 0, lw, lh)
+          else bgLightCtx.drawImage(video, 0, 0, lw, lh)
+        }
         bgLightCtx.globalCompositeOperation = 'destination-in'
         bgLightCtx.drawImage(haloCanvas, 0, 0, lw, lh) // halo stretched to near-pass resolution — same stretch pattern as mask -> offCanvas
         bgLightCtx.globalCompositeOperation = 'source-over'
@@ -1713,6 +1766,26 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     await sendMessage(chatInput, displayName)
     setChatInput('')
   }
+
+  // Hard kill-switch: on unmount (every way of leaving — Leave button,
+  // alone-timer, remote disconnect, meeting ended), directly stop every
+  // capture track this component could possibly hold: whatever's currently
+  // on each LiveKit publication, plus the saved original camera track from
+  // the background-effect pipeline. Plain MediaStreamTrack.stop() — terminal,
+  // idempotent, and immune to SDK track-ownership semantics or async-cleanup
+  // ordering (the background pipeline's replaceTrack restore is async, and on
+  // Safari could lose the race against disconnect, leaving the camera LED on
+  // in the lobby). Safe under StrictMode's synthetic first-mount cleanup:
+  // at that point cam/mic are still off (no publications) and the ref is null.
+  useEffect(() => () => {
+    try {
+      localParticipant.trackPublications.forEach((pub: any) => {
+        try { pub.track?.mediaStreamTrack?.stop() } catch { /* already stopped */ }
+      })
+    } catch { /* ignore */ }
+    try { bgOrigTrackRef.current?.stop() } catch { /* already stopped */ }
+    bgOrigTrackRef.current = null
+  }, [localParticipant])
 
   const leaveWithNotification = useCallback(async () => {
     // Explicit, direct camera/mic shutdown as the very first step — belt and

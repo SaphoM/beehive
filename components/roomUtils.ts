@@ -268,3 +268,88 @@ export function loadMeetingPrep(roomId: string): StoredMeetingPrep | null {
     return raw ? JSON.parse(raw) : null
   } catch { return null }
 }
+
+// ---------------------------------------------------------------------------
+// Canvas blur support + fallback — Safari/WebKit ACCEPTS `ctx.filter =
+// 'blur(...)'` (the property round-trips, so naive feature detection lies)
+// but silently renders it as a NO-OP. Proven against the real WebKit engine:
+// a hard black/white edge drawn through blur(8px) stays pure black at the
+// boundary where Chromium yields mid-grey. Since every blur in the
+// background-effect pipeline (far/near depth-of-field passes, mask feather,
+// halo, matte close) uses that API, the whole Blur effect degraded on Safari
+// to "sharp background + hard-edged cutout" — i.e. visually nothing.
+// Detection therefore has to test what the filter actually RENDERS.
+// ---------------------------------------------------------------------------
+let filterBlurSupport: boolean | null = null
+export function canvasFilterBlurWorks(): boolean {
+  if (filterBlurSupport !== null) return filterBlurSupport
+  try {
+    const src = document.createElement('canvas'); src.width = 20; src.height = 20
+    const sx = src.getContext('2d')!
+    sx.fillStyle = '#000'; sx.fillRect(0, 0, 10, 20)
+    sx.fillStyle = '#fff'; sx.fillRect(10, 0, 10, 20)
+    const dst = document.createElement('canvas'); dst.width = 20; dst.height = 20
+    const dx = dst.getContext('2d')!
+    dx.filter = 'blur(4px)'
+    dx.drawImage(src, 0, 0)
+    dx.filter = 'none'
+    const p = dx.getImageData(9, 10, 1, 1).data[0]
+    filterBlurSupport = p > 30 && p < 225 // mid-grey band = the blur actually rendered
+  } catch { filterBlurSupport = false }
+  return filterBlurSupport
+}
+
+// Filter-free approximate Gaussian blur: repeated half-resolution downscales
+// (each bilinear resample is a small box filter; stacking them converges on a
+// Gaussian) then stepwise upscale back. All plain drawImage calls — GPU-
+// accelerated and universally supported. Bonus over the CSS filter: edge
+// sampling is clamped, so no transparent-edge vignette and no overscan trick
+// needed. `cache` persists one canvas per pyramid level per call site, so
+// steady-state frames do zero allocation.
+export interface PyramidBlurCache { levels: HTMLCanvasElement[] }
+export function pyramidBlur(
+  cache: PyramidBlurCache,
+  src: CanvasImageSource,
+  sw: number,
+  sh: number,
+  radius: number,
+): { canvas: HTMLCanvasElement; w: number; h: number } | null {
+  if (radius < 0.75 || sw < 4 || sh < 4) return null
+  // halvings: r≈2 → 1, r≈4 → 2, r≈8 → 3, r≥13 → 4 (cap keeps the smallest
+  // level sensible and the softness in the same perceptual range the CSS
+  // blur produced at these radii)
+  const halvings = Math.max(1, Math.min(4, Math.round(Math.log2(radius))))
+  const level = (i: number): HTMLCanvasElement => {
+    if (!cache.levels[i]) cache.levels[i] = document.createElement('canvas')
+    return cache.levels[i]
+  }
+  let cur: CanvasImageSource = src
+  let curW = sw, curH = sh
+  let li = 0
+  for (let i = 0; i < halvings; i++) {
+    const nw = Math.max(2, Math.round(curW / 2)), nh = Math.max(2, Math.round(curH / 2))
+    const t = level(li++)
+    if (t.width !== nw || t.height !== nh) { t.width = nw; t.height = nh }
+    const tc = t.getContext('2d')!
+    tc.imageSmoothingEnabled = true
+    tc.imageSmoothingQuality = 'high'
+    tc.clearRect(0, 0, nw, nh)
+    tc.drawImage(cur, 0, 0, curW, curH, 0, 0, nw, nh)
+    cur = t; curW = nw; curH = nh
+  }
+  // step back up to ≥ half the source size — the caller's final stretched
+  // drawImage covers the last 2× smoothly; jumping straight from 1/16 shows
+  // bilinear lozenge artifacts.
+  while (curW * 2 < sw) {
+    const nw = Math.min(sw, curW * 2), nh = Math.min(sh, curH * 2)
+    const t = level(li++)
+    if (t.width !== nw || t.height !== nh) { t.width = nw; t.height = nh }
+    const tc = t.getContext('2d')!
+    tc.imageSmoothingEnabled = true
+    tc.imageSmoothingQuality = 'high'
+    tc.clearRect(0, 0, nw, nh)
+    tc.drawImage(cur, 0, 0, curW, curH, 0, 0, nw, nh)
+    cur = t; curW = nw; curH = nh
+  }
+  return { canvas: cur as HTMLCanvasElement, w: curW, h: curH }
+}

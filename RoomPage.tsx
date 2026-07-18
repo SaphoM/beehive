@@ -1682,6 +1682,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   }
 
   const leaveWithNotification = useCallback(async () => {
+    // Explicit, direct camera/mic shutdown as the very first step — belt and
+    // braces on top of the replaceTrack ownership fix above. That fix makes
+    // LiveKit's own disconnect-time cleanup correctly stop the camera again;
+    // this additionally guarantees it independent of any unmount/cleanup
+    // ordering nuance, by calling the exact same official API the manual
+    // camera-toggle button already uses successfully every time. Awaited
+    // before anything else so the hardware is confirmed off before the rest
+    // of the leave sequence (chat notice, DB updates, onLeave) even starts.
+    try { await localParticipant.setCameraEnabled(false) } catch {}
+    try { await localParticipant.setMicrophoneEnabled(false) } catch {}
     // Same fire-and-forget exit as stopShare — Leave should end a driven
     // presentation exactly like Stop Sharing does, not just disconnect BeeHive.
     window.electronAPI?.stopPresentation?.()
@@ -1694,7 +1704,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       }
     } catch { /* best-effort */ }
     onLeave()
-  }, [roomId, displayName, onLeave])
+  }, [roomId, displayName, onLeave, localParticipant])
 
   // StrictMode mounts effects twice in dev, which double-inserted the
   // "joined" announcement — guard so one join announces exactly once.

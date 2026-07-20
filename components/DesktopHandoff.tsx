@@ -152,20 +152,40 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
       </button>
 
       {(os === 'mac' || os === 'windows') && (
-        <a
-          href={DOWNLOAD_URLS[os]}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={`Download the BeeHive desktop app for ${os === 'mac' ? 'macOS' : 'Windows'}`}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300,
-            textDecoration: 'none', padding: '2px 4px',
-          }}
-        >
-          <Download size={11} />
-          Don't have it? Download for {os === 'mac' ? 'macOS' : 'Windows'}
-        </a>
+        <>
+          <a
+            href={DOWNLOAD_URLS[os]}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Download the BeeHive desktop app for ${os === 'mac' ? 'macOS' : 'Windows'}`}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300,
+              textDecoration: 'none', padding: '2px 4px',
+            }}
+          >
+            <Download size={11} />
+            Don't have it? Download for {os === 'mac' ? 'macOS' : 'Windows'}
+          </a>
+          {/* First-launch bypass hint. BeeHive is self-distributed and only
+              ad-hoc code-signed (no paid Apple Developer ID / Windows
+              publisher cert), so a plain double-click after download is
+              blocked by macOS Gatekeeper ("cannot verify developer") /
+              Windows SmartScreen. Without telling the user the one-time
+              bypass, download succeeds but INSTALL dead-ends — this line is
+              what makes the install actually complete. See INSTALL_HINT. */}
+          <span
+            style={{
+              display: 'block', textAlign: 'center',
+              color: '#444', fontSize: 10, fontFamily: "'Roboto', sans-serif", fontWeight: 300,
+              lineHeight: 1.4, padding: '0 4px',
+            }}
+          >
+            {os === 'mac'
+              ? 'First launch: right-click BeeHive → Open (once), since the app is self-distributed.'
+              : 'First launch: if SmartScreen warns, click “More info” → “Run anyway”.'}
+          </span>
+        </>
       )}
     </div>
   )

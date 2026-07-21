@@ -71,6 +71,7 @@ import {
   useJoinRoom,
   ENDED_MEETING_ERROR,
   useParticipants,
+  useAdmissionRequests,
   useChat,
   useRecordings,
   useRoomInfo,
@@ -117,6 +118,35 @@ import {
 import { createSegmentationEngine } from './components/segmentation/createSegmentationEngine'
 import type { SegmentationEngine } from './components/segmentation/types'
 
+// Captured HERE, synchronously, at module-evaluation time — not inside a
+// useEffect. This is what makes the desktop deep-link handoff's ?room=
+// actually survive: the handoff URL is
+// beehive://auth/confirm?room=ID#access_token=...&type=magiclink, and
+// Supabase's client (detectSessionInUrl: true, in livekit_react_hooks.tsx)
+// auto-detects that hash and asynchronously cleans up the URL via
+// history.replaceState once it's consumed it — independently of, and racing
+// with, AuthGate's own explicit setSession() call. RoomPage only mounts once
+// AuthGate resolves `user` (after that whole callback settles), so a
+// useEffect reading window.location.search at mount time was reading it
+// AFTER Supabase had very likely already stripped `room` from the query —
+// the invite silently failed to carry through to the desktop app's room
+// view, dropping the user in the lobby instead. JS guarantees every
+// synchronous top-level module body across the whole import graph runs
+// before the event loop yields to any microtask/timer — including whatever
+// async work Supabase's detectSessionInUrl kicks off — so a plain top-level
+// const here is captured before that race can even begin, regardless of
+// import order.
+const INITIAL_ROOM_ID_FROM_URL = new URLSearchParams(window.location.search).get('room')
+
+// Waiting-room pending-count badge, shown on the toolbar's "Waiting Room"
+// button even while its panel is closed — see useAdmissionRequests.
+const admissionBadgeStyle: React.CSSProperties = {
+  position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16,
+  borderRadius: 8, background: '#f5a623', color: '#000', fontSize: 10,
+  fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+  padding: '0 3px', lineHeight: 1,
+}
+
 export default function RoomPage() {
   const { user } = useAuth()
   const { profile } = useProfile(user?.id ?? null)
@@ -126,7 +156,7 @@ export default function RoomPage() {
   const [livekitRoomName, setLivekitRoomName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState('')
-  const [joinRoomId, setJoinRoomId] = useState<string | null>(null)
+  const [joinRoomId, setJoinRoomId] = useState<string | null>(INITIAL_ROOM_ID_FROM_URL)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
   const [showProfileSetup, setShowProfileSetup] = useState(false)
   // Set when a scheduled (waiting-room-gated) meeting's token request comes
@@ -381,6 +411,31 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // meetings never touch this column, so it's always 'participant' there.
   const myRole = participants.find(p => p.is_active && p.display_name === displayName)?.role ?? 'participant'
   const canAdmit = myRole === 'host' || myRole === 'co-host'
+  // Kept subscribed for the whole session whenever canAdmit — not just while
+  // the waiting-room panel happens to be open. Before this, the host had no
+  // way to learn anyone was waiting short of manually opening that panel
+  // (AdmissionRequestsWindow only subscribed while mounted): no badge, no
+  // notification, nothing — the exact regression this fixes. See
+  // useAdmissionRequests in livekit_react_hooks.tsx.
+  const pendingAdmissions = useAdmissionRequests(roomId, canAdmit)
+  // Fires once per newly-seen pending request id, so a host who already has
+  // the panel open (and is thus reading requests straight off the list)
+  // doesn't also get a redundant toast for the same person.
+  const seenAdmissionIdsRef = useRef<Set<string>>(new Set())
+  const [admissionToast, setAdmissionToast] = useState<string | null>(null)
+  useEffect(() => {
+    if (!canAdmit) { seenAdmissionIdsRef.current = new Set(); return }
+    const seen = seenAdmissionIdsRef.current
+    const fresh = pendingAdmissions.filter(r => !seen.has(r.id))
+    if (fresh.length > 0) {
+      setAdmissionToast(
+        fresh.length === 1
+          ? `${fresh[0].display_name} wants to join the meeting`
+          : `${fresh.length} people want to join the meeting`
+      )
+    }
+    for (const r of pendingAdmissions) seen.add(r.id)
+  }, [pendingAdmissions, canAdmit])
   // Only the room's actual creator holds this — set once in useScheduleRoom
   // at scheduling time, on that one device. A co-host can admit/deny but has
   // no secret, matching the backend's "delegation itself is host-only" rule.
@@ -2537,6 +2592,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           {showAdmissionRequests && canAdmit && overlayMode !== 'hidden' && (
             <AdmissionRequestsWindow
               roomId={roomId}
+              pending={pendingAdmissions}
               hostSecret={myHostSecret}
               actingDisplayName={displayName}
               onClose={() => setShowAdmissionRequests(false)}
@@ -2806,11 +2862,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                       {/* Waiting Room — host/co-host only */}
                       {canAdmit && (
                         <button
-                          style={{ ...mb, ...(showAdmissionRequests ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                          style={{ ...mb, position: 'relative', ...(showAdmissionRequests ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
                           onClick={() => setShowAdmissionRequests(v => !v)}
                           title="Waiting room"
                         >
                           <DoorOpen size={isSmallPhone ? 16 : 18} />
+                          {pendingAdmissions.length > 0 && (
+                            <span style={admissionBadgeStyle}>{pendingAdmissions.length}</span>
+                          )}
                         </button>
                       )}
                       {/* Auto Cam */}
@@ -2954,11 +3013,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               {/* Waiting Room — host/co-host only, waiting-room-gated meetings only */}
               {canAdmit && (
                 <button className="bhv-btn"
-                  style={{ ...s.controlBtn, ...(showAdmissionRequests ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
+                  style={{ ...s.controlBtn, position: 'relative', ...(showAdmissionRequests ? { background: '#3a2a0a', border: '1px solid #f5a623' } : {}) }}
                   onClick={() => setShowAdmissionRequests(v => !v)}
                   title="Waiting room"
                 >
                   <DoorOpen size={20} />
+                  {pendingAdmissions.length > 0 && (
+                    <span style={admissionBadgeStyle}>{pendingAdmissions.length}</span>
+                  )}
                 </button>
               )}
 
@@ -3547,6 +3609,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
       {deviceErrorToast && (
         <Toast message={deviceErrorToast} onDone={() => setDeviceErrorToast(null)} durationMs={5000} />
+      )}
+
+      {admissionToast && (
+        <Toast message={admissionToast} onDone={() => setAdmissionToast(null)} durationMs={5000} />
       )}
     </div>
   )

@@ -32,6 +32,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // so re-reading window.location on every render would give stale results anyway.
   const [wasCallback] = useState(isAuthCallback)
   const [callbackSettled, setCallbackSettled] = useState(false)
+  // Same reasoning applies here, and this one was missed: hasRoomParam() was
+  // being called fresh in the render body every time (below), not cached —
+  // so if AuthGate re-rendered for ANY reason after Supabase's own async
+  // session/URL processing ran (which is guaranteed to happen at least once,
+  // as `loading` settles), the live URL no longer had `?room=`, this
+  // re-evaluated to false, and AuthGate swapped the entire child tree for
+  // <AuthScreen /> instead of ever reaching RoomPage. This was the actual
+  // cause of "invite link doesn't carry through to desktop": the deep link's
+  // ?room= was present in the URL at load, survived long enough for the
+  // FIRST render, but was gone by the time this component's later render(s)
+  // re-checked it live. Verified directly: a room param that's read once
+  // here and cached survives regardless of how many times the URL changes
+  // afterward; reading it fresh each render does not.
+  const [hadRoomParam] = useState(hasRoomParam)
 
   // Consume an auth callback / desktop-handoff hash. We explicitly set the
   // session from access_token+refresh_token so this works even when Supabase's
@@ -68,7 +82,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (wasCallback && !callbackSettled) return spinner
 
   // Frictionless join: ?room= links skip auth entirely
-  if (hasRoomParam()) return <>{children}</>
+  if (hadRoomParam) return <>{children}</>
 
   // Not authenticated → show sign-in screen
   return <AuthScreen />

@@ -1,54 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { X, UserCheck, UserX } from 'lucide-react'
-import { supabase } from '../livekit_react_hooks'
-
-interface PendingRequest { id: string; display_name: string; requested_at: string }
+import type { PendingAdmissionRequest } from '../livekit_react_hooks'
 
 // Floating panel (same convention as AutoCamWindow/MeetingPrepWindow) shown
 // only to whoever holds role 'host'/'co-host' in a waiting-room-gated
-// meeting — lists attendees currently held at the door, live-updating via
-// Realtime, with Admit/Deny buttons calling the backend's /admit endpoint
-// (never a direct client write — admission_requests has no client UPDATE
-// policy at all, by design).
-export function AdmissionRequestsWindow({ roomId, hostSecret, actingDisplayName, onClose }: {
+// meeting — lists attendees currently held at the door, with Admit/Deny
+// buttons calling the backend's /admit endpoint (never a direct client
+// write — admission_requests has no client UPDATE policy at all, by
+// design). `pending` is owned by RoomPage's useAdmissionRequests hook, not
+// fetched here — that hook's subscription stays alive even while this panel
+// is closed (so the toolbar badge/toast can work at all), so this component
+// is now a plain consumer of that single shared list rather than running a
+// second, duplicate Realtime subscription to the same table.
+export function AdmissionRequestsWindow({ roomId, pending, hostSecret, actingDisplayName, onClose }: {
   roomId: string
+  pending: PendingAdmissionRequest[]
   hostSecret: string | null
   actingDisplayName: string
   onClose: () => void
 }) {
-  const [pending, setPending] = useState<PendingRequest[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!roomId) return
-
-    supabase
-      .from('admission_requests')
-      .select('id, display_name, requested_at')
-      .eq('room_id', roomId)
-      .eq('status', 'pending')
-      .order('requested_at', { ascending: true })
-      .then(({ data }) => setPending(data ?? []))
-
-    const channel = supabase
-      .channel(`admission-requests:${roomId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'admission_requests', filter: `room_id=eq.${roomId}` },
-        () => {
-          supabase
-            .from('admission_requests')
-            .select('id, display_name, requested_at')
-            .eq('room_id', roomId)
-            .eq('status', 'pending')
-            .order('requested_at', { ascending: true })
-            .then(({ data }) => setPending(data ?? []))
-        }
-      )
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [roomId])
 
   const decide = async (requestId: string, decision: 'admit' | 'deny') => {
     setBusyId(requestId)
@@ -58,8 +29,9 @@ export function AdmissionRequestsWindow({ roomId, hostSecret, actingDisplayName,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId, decision, actingDisplayName, hostSecret: hostSecret ?? undefined }),
       })
-      // No optimistic removal needed — the realtime subscription above
-      // re-fetches on the resulting UPDATE and drops it from `pending` itself.
+      // No optimistic removal needed — the parent's useAdmissionRequests
+      // subscription re-fetches on the resulting UPDATE and drops this row
+      // from `pending` itself.
     } catch (e) {
       console.error('[admission] decision failed:', e)
     } finally {

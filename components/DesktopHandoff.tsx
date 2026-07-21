@@ -89,8 +89,16 @@ export function openInDesktopApp(session: Session | null): void {
 // majority of Windows PCs) — an arm64 build also exists for Windows-on-ARM
 // devices (Surface Pro X and similar) but isn't linked here, matching
 // detectDesktopOS()'s OS-level (not architecture-level) detection below.
-const NATIVE_MAC_DMG_URL = 'https://github.com/SaphoM/beehive/releases/download/v1.0.0/BeeHive-1.0.0-arm64.dmg'
-const NATIVE_WIN_EXE_URL = 'https://github.com/SaphoM/beehive/releases/download/v1.0.0/BeeHive.Setup.1.0.0.x64.exe'
+// Stable, version-less asset names on GitHub's `latest` release alias — the
+// app version is now git-derived and changes every build (see
+// scripts/appVersion.mjs), so the OLD version-in-filename URLs
+// (BeeHive-1.0.0-arm64.dmg on a v1.0.0 tag) would break on every bump. These
+// URLs never change: `releases/latest/download/<stable-name>` always resolves
+// to the newest published release's matching asset, and the build now emits
+// exactly these names (see package.json build.mac/win.artifactName). Publish a
+// new build by clobbering the asset on the latest release — the URL stays put.
+const NATIVE_MAC_DMG_URL = 'https://github.com/SaphoM/beehive/releases/latest/download/BeeHive-arm64.dmg'
+const NATIVE_WIN_EXE_URL = 'https://github.com/SaphoM/beehive/releases/latest/download/BeeHive-Setup-x64.exe'
 const DOWNLOAD_URLS: Record<'mac' | 'windows', string> = {
   mac: (import.meta.env.VITE_DESKTOP_DOWNLOAD_MAC_URL as string | undefined) || NATIVE_MAC_DMG_URL,
   windows: (import.meta.env.VITE_DESKTOP_DOWNLOAD_WIN_URL as string | undefined) || NATIVE_WIN_EXE_URL,

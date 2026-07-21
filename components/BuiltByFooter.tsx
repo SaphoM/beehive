@@ -16,6 +16,9 @@ export function BuiltByFooter() {
       }}
     >
       Built by <span style={{ color: '#f5a623' }}>X Spark</span>
+      {import.meta.env.VITE_APP_VERSION && (
+        <span style={{ color: '#3a3a3a', marginLeft: 6 }}>v{import.meta.env.VITE_APP_VERSION}</span>
+      )}
     </a>
   )
 }

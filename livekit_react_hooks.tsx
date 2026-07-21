@@ -448,6 +448,55 @@ export function useParticipants(roomId: string) {
 }
 
 // ============================================================
+// ADMISSION REQUESTS / WAITING ROOM (real-time)
+// ============================================================
+export interface PendingAdmissionRequest { id: string; display_name: string; requested_at: string }
+
+// Single source of truth for "who's waiting at the door" for a given room —
+// lifted out of AdmissionRequestsWindow so the subscription stays live even
+// while that panel is closed. Without this, the host had zero signal that
+// anyone was waiting unless they happened to open the waiting-room panel:
+// AdmissionRequestsWindow only subscribed while mounted, which only happened
+// while its own panel was open, so a badge count / notification on the
+// still-closed toolbar button was structurally impossible. `enabled` should
+// be the caller's `canAdmit` check — only a host/co-host needs this
+// subscription at all, and a plain participant in a gated room has no RLS
+// visibility issue reading pending rows (SELECT is permissive), but there's
+// no reason to run a channel subscription for someone who can't act on it.
+export function useAdmissionRequests(roomId: string, enabled: boolean) {
+  const [pending, setPending] = useState<PendingAdmissionRequest[]>([])
+
+  useEffect(() => {
+    if (!roomId || !enabled) { setPending([]); return }
+
+    const fetchPending = () => {
+      supabase
+        .from('admission_requests')
+        .select('id, display_name, requested_at')
+        .eq('room_id', roomId)
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: true })
+        .then(({ data }) => setPending(data ?? []))
+    }
+
+    fetchPending()
+
+    const channel = supabase
+      .channel(`admission-requests:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'admission_requests', filter: `room_id=eq.${roomId}` },
+        fetchPending
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId, enabled])
+
+  return pending
+}
+
+// ============================================================
 // CHAT (real-time)
 // ============================================================
 export function useChat(roomId: string) {

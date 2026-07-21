@@ -32,7 +32,32 @@ const git = (cmd, fallback) => {
   }
 }
 
+// Hosted build environments (confirmed on Render, which builds from a
+// shallow `git clone --depth 1`) only fetch the single tip commit — `git
+// rev-list --count HEAD` doesn't error in that case, it just silently walks
+// the sliver of history that's actually present and returns 1. That shipped
+// to production as "v1.0.1" instead of the real commit count (~189+ at the
+// time), with no warning anywhere that anything was wrong. Detect a shallow
+// checkout and unshallow it once before counting, so the version reflects
+// the repo's true, full history regardless of how the build environment
+// cloned it. Memoized so a build that calls getAppVersion() more than once
+// (vite.config.ts does, alongside getAppSha()) only attempts this once.
+let unshallowed = false
+function ensureFullHistory() {
+  if (unshallowed) return
+  unshallowed = true
+  if (git('git rev-parse --is-shallow-repository', 'false') !== 'true') return
+  try {
+    // Needs network + an `origin` remote — both present on every hosted CI
+    // clone from GitHub. If this fails (e.g. no network, detached from any
+    // remote), fall through and count whatever history is actually present
+    // rather than hard-failing the build over a version string.
+    execSync('git fetch --unshallow --quiet', { stdio: 'ignore' })
+  } catch { /* best effort — see comment above */ }
+}
+
 export function getAppVersion() {
+  ensureFullHistory()
   return `1.0.${git('git rev-list --count HEAD', '0')}`
 }
 

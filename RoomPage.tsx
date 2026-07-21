@@ -422,17 +422,28 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // the panel open (and is thus reading requests straight off the list)
   // doesn't also get a redundant toast for the same person.
   const seenAdmissionIdsRef = useRef<Set<string>>(new Set())
+  // The request id(s) the currently-shown toast refers to — tracked so the
+  // toast can be dismissed the instant every one of them is resolved
+  // (admitted or denied), rather than sitting for its full duration after
+  // the host has already acted (e.g. admitting from the panel directly).
+  const admissionToastIdsRef = useRef<string[]>([])
   const [admissionToast, setAdmissionToast] = useState<string | null>(null)
   useEffect(() => {
     if (!canAdmit) { seenAdmissionIdsRef.current = new Set(); return }
+    const pendingIds = new Set(pendingAdmissions.map(r => r.id))
     const seen = seenAdmissionIdsRef.current
     const fresh = pendingAdmissions.filter(r => !seen.has(r.id))
     if (fresh.length > 0) {
+      admissionToastIdsRef.current = fresh.map(r => r.id)
       setAdmissionToast(
         fresh.length === 1
           ? `${fresh[0].display_name} wants to join the meeting`
           : `${fresh.length} people want to join the meeting`
       )
+    } else if (admissionToastIdsRef.current.length > 0 && admissionToastIdsRef.current.every(id => !pendingIds.has(id))) {
+      // Every request this toast was about has since been admitted/denied.
+      admissionToastIdsRef.current = []
+      setAdmissionToast(null)
     }
     for (const r of pendingAdmissions) seen.add(r.id)
   }, [pendingAdmissions, canAdmit])

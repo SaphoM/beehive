@@ -16,7 +16,7 @@
 // download link render inside the Electron renderer (there is no one to hand
 // off to, and no point downloading the app you're already running).
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Monitor, Download } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { useAuth } from '../livekit_react_hooks'
@@ -118,6 +118,59 @@ export function detectDesktopOS(): 'mac' | 'windows' | 'other' {
   return 'other'
 }
 
+// ============================================================
+// macOS ARCHITECTURE — Apple Silicon vs Intel
+// ============================================================
+// No browser exposes CPU architecture directly to a web page on macOS, so
+// this is necessarily best-effort ("detect where possible" — there is no
+// guaranteed signal). Only Apple Silicon `.dmg`s have ever been published
+// for this app (confirmed: no Intel/x64 mac build exists), so an Intel Mac
+// visitor was previously served the exact same arm64 installer as everyone
+// else — one that simply will not launch on their machine, with no
+// indication anything was wrong. This distinguishes the two cases so an
+// Intel visitor gets an honest message instead of a broken download.
+export type MacArch = 'apple-silicon' | 'intel' | 'unknown'
+
+// Synchronous, works in every browser (Safari included) that exposes WebGL —
+// the GPU renderer string reported by Apple Silicon's integrated GPU always
+// names the chip ("Apple M1/M2/M3/M4 Pro" etc. or the generic "Apple GPU"),
+// while Intel Macs report their Intel/AMD/Nvidia GPU model instead. This is
+// the only architecture signal available in Safari and Firefox, neither of
+// which implements the Client Hints API used below.
+function detectMacArchViaWebGL(): MacArch {
+  try {
+    const canvas = document.createElement('canvas')
+    const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null
+    if (!gl) return 'unknown'
+    const ext = gl.getExtension('WEBGL_debug_renderer_info')
+    const renderer = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '') : ''
+    if (!renderer) return 'unknown'
+    if (/Apple\s*M\d/i.test(renderer) || /Apple GPU/i.test(renderer)) return 'apple-silicon'
+    if (/Intel|AMD|Radeon|NVIDIA|GeForce/i.test(renderer)) return 'intel'
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+// Async, higher-confidence when available — Chrome/Edge's User-Agent Client
+// Hints expose `architecture` ('arm' | 'x86') directly via a permission-free
+// API. Safari and Firefox don't implement this at all, so this only ever
+// refines (never contradicts a confident WebGL read with a wrong answer;
+// callers apply it as a secondary check, not a replacement).
+async function refineMacArchViaClientHints(): Promise<MacArch> {
+  try {
+    const uaData = (navigator as any).userAgentData
+    if (!uaData?.getHighEntropyValues) return 'unknown'
+    const { architecture } = await uaData.getHighEntropyValues(['architecture'])
+    if (architecture === 'arm') return 'apple-silicon'
+    if (architecture === 'x86') return 'intel'
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 // Button offering to continue in the desktop app, with a "download it" fallback
 // underneath for visitors who don't have it installed yet. Renders nothing on
 // the desktop app itself or when the feature is disabled, so it is safe to
@@ -126,6 +179,18 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
   const { session } = useAuth()
   const [opening, setOpening] = useState(false)
   const os = detectDesktopOS()
+  // Best-effort only — see detectMacArchViaWebGL/refineMacArchViaClientHints.
+  // Seeded synchronously from the WebGL heuristic (works in every browser),
+  // then refined once the async Client Hints check resolves where that's
+  // available (Chrome/Edge only, higher confidence) — never regresses a
+  // confident WebGL read back to 'unknown'.
+  const [macArch, setMacArch] = useState<MacArch>(() => (os === 'mac' ? detectMacArchViaWebGL() : 'unknown'))
+  useEffect(() => {
+    if (os !== 'mac') return
+    let cancelled = false
+    refineMacArchViaClientHints().then(a => { if (!cancelled && a !== 'unknown') setMacArch(a) })
+    return () => { cancelled = true }
+  }, [os])
 
   if (!canOfferDesktopHandoff()) return null
   // Desktop-app access is limited to seed users and fully registered users
@@ -159,7 +224,22 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
         {opening ? 'Opening BeeHive…' : 'Open in desktop app'}
       </button>
 
-      {(os === 'mac' || os === 'windows') && (
+      {/* Only Apple Silicon `.dmg`s have ever been published for this app — no
+          Intel/x64 mac build exists. Serving that installer to a detected
+          Intel Mac would silently hand them a binary that can't launch, so
+          this is the one case where the download link itself is withheld in
+          favor of an honest message, rather than a broken "download". */}
+      {os === 'mac' && macArch === 'intel' ? (
+        <span
+          style={{
+            display: 'block', textAlign: 'center',
+            color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300,
+            lineHeight: 1.4, padding: '4px 4px 2px',
+          }}
+        >
+          BeeHive's desktop app currently supports Apple Silicon Macs (M1 and newer) only.
+        </span>
+      ) : (os === 'mac' || os === 'windows') && (
         <>
           <a
             href={DOWNLOAD_URLS[os]}

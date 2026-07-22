@@ -85,10 +85,17 @@ export function openInDesktopApp(session: Session | null): void {
 // VITE_DESKTOP_DOWNLOAD_{MAC,WIN}_URL let a deployment override with a
 // differently-hosted binary.
 //
-// Windows ships the x64 installer (the standard architecture for the vast
-// majority of Windows PCs) — an arm64 build also exists for Windows-on-ARM
-// devices (Surface Pro X and similar) but isn't linked here, matching
-// detectDesktopOS()'s OS-level (not architecture-level) detection below.
+// Windows ships one combined installer covering both x64 and arm64 (Surface
+// Pro X and similar Windows-on-ARM devices) — electron-builder's NSIS target
+// supports building a genuine multi-arch installer in one pass
+// (package.json's electron:build:win runs `electron-builder --win --x64
+// --arm64`, which produces this combined BeeHive-Setup.exe *alongside*
+// separate BeeHive-Setup-x64.exe/BeeHive-Setup-arm64.exe — only the combined
+// one is linked here). It detects the machine's actual architecture at
+// install time and installs the matching payload, the same "one download,
+// works everywhere" property as macOS's universal .dmg — confirmed by size:
+// the combined installer is ~222MB, matching the sum of both per-arch
+// payloads (~115MB + ~108MB), not just one of them.
 // Stable, version-less asset names on GitHub's `latest` release alias — the
 // app version is now git-derived and changes every build (see
 // scripts/appVersion.mjs), so the OLD version-in-filename URLs
@@ -101,7 +108,7 @@ export function openInDesktopApp(session: Session | null): void {
 // electron:build:mac runs electron-builder --universal) — one download link
 // for every Mac, no OS-side architecture branching needed.
 const NATIVE_MAC_DMG_URL = 'https://github.com/SaphoM/beehive/releases/latest/download/BeeHive-universal.dmg'
-const NATIVE_WIN_EXE_URL = 'https://github.com/SaphoM/beehive/releases/latest/download/BeeHive-Setup-x64.exe'
+const NATIVE_WIN_EXE_URL = 'https://github.com/SaphoM/beehive/releases/latest/download/BeeHive-Setup.exe'
 const DOWNLOAD_URLS: Record<'mac' | 'windows', string> = {
   mac: (import.meta.env.VITE_DESKTOP_DOWNLOAD_MAC_URL as string | undefined) || NATIVE_MAC_DMG_URL,
   windows: (import.meta.env.VITE_DESKTOP_DOWNLOAD_WIN_URL as string | undefined) || NATIVE_WIN_EXE_URL,

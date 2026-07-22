@@ -11,9 +11,9 @@
     "dev:frontend": "vite",
     "dev": "vite",
     "electron:dev": "concurrently --kill-others \"npm run dev:backend\" \"npm run dev:frontend\" \"electron .\"",
-    "build:ctl": "mkdir -p electron/bin && clang -fobjc-arc -O2 -framework AppKit -framework ApplicationServices -o electron/bin/beehive-ctl electron/beehive-ctl.m",
+    "build:ctl": "mkdir -p electron/bin && clang -fobjc-arc -O2 -arch x86_64 -arch arm64 -framework AppKit -framework ApplicationServices -o electron/bin/beehive-ctl electron/beehive-ctl.m",
     "build:backend": "esbuild livekit_node_backend.js --bundle --platform=node --format=esm --outfile=electron/backend.bundle.mjs --banner:js='import{createRequire as __cr}from\"module\";const require=__cr(import.meta.url);'",
-    "electron:build:mac": "npm run build:ctl && npm run build:backend && vite build && electron-builder --mac -c.extraMetadata.version=$(node scripts/appVersion.mjs)",
+    "electron:build:mac": "npm run build:ctl && npm run build:backend && vite build && electron-builder --mac --universal -c.extraMetadata.version=$(node scripts/appVersion.mjs)",
     "electron:build:win": "npm run build:backend && vite build && electron-builder --win -c.extraMetadata.version=$(node scripts/appVersion.mjs)",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -27,21 +27,21 @@
     "@livekit/krisp-noise-filter": "^0.3.4",
     "@mediapipe/tasks-vision": "^0.10.35",
     "@supabase/supabase-js": "^2.110.0",
-    "@vitejs/plugin-react": "^6.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "livekit-client": "^2.20.0",
     "livekit-server-sdk": "^2.16.0",
     "lucide-react": "^1.23.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "vite": "^8.1.3"
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.3",
     "concurrently": "^10.0.3",
     "electron": "^42.5.2",
     "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "vite": "^8.1.3"
   },
   "build": {
     "appId": "co.xspark.beehive",

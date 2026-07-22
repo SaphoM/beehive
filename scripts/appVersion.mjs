@@ -1,6 +1,9 @@
 // Single source of truth for the app version, derived automatically from git.
 //
-// version = 1.0.<total-commit-count>  (e.g. commit #188 → "1.0.188")
+// version = 1.0.<total-commit-count>  (e.g. a repo with 193 total commits → "1.0.193")
+// Counted with --all (every ref, not just HEAD) so every branch reports the
+// same number for the same repository — see ensureFullHistory below and the
+// README's "Branch-relative undercount, fixed" note for why this matters.
 //
 // Why commit count, not a manual bump or "number of forks": it's monotonic
 // (every commit increments it, never goes backward), fully automatic (nobody
@@ -58,7 +61,17 @@ function ensureFullHistory() {
 
 export function getAppVersion() {
   ensureFullHistory()
-  return `1.0.${git('git rev-list --count HEAD', '0')}`
+  // --all (every ref: every local/remote branch, every tag), not HEAD — HEAD
+  // only counts commits reachable from whichever branch happens to be
+  // checked out, so main/staging/develop/feature branches each produced a
+  // different, branch-relative number for the same repository (confirmed:
+  // main showed 1, staging 193, develop 20 — a build from main would have
+  // shown "v1.0.1", a nonsensical downgrade from staging's "v1.0.193", even
+  // though both are the same repo at nearly the same point in time). --all
+  // counts the total number of unique commits across the whole repo instead,
+  // so the same commit history produces the same version number no matter
+  // which branch a build happens to run from.
+  return `1.0.${git('git rev-list --count --all', '0')}`
 }
 
 export function getAppSha() {

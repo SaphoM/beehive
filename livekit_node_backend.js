@@ -1,5 +1,5 @@
 import express from 'express'
-import { AccessToken } from 'livekit-server-sdk'
+import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
 import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
@@ -66,6 +66,20 @@ app.use(express.json())
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY // service role for server-side operations
+)
+
+// Server-side moderation (force-mute) requires LiveKit's Room Service API —
+// the browser client SDK has no ability to mute another participant's track
+// at all, by design (a client can only control its own tracks). This is the
+// only client already instantiated with the API key/secret elsewhere in this
+// file (AccessToken, below), reused here for the same credentials.
+// LIVEKIT_URL falls back to VITE_LIVEKIT_URL (already provisioned in
+// production — see render.yaml) since RoomServiceClient accepts the same
+// ws(s):// host the browser SDK uses and converts it to http(s) internally.
+const roomService = new RoomServiceClient(
+  process.env.LIVEKIT_URL || process.env.VITE_LIVEKIT_URL,
+  process.env.LIVEKIT_API_KEY,
+  process.env.LIVEKIT_API_SECRET
 )
 
 // ============================================================
@@ -212,13 +226,43 @@ app.post('/api/livekit/token', async (req, res) => {
 })
 
 // ============================================================
+// ROOM MODERATOR CHECK — shared by every moderation-only endpoint
+// ============================================================
+// Authorizes the caller either via a matching hostSecret, or by confirming
+// their own room_participants row already has role 'host'/'co-host' — the
+// only two ways to prove "I'm allowed to moderate this room". Originally
+// lived inline in /admit only; extracted so /mute (below) enforces the exact
+// same rule rather than a second, potentially-diverging copy of it.
+async function isRoomModerator(roomId, hostSecret, actingDisplayName) {
+  if (hostSecret) {
+    const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
+    if (hostRow?.host_secret === hostSecret) return true
+  }
+  if (actingDisplayName) {
+    // room_participants has no identity column — role is looked up by
+    // display_name here, same limitation the participant_left webhook
+    // already lives with elsewhere in this file (see its comment above).
+    // Acceptable here because only an already-admitted host/co-host reaches
+    // this branch at all, and a display_name collision can only ever widen
+    // who's treated as a co-host within a room they're already inside, not
+    // grant entry to anyone new or escalate beyond what a real host/co-host
+    // could already do.
+    const { data: rows } = await supabase
+      .from('room_participants')
+      .select('role')
+      .eq('room_id', roomId)
+      .eq('display_name', actingDisplayName)
+      .eq('is_active', true)
+    return (rows ?? []).some(r => r.role === 'host' || r.role === 'co-host')
+  }
+  return false
+}
+
+// ============================================================
 // ADMIT / DENY a waiting attendee
 // POST /api/rooms/:roomId/admit
 // Body: { requestId, decision: 'admit'|'deny', actingDisplayName, hostSecret? }
 // ============================================================
-// Authorizes the caller either via a matching hostSecret, or by confirming
-// their own room_participants row already has role 'host'/'co-host' — the
-// only two ways to prove "I'm allowed to admit people into this room".
 app.post('/api/rooms/:roomId/admit', async (req, res) => {
   const { roomId } = req.params
   const { requestId, decision, actingDisplayName, hostSecret } = req.body
@@ -226,28 +270,9 @@ app.post('/api/rooms/:roomId/admit', async (req, res) => {
     return res.status(400).json({ error: 'requestId and a valid decision are required' })
   }
 
-  let authorized = false
-  if (hostSecret) {
-    const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
-    authorized = hostRow?.host_secret === hostSecret
+  if (!(await isRoomModerator(roomId, hostSecret, actingDisplayName))) {
+    return res.status(403).json({ error: 'Not authorized to admit participants in this room' })
   }
-  if (!authorized && actingDisplayName) {
-    // room_participants has no identity column — role is looked up by
-    // display_name here, same limitation the participant_left webhook
-    // already lives with elsewhere in this file (see its comment above).
-    // Acceptable here because only an already-admitted host/co-host reaches
-    // this branch at all, and a display_name collision can only ever widen
-    // who's treated as a co-host within a room they're already inside, not
-    // grant entry to anyone new.
-    const { data: rows } = await supabase
-      .from('room_participants')
-      .select('role')
-      .eq('room_id', roomId)
-      .eq('display_name', actingDisplayName)
-      .eq('is_active', true)
-    authorized = (rows ?? []).some(r => r.role === 'host' || r.role === 'co-host')
-  }
-  if (!authorized) return res.status(403).json({ error: 'Not authorized to admit participants in this room' })
 
   const status = decision === 'admit' ? 'admitted' : 'denied'
   const { data: updated, error: updateError } = await supabase
@@ -274,6 +299,54 @@ app.post('/api/rooms/:roomId/admit', async (req, res) => {
   }
 
   return res.json({ ok: true })
+})
+
+// ============================================================
+// HOST/CO-HOST FORCE-MUTE
+// POST /api/rooms/:roomId/mute
+// Body: { targetIdentity?, all?: boolean, excludeIdentity?, actingDisplayName, hostSecret? }
+// ============================================================
+// Muting another participant's microphone can only happen through LiveKit's
+// server-side Room Service API (`mutePublishedTrack`) — the browser client
+// SDK deliberately has no method to affect a track it doesn't own, so this
+// cannot be implemented client-side no matter how the UI gates it. Never a
+// force-*unmute*: LiveKit has no server-side unmute primitive by design
+// (matches real browsers' autoplay/mic-gesture restrictions — a remote peer
+// re-enabling someone's mic without their own action would itself be a
+// privacy problem), which is why the client side of this feature is a
+// "request unmute" nudge instead — see RoomPage.tsx's moderation channel.
+app.post('/api/rooms/:roomId/mute', async (req, res) => {
+  const { roomId } = req.params
+  const { targetIdentity, all, excludeIdentity, actingDisplayName, hostSecret } = req.body
+  if (!all && !targetIdentity) {
+    return res.status(400).json({ error: 'targetIdentity or all is required' })
+  }
+
+  if (!(await isRoomModerator(roomId, hostSecret, actingDisplayName))) {
+    return res.status(403).json({ error: 'Not authorized to moderate microphones in this room' })
+  }
+
+  const { data: room } = await supabase.from('rooms').select('livekit_room_name').eq('id', roomId).single()
+  if (!room) return res.status(404).json({ error: 'Room not found' })
+
+  try {
+    const participants = await roomService.listParticipants(room.livekit_room_name)
+    const targets = all
+      ? participants.filter(p => p.identity !== excludeIdentity)
+      : participants.filter(p => p.identity === targetIdentity)
+
+    let mutedCount = 0
+    for (const p of targets) {
+      const micTrack = p.tracks.find(t => t.source === TrackSource.MICROPHONE)
+      if (!micTrack || micTrack.muted) continue
+      await roomService.mutePublishedTrack(room.livekit_room_name, p.identity, micTrack.sid, true)
+      mutedCount++
+    }
+    return res.json({ ok: true, mutedCount })
+  } catch (e) {
+    console.error('[mute] failed:', e.message)
+    return res.status(500).json({ error: 'Failed to mute participant(s)' })
+  }
 })
 
 // ============================================================

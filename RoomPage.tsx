@@ -909,6 +909,32 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     return () => { supabase.removeChannel(channel) }
   }, [roomId])
 
+  // Moderation nudges — currently just "please unmute yourself" requests.
+  // LiveKit has no server-side force-*unmute* primitive (mutePublishedTrack
+  // is one-directional — see livekit_node_backend.js's /mute endpoint
+  // comment), so a host asking someone to unmute can only ever be a request,
+  // never an action performed on their behalf. Plain ephemeral broadcast,
+  // same trust model as the hands channel above (advisory, not privileged —
+  // authorization lives in the UI only showing the "request" control to
+  // canAdmit, matching the actual mute action's own client-side gating).
+  const [unmuteRequested, setUnmuteRequested] = useState(false)
+  const moderationChannelRef = useRef<any>(null)
+  useEffect(() => {
+    const channel = supabase.channel(`moderation:${roomId}`, { config: { broadcast: { self: false } } })
+    channel
+      .on('broadcast', { event: 'request_unmute' }, ({ payload }: any) => {
+        if (payload.identity === localParticipant.identity) setUnmuteRequested(true)
+      })
+      .subscribe()
+    moderationChannelRef.current = channel
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId, localParticipant.identity])
+
+  const requestUnmute = (identity: string) => {
+    if (!canAdmit) return
+    moderationChannelRef.current?.send({ type: 'broadcast', event: 'request_unmute', payload: { identity } })
+  }
+
   // Reactions channel — self:true so the sender sees their own reaction
   useEffect(() => {
     const channel = supabase.channel(`reactions:${roomId}`, { config: { broadcast: { self: true } } })
@@ -940,13 +966,24 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     }
   }
 
+  // Permission rule: an attendee may only ever lower their own hand; lowering
+  // someone else's — or everyone's — is host/co-host only. This was
+  // previously unenforced (any attendee could call either function for any
+  // identity), matching neither the UI's own "host can dismiss" comment
+  // above nor real moderation semantics. Client-side only, same trust model
+  // as the rest of this ephemeral hand-raise feature (see the hands-channel
+  // effect above — it's a plain Supabase broadcast with no row/table behind
+  // it to authorize against server-side); the UI below additionally hides
+  // these controls from anyone who isn't permitted to use them.
   const dismissHand = (identity: string) => {
+    if (identity !== displayName && !canAdmit) return
     handsChannelRef.current?.send({ type: 'broadcast', event: 'hand_lowered', payload: { identity } })
     setRaisedHands(prev => prev.filter(h => h.identity !== identity))
     if (identity === displayName) setMyHandRaised(false)
   }
 
   const lowerAllHands = () => {
+    if (!canAdmit) return
     handsChannelRef.current?.send({ type: 'broadcast', event: 'all_hands_lowered', payload: {} })
     setRaisedHands([])
     setMyHandRaised(false)
@@ -2397,6 +2434,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           isHost={!!myHostSecret}
           hostSecret={myHostSecret}
           supabaseParticipants={participants}
+          canModerate={canAdmit}
+          actingDisplayName={displayName}
+          onRequestUnmute={requestUnmute}
         />
       )}
 
@@ -2413,6 +2453,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
             isHost={!!myHostSecret}
             hostSecret={myHostSecret}
             supabaseParticipants={participants}
+            canModerate={canAdmit}
+            actingDisplayName={displayName}
+            onRequestUnmute={requestUnmute}
           />
         )}
 
@@ -2709,16 +2752,26 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           {/* Raised hands — chips in top-right; host can dismiss individually or clear all */}
           {raisedHands.length > 0 && (
             <div style={{ position: 'absolute', top: 66, right: 14, zIndex: 15, display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-              {raisedHands.map(h => (
-                <div key={h.identity} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(10,10,10,0.88)', backdropFilter: 'blur(12px)', border: '1px solid #444', borderRadius: 24, padding: '6px 10px 6px 12px', fontSize: 13, color: '#fff', fontFamily: "'Roboto', sans-serif", fontWeight: 300, whiteSpace: 'nowrap' as const }}>
-                  <span style={{ fontSize: 18, lineHeight: 1 }}>✋</span>
-                  <span>{h.name}</span>
-                  <button onClick={() => dismissHand(h.identity)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', alignItems: 'center', padding: 0, marginLeft: 2 }} title="Lower hand">
-                    <X size={13} />
-                  </button>
-                </div>
-              ))}
-              {raisedHands.length > 1 && (
+              {raisedHands.map(h => {
+                // Attendees may only lower their own hand — the × is hidden
+                // for everyone else's chip unless the viewer is host/co-host.
+                // dismissHand() itself also guards this (defense in depth),
+                // but the visible control shouldn't even suggest attendees
+                // can act on hands that aren't theirs.
+                const canDismissThis = h.identity === displayName || canAdmit
+                return (
+                  <div key={h.identity} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(10,10,10,0.88)', backdropFilter: 'blur(12px)', border: '1px solid #444', borderRadius: 24, padding: '6px 10px 6px 12px', fontSize: 13, color: '#fff', fontFamily: "'Roboto', sans-serif", fontWeight: 300, whiteSpace: 'nowrap' as const }}>
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>✋</span>
+                    <span>{h.name}</span>
+                    {canDismissThis && (
+                      <button onClick={() => dismissHand(h.identity)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666', display: 'flex', alignItems: 'center', padding: 0, marginLeft: 2 }} title="Lower hand">
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+              {raisedHands.length > 1 && canAdmit && (
                 <button onClick={lowerAllHands} style={{ background: 'rgba(10,10,10,0.7)', border: '1px solid #333', borderRadius: 20, padding: '4px 14px', color: '#888', fontSize: 11, fontFamily: "'Roboto', sans-serif", cursor: 'pointer' }}>
                   Lower all
                 </button>
@@ -3624,6 +3677,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
       {admissionToast && (
         <Toast message={admissionToast} onDone={() => setAdmissionToast(null)} durationMs={5000} />
+      )}
+
+      {unmuteRequested && (
+        <Toast message="The host is asking you to unmute" onDone={() => setUnmuteRequested(false)} durationMs={5000} />
       )}
     </div>
   )

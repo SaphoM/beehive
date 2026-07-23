@@ -121,6 +121,13 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
             background: 'none', border: '1px dashed #444', borderRadius: 6, color: '#999', fontSize: 9,
             fontFamily: "'Roboto', sans-serif", cursor: 'pointer', flexShrink: 0, width: 56, height: 56,
+            // Grid mode (wrap, the floating ParticipantsWindow) gives every
+            // direct child of the container its own cell sized by the
+            // grid's row/column tracks — center this fixed-size button
+            // within whatever size that cell ends up being, rather than
+            // letting it default to the top-left corner of a much larger
+            // cell. No effect in the non-wrap (docked strip) flex layout.
+            alignSelf: 'center', justifySelf: 'center',
           }}
         >
           <MicOff size={14} />
@@ -136,7 +143,7 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
         const role = roleFor(name)
         const isCoHost = role === 'co-host'
         return (
-          <div key={participant.identity} style={s.dockedTile}>
+          <div key={participant.identity} style={wrap ? { ...s.dockedTile, width: '100%', height: '100%' } : s.dockedTile}>
             {camTrack && !isCamOff ? (
               <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
             ) : (

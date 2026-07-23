@@ -47,14 +47,20 @@ export const s: Record<string, React.CSSProperties> = {
   dockHint: { color: '#444', fontSize: 10, fontWeight: 300, letterSpacing: 0.5, fontFamily: "'Roboto', sans-serif" },
   dockedStrip: { display: 'flex', alignItems: 'center', background: '#111', borderBottom: '1px solid #1e1e1e', padding: '6px 12px', gap: 8, overflowX: 'auto' as const },
   dockedInner: { display: 'flex', gap: 8, flex: 1, overflowX: 'auto' as const },
-  // Same tiles, but wraps onto additional rows instead of staying a single
-  // horizontally-scrolling strip — used only by the floating ParticipantsWindow
-  // (not DockedParticipantsStrip, which stays a slim single row under the
-  // header on purpose). With the floating panel's own minHeight raised
-  // (pwWindow, above), a single row of small tiles left most of that extra
-  // height empty; wrapping lets tiles actually fill the taller panel as more
-  // participants join, closer to a proper grid.
-  dockedInnerWrap: { display: 'flex', flexWrap: 'wrap' as const, alignContent: 'flex-start' as const, gap: 8, flex: 1, overflowY: 'auto' as const },
+  // A real grid, not a wrapping flex row — used only by the floating
+  // ParticipantsWindow (not DockedParticipantsStrip, which stays the slim
+  // single-row strip it always was; there's no spare height there to fill).
+  // `gridAutoRows: minmax(105px, 1fr)` is the key part: with only one
+  // participant, that single row is a `1fr` track and stretches to fill
+  // 100% of the panel's available height (grid's default `align-content:
+  // stretch` distributes all free space into `1fr` tracks) instead of
+  // sitting at its old fixed 105px with a large empty gap beneath it — the
+  // `105px` minimum only kicks in once there's enough participants that
+  // rows would otherwise be squeezed thinner than the tile was designed
+  // for. Columns auto-fill at a 140px minimum so the row count (and
+  // therefore how many rows share the available height) adapts to however
+  // many attendees are actually in the room.
+  dockedInnerWrap: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gridAutoRows: 'minmax(105px, 1fr)', gap: 8, flex: 1, overflowY: 'auto' as const },
   // height +50% (70 -> 105) so the (now-larger) avatar reads clearly and the
   // row scans more like Teams/Meet; width is untouched — only row height
   // was asked for, and the panel's own width must stay the same.

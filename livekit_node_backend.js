@@ -46,8 +46,19 @@ app.use((_req, res, next) => {
       // 'unsafe-inline' cannot execute script, so this is a low-risk allowance.
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      // data:: desktopCapturer thumbnails (base64); blob:: local media/canvas.
-      "img-src 'self' data: blob:",
+      // data:: desktopCapturer thumbnails (base64); blob:: local media/canvas;
+      // https://*.supabase.co: avatar images and shared-file previews, both
+      // served as public Supabase Storage URLs (uploadAvatar() in
+      // components/Avatar.tsx, the shared-files bucket in RoomPage.tsx's file
+      // share). Missing here on web only, never on desktop (Electron loads via
+      // file://, so this CSP header — set by Express, an HTTP response header
+      // — is never applied to it at all) is exactly why an uploaded avatar
+      // rendered on desktop but silently fell back to initials on web: the
+      // browser blocked the <img> load outright per its own CSP, no error
+      // surfaced anywhere in this app's own code because there was nothing
+      // for this app to catch — CSP violations are enforced and logged by the
+      // browser itself, before the image request is even attempted.
+      "img-src 'self' data: blob: https://*.supabase.co",
       "media-src 'self' blob:",
       // Supabase (DB/Realtime/Storage) + LiveKit Cloud (signaling) + MediaPipe
       // asset hosts. WebRTC media itself (audio/video) isn't gated by connect-src.

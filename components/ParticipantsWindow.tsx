@@ -3,13 +3,14 @@ import { X, Mic, MicOff, VideoOff, MessageSquare, Crown, BellRing } from 'lucide
 import { ParticipantTile, useTracks, useLocalParticipant, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
+import { Avatar } from './Avatar'
 
 // Same API_BASE resolution used elsewhere for backend calls from the client.
 const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
   ? 'http://localhost:3001'
   : ''
 
-interface SupabaseParticipant { display_name: string | null; role: string | null; is_active: boolean | null }
+interface SupabaseParticipant { display_name: string | null; role: string | null; is_active: boolean | null; avatar_url?: string | null }
 
 interface CoHostProps {
   roomId?: string
@@ -43,6 +44,8 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
   // same limitation this whole feature already lives with server-side.
   const roleFor = (name: string) =>
     supabaseParticipants?.find(p => p.is_active && p.display_name === name)?.role ?? 'participant'
+  const avatarUrlFor = (name: string) =>
+    supabaseParticipants?.find(p => p.is_active && p.display_name === name)?.avatar_url ?? null
 
   const toggleCoHost = async (name: string) => {
     if (!roomId || !hostSecret) return
@@ -131,7 +134,9 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
             {camTrack && !isCamOff ? (
               <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
             ) : (
-              <div style={s.dockedNoVideo}><VideoOff size={14} color="#555" /></div>
+              <div style={s.dockedNoVideo}>
+                <Avatar name={name} avatarUrl={avatarUrlFor(name)} size={34} />
+              </div>
             )}
             <div style={s.dockedTileBar}>
               <span style={s.dockedName}>{name.split(' ')[0]}</span>

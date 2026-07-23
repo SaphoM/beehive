@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, Minus, Mic, MicOff, Video, VideoOff, Hand, PhoneOff, Users } from 'lucide-react'
 import { REACTIONS } from './roomUtils'
+import { Avatar } from './Avatar'
 
 // Full-screen presentation mode (`isFullscreen` in RoomPage.tsx) renders the
 // video/screen-share area as a fixed, full-viewport overlay above everything
@@ -26,7 +27,7 @@ export function FullscreenHud({
   onLeave,
   onClose,
 }: {
-  attendees: { identity: string; name: string; isSpeaking: boolean; isMicOn: boolean; isCamOn: boolean }[]
+  attendees: { identity: string; name: string; avatarUrl?: string | null; isSpeaking: boolean; isMicOn: boolean; isCamOn: boolean }[]
   raisedHands: { identity: string; name: string }[]
   onDismissHand: (identity: string) => void
   onLowerAllHands: () => void
@@ -115,12 +116,15 @@ export function FullscreenHud({
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
         {attendees.map(a => (
           <div key={a.identity} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{
-              color: a.isSpeaking ? '#f5a623' : '#ddd', fontSize: 12.5, fontFamily: font, fontWeight: a.isSpeaking ? 600 : 300,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
-            }}>
-              {a.name}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+              <Avatar name={a.name} avatarUrl={a.avatarUrl} size={18} />
+              <span style={{
+                color: a.isSpeaking ? '#f5a623' : '#ddd', fontSize: 12.5, fontFamily: font, fontWeight: a.isSpeaking ? 600 : 300,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+              }}>
+                {a.name}
+              </span>
+            </div>
             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
               {a.isMicOn ? <Mic size={12} color="#666" /> : <MicOff size={12} color="#c53030" />}
               {a.isCamOn ? <Video size={12} color="#666" /> : <VideoOff size={12} color="#c53030" />}

@@ -139,10 +139,16 @@ interface Participant {
   id: string
   room_id: string
   user_id: string
+  auth_user_id: string | null
   display_name: string
   joined_at: string
   is_active: boolean
   role: 'host' | 'co-host' | 'participant'
+  // Not a real room_participants column — merged in client-side from
+  // `profiles` (see useParticipants below) for signed-in participants only.
+  // Guests (auth_user_id null) simply never get one, which the shared
+  // Avatar component already treats identically to "no picture yet".
+  avatar_url?: string | null
 }
 
 interface ChatMessage {
@@ -410,19 +416,35 @@ export function useJoinRoom() {
 // ============================================================
 // PARTICIPANT LIST (real-time)
 // ============================================================
+// `room_participants.auth_user_id` has no FK constraint to `profiles` (only
+// the legacy, unused `user_id` -> the old `users` table does), so PostgREST
+// can't embed `profiles(avatar_url)` in one query the normal way. A second,
+// small lookup keyed by the distinct auth_user_ids actually present in this
+// room's participant list — merged in client-side — avoids adding a new DB
+// constraint just for this.
+async function fetchParticipantsWithAvatars(roomId: string): Promise<Participant[]> {
+  const { data } = await supabase
+    .from('room_participants')
+    .select('*')
+    .eq('room_id', roomId)
+    .eq('is_active', true)
+  const rows = (data ?? []) as Participant[]
+
+  const authIds = [...new Set(rows.map(r => r.auth_user_id).filter((id): id is string => !!id))]
+  if (authIds.length === 0) return rows
+
+  const { data: profileRows } = await supabase.from('profiles').select('id, avatar_url').in('id', authIds)
+  const avatarById = new Map((profileRows ?? []).map(p => [p.id, p.avatar_url]))
+  return rows.map(r => ({ ...r, avatar_url: r.auth_user_id ? avatarById.get(r.auth_user_id) ?? null : null }))
+}
+
 export function useParticipants(roomId: string) {
   const [participants, setParticipants] = useState<Participant[]>([])
 
   useEffect(() => {
     if (!roomId) return
 
-    // Initial fetch
-    supabase
-      .from('room_participants')
-      .select('*')
-      .eq('room_id', roomId)
-      .eq('is_active', true)
-      .then(({ data }) => setParticipants(data ?? []))
+    fetchParticipantsWithAvatars(roomId).then(setParticipants)
 
     // Real-time subscription
     const channel = supabase
@@ -430,14 +452,7 @@ export function useParticipants(roomId: string) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'room_participants', filter: `room_id=eq.${roomId}` },
-        () => {
-          supabase
-            .from('room_participants')
-            .select('*')
-            .eq('room_id', roomId)
-            .eq('is_active', true)
-            .then(({ data }) => setParticipants(data ?? []))
-        }
+        () => { fetchParticipantsWithAvatars(roomId).then(setParticipants) }
       )
       .subscribe()
 

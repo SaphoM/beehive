@@ -6,6 +6,7 @@ import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
 import { useAuth, useProfile } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
+import { EditableAvatar } from './Avatar'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 import { BuiltByFooter } from './BuiltByFooter'
 import { Toast } from './Toast'
@@ -77,7 +78,8 @@ export function Lobby({
   onDismissRegister?: () => void
 }) {
   const { signOut } = useAuth()
-  const { profile } = useProfile(user?.id ?? null)
+  const { profile, updateProfile } = useProfile(user?.id ?? null)
+  const displayNameForAvatar = profile?.full_name ?? user?.email?.split('@')[0] ?? ''
   const [showFathom, setShowFathom] = useState(false)
   const [lobbyTab, setLobbyTab] = useState<'now' | 'schedule'>('now')
   const [flipped, setFlipped] = useState(false)
@@ -122,9 +124,18 @@ export function Lobby({
           <div style={{ ...s.lobbyCard, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' } as React.CSSProperties}>
             {user && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span style={{ color: '#555', fontSize: 11 }}>
-                  {profile?.full_name ?? user.email?.split('@')[0]}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <EditableAvatar
+                    name={displayNameForAvatar}
+                    avatarUrl={profile?.avatar_url}
+                    userId={user.id}
+                    size={22}
+                    onUpdated={url => updateProfile({ avatar_url: url })}
+                  />
+                  <span style={{ color: '#555', fontSize: 11 }}>
+                    {displayNameForAvatar}
+                  </span>
+                </div>
                 <button
                   onClick={signOut}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}

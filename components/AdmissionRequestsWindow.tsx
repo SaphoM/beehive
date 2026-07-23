@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, UserCheck, UserX } from 'lucide-react'
 import type { PendingAdmissionRequest } from '../livekit_react_hooks'
+import { Avatar } from './Avatar'
 
 // Floating panel (same convention as AutoCamWindow/MeetingPrepWindow) shown
 // only to whoever holds role 'host'/'co-host' in a waiting-room-gated
@@ -51,7 +52,14 @@ export function AdmissionRequestsWindow({ roomId, pending, hostSecret, actingDis
         )}
         {pending.map((r) => (
           <div key={r.id} style={st.row}>
-            <span style={st.name}>{r.display_name}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+              {/* Pending requests have no room_participants row yet (only
+                  admission_requests), so there's no avatar_url to look up —
+                  initials-only here, which the shared Avatar already
+                  handles as its normal no-picture case. */}
+              <Avatar name={r.display_name} size={22} />
+              <span style={st.name}>{r.display_name}</span>
+            </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 style={{ ...st.actionBtn, ...st.admitBtn }}

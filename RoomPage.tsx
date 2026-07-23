@@ -90,6 +90,7 @@ import { MeetingPrepWindow } from './components/MeetingPrepWindow'
 import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
 import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
+import { Avatar } from './components/Avatar'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
 import { ScreenShareBar } from './components/ScreenShareBar'
@@ -410,6 +411,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // time, a co-host's gets 'co-host' via the grant endpoint; Start Now
   // meetings never touch this column, so it's always 'participant' there.
   const myRole = participants.find(p => p.is_active && p.display_name === displayName)?.role ?? 'participant'
+  // Same display_name-keyed lookup pattern as myRole above — room_participants
+  // has no LiveKit identity column, so this is the existing limitation every
+  // per-participant Supabase lookup in this file already lives with.
+  const avatarUrlFor = (name: string) => participants.find(p => p.is_active && p.display_name === name)?.avatar_url ?? null
   const canAdmit = myRole === 'host' || myRole === 'co-host'
   // Kept subscribed for the whole session whenever canAdmit — not just while
   // the waiting-room panel happens to be open. Before this, the host had no
@@ -2673,6 +2678,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               attendees={liveKitParticipants.map(p => ({
                 identity: p.identity,
                 name: p.identity === localParticipant.identity ? 'You' : (p.name || p.identity),
+                avatarUrl: avatarUrlFor(p.name || p.identity),
                 isSpeaking: p.isSpeaking,
                 isMicOn: p.isMicrophoneEnabled,
                 isCamOn: p.isCameraEnabled,
@@ -3353,7 +3359,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                   if (!isForMe) return null
                   return (
                     <div key={m.id} style={s.fileCard}>
-                      <span style={s.msgName}>{m.display_name} shared a file</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Avatar name={m.display_name} avatarUrl={avatarUrlFor(m.display_name)} size={18} />
+                        <span style={s.msgName}>{m.display_name} shared a file</span>
+                      </div>
                       <a href={meta.url} target="_blank" rel="noreferrer" download={meta.name} style={s.fileCardLink}>
                         <span style={{ fontSize: 18 }}>{fileIcon(meta.mime)}</span>
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{meta.name}</span>
@@ -3369,7 +3378,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                 }
                 return (
                   <div key={m.id} style={s.message}>
-                    <span style={s.msgName}>{m.display_name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Avatar name={m.display_name} avatarUrl={avatarUrlFor(m.display_name)} size={18} />
+                      <span style={s.msgName}>{m.display_name}</span>
+                    </div>
                     <span style={s.msgText}>{m.message}</span>
                     <span style={s.msgTime}>
                       {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

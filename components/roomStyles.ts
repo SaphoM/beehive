@@ -60,7 +60,10 @@ export const s: Record<string, React.CSSProperties> = {
   // for. Columns auto-fill at a 140px minimum so the row count (and
   // therefore how many rows share the available height) adapts to however
   // many attendees are actually in the room.
-  dockedInnerWrap: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gridAutoRows: 'minmax(105px, 1fr)', gap: 8, flex: 1, overflowY: 'auto' as const },
+  // padding: 12 keeps every tile clear of the panel's own border — without
+  // it the grid sat flush against pwWindow's edges (no padding of its own),
+  // so a tile's border could touch the panel's border directly.
+  dockedInnerWrap: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gridAutoRows: 'minmax(105px, 1fr)', gap: 8, flex: 1, overflowY: 'auto' as const, padding: 12 },
   // height +50% (70 -> 105) so the (now-larger) avatar reads clearly and the
   // row scans more like Teams/Meet; width is untouched — only row height
   // was asked for, and the panel's own width must stay the same.

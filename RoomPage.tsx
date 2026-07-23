@@ -91,6 +91,7 @@ import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
 import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { Avatar } from './components/Avatar'
+import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
 import { ScreenShareBar } from './components/ScreenShareBar'
@@ -2548,7 +2549,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
             </div>
           ) : (
             <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
-              <ParticipantTile />
+              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                <ParticipantTile />
+                <CameraOffAvatarOverlay avatarUrlFor={avatarUrlFor} />
+              </div>
             </GridLayout>
           )}
 

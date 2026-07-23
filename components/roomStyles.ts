@@ -29,7 +29,9 @@ export const s: Record<string, React.CSSProperties> = {
   headerRight: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, WebkitAppRegion: 'no-drag' as any },
   roomTitle: { color: '#fff', fontWeight: 300, fontSize: 16, letterSpacing: 3, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif", whiteSpace: 'nowrap' as const },
   pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
-  pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
+  // minHeight raised ~50% over its previous natural (content-driven) size —
+  // width is untouched, per the "keep panel width unchanged" requirement.
+  pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, minHeight: 220, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
   pwHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #222' },
   pwTitle: { color: '#fff', fontSize: 11, fontWeight: 300, letterSpacing: 2, fontFamily: "'Roboto', sans-serif" },
   pwCount: { color: '#f5a623', marginLeft: 6 },
@@ -45,7 +47,10 @@ export const s: Record<string, React.CSSProperties> = {
   dockHint: { color: '#444', fontSize: 10, fontWeight: 300, letterSpacing: 0.5, fontFamily: "'Roboto', sans-serif" },
   dockedStrip: { display: 'flex', alignItems: 'center', background: '#111', borderBottom: '1px solid #1e1e1e', padding: '6px 12px', gap: 8, overflowX: 'auto' as const },
   dockedInner: { display: 'flex', gap: 8, flex: 1, overflowX: 'auto' as const },
-  dockedTile: { position: 'relative' as const, width: 110, height: 70, borderRadius: 6, overflow: 'hidden', background: '#1a1a1a', border: '1px solid #2a2a2a', flexShrink: 0 },
+  // height +50% (70 -> 105) so the (now-larger) avatar reads clearly and the
+  // row scans more like Teams/Meet; width is untouched — only row height
+  // was asked for, and the panel's own width must stay the same.
+  dockedTile: { position: 'relative' as const, width: 110, height: 105, borderRadius: 6, overflow: 'hidden', background: '#1a1a1a', border: '1px solid #2a2a2a', flexShrink: 0 },
   dockedNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111' },
   dockedTileBar: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 6px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))' },
   dockedName: { color: '#fff', fontSize: 10, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },

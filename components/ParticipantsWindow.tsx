@@ -135,7 +135,7 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
               <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
             ) : (
               <div style={s.dockedNoVideo}>
-                <Avatar name={name} avatarUrl={avatarUrlFor(name)} size={34} />
+                <Avatar name={name} avatarUrl={avatarUrlFor(name)} size={52} />
               </div>
             )}
             <div style={s.dockedTileBar}>

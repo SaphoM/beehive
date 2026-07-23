@@ -270,6 +270,57 @@ async function isRoomModerator(roomId, hostSecret, actingDisplayName) {
 }
 
 // ============================================================
+// BEEHIVE BOT ASSISTANT — live, shared meeting agenda
+// POST /api/rooms/:roomId/agenda
+// Body: { title, organizerName, objectives, items, actingDisplayName, hostSecret? }
+// ============================================================
+// Reads happen straight from the client via Supabase (meeting_agendas has a
+// permissive SELECT policy — see 006_meeting_agenda.sql) since anyone in the
+// room needs to see the live agenda. Writes only ever go through here,
+// authorized by the exact same isRoomModerator() check /admit and /mute
+// already use — same "moderator" concept as every other in-meeting
+// permission this app has, not a new one. Same edit-permission scope as
+// mute/hand-lower: only meaningful in a waiting-room-gated (scheduled)
+// meeting, where a host/co-host actually exists; an ungated Start Now
+// meeting has no host concept at all, so nobody currently holds edit rights
+// there either — consistent with how every other moderation feature in this
+// app already behaves, not a new limitation introduced here.
+//
+// Single upsert-the-whole-blob write (not granular per-item endpoints) —
+// this is a low-write-concurrency, single-editor-at-a-time surface, and the
+// client already holds the full, current agenda state locally after any
+// edit, so sending it whole keeps this endpoint (and the client's debounced
+// auto-save) simple. Each item carries a stable client-generated id, so
+// completed-state/notes/order all travel correctly across edits.
+app.post('/api/rooms/:roomId/agenda', async (req, res) => {
+  const { roomId } = req.params
+  const { title, organizerName, objectives, items, actingDisplayName, hostSecret } = req.body
+  if (typeof title !== 'string' || !Array.isArray(objectives) || !Array.isArray(items)) {
+    return res.status(400).json({ error: 'title, objectives[], and items[] are required' })
+  }
+
+  if (!(await isRoomModerator(roomId, hostSecret, actingDisplayName))) {
+    return res.status(403).json({ error: 'Not authorized to edit the agenda in this room' })
+  }
+
+  const { error } = await supabase.from('meeting_agendas').upsert({
+    room_id: roomId,
+    title,
+    organizer_name: organizerName ?? null,
+    objectives,
+    items,
+    updated_at: new Date().toISOString(),
+  })
+
+  if (error) {
+    console.error('[agenda] upsert failed:', error.message)
+    return res.status(500).json({ error: 'Failed to save the agenda' })
+  }
+
+  return res.json({ ok: true })
+})
+
+// ============================================================
 // ADMIT / DENY a waiting attendee
 // POST /api/rooms/:roomId/admit
 // Body: { requestId, decision: 'admit'|'deny', actingDisplayName, hostSecret? }

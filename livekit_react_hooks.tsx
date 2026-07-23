@@ -512,6 +512,60 @@ export function useAdmissionRequests(roomId: string, enabled: boolean) {
 }
 
 // ============================================================
+// BEEHIVE BOT ASSISTANT — live, shared meeting agenda (real-time)
+// ============================================================
+export interface AgendaItem { id: string; text: string; completed: boolean; notes: string; order: number }
+export interface MeetingAgenda {
+  title: string
+  organizer_name: string | null
+  objectives: string[]
+  items: AgendaItem[]
+  updated_at: string
+}
+
+// Read is always live for everyone in the room (permissive SELECT policy —
+// see 006_meeting_agenda.sql), matching every other room-scoped realtime
+// hook in this file. There is deliberately no local optimistic-write path
+// here: `saveAgenda` posts to the backend (the only way this table is ever
+// written — no client UPDATE/INSERT policy exists), and every viewer,
+// including the editor's own other tabs, picks up the change through this
+// same subscription once it lands — one source of truth, no risk of two
+// tabs' local state silently diverging.
+export function useMeetingAgenda(roomId: string) {
+  const [agenda, setAgenda] = useState<MeetingAgenda | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!roomId) { setAgenda(null); return }
+    setLoading(true)
+
+    const fetchAgenda = () => {
+      supabase
+        .from('meeting_agendas')
+        .select('title, organizer_name, objectives, items, updated_at')
+        .eq('room_id', roomId)
+        .maybeSingle()
+        .then(({ data }) => { setAgenda(data ?? null); setLoading(false) })
+    }
+
+    fetchAgenda()
+
+    const channel = supabase
+      .channel(`meeting-agenda:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'meeting_agendas', filter: `room_id=eq.${roomId}` },
+        fetchAgenda
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId])
+
+  return { agenda, loading }
+}
+
+// ============================================================
 // CHAT (real-time)
 // ============================================================
 export function useChat(roomId: string) {

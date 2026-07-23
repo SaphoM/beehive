@@ -92,6 +92,7 @@ import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { Avatar } from './components/Avatar'
 import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
+import { BotAssistant } from './components/BotAssistant'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
 import { ScreenShareBar } from './components/ScreenShareBar'
@@ -2673,6 +2674,11 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
           {/* Speaking Indicator */}
           <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} isPresenting={isPresenting} avatarUrlFor={avatarUrlFor} />
+
+          {/* BeeHive Bot Assistant — floating agenda helper, always available */}
+          {overlayMode !== 'hidden' && (
+            <BotAssistant roomId={roomId} displayName={displayName} canEdit={canAdmit} hostSecret={myHostSecret} />
+          )}
 
           {/* Full-screen HUD — floating attendees/hands/reactions/controls window,
               mounted inside the full-screen overlay so it's reachable in Full

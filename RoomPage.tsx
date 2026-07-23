@@ -2672,7 +2672,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           )}
 
           {/* Speaking Indicator */}
-          <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} isPresenting={isPresenting} />
+          <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} isPresenting={isPresenting} avatarUrlFor={avatarUrlFor} />
 
           {/* Full-screen HUD — floating attendees/hands/reactions/controls window,
               mounted inside the full-screen overlay so it's reachable in Full

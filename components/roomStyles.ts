@@ -47,6 +47,14 @@ export const s: Record<string, React.CSSProperties> = {
   dockHint: { color: '#444', fontSize: 10, fontWeight: 300, letterSpacing: 0.5, fontFamily: "'Roboto', sans-serif" },
   dockedStrip: { display: 'flex', alignItems: 'center', background: '#111', borderBottom: '1px solid #1e1e1e', padding: '6px 12px', gap: 8, overflowX: 'auto' as const },
   dockedInner: { display: 'flex', gap: 8, flex: 1, overflowX: 'auto' as const },
+  // Same tiles, but wraps onto additional rows instead of staying a single
+  // horizontally-scrolling strip — used only by the floating ParticipantsWindow
+  // (not DockedParticipantsStrip, which stays a slim single row under the
+  // header on purpose). With the floating panel's own minHeight raised
+  // (pwWindow, above), a single row of small tiles left most of that extra
+  // height empty; wrapping lets tiles actually fill the taller panel as more
+  // participants join, closer to a proper grid.
+  dockedInnerWrap: { display: 'flex', flexWrap: 'wrap' as const, alignContent: 'flex-start' as const, gap: 8, flex: 1, overflowY: 'auto' as const },
   // height +50% (70 -> 105) so the (now-larger) avatar reads clearly and the
   // row scans more like Teams/Meet; width is untouched — only row height
   // was asked for, and the panel's own width must stay the same.

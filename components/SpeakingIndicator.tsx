@@ -1,16 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Video, VideoOff } from 'lucide-react'
+import { X, Video } from 'lucide-react'
 import { ParticipantTile, useTracks, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
+import { Avatar } from './Avatar'
 
 const BAR_SHAPE = [0.35, 0.65, 1.0, 0.65, 0.35]
 
-interface Speaker { identity: string; name: string; level: number }
+// `name` is truncated to the first word for the compact chip/header display
+// (unchanged) — `fullName` is kept alongside it since avatar lookup needs
+// the real display_name, not just "Sapho" out of "Sapho Maqhwazima".
+interface Speaker { identity: string; name: string; fullName: string; level: number }
 
 function SpeakerWindow({
   speaker,
   camTrack,
+  avatarUrl,
   minimized,
   dismissed,
   onToggleMinimize,
@@ -21,6 +26,7 @@ function SpeakerWindow({
 }: {
   speaker: Speaker
   camTrack: ReturnType<typeof useTracks>[number] | undefined
+  avatarUrl?: string | null
   minimized: boolean
   dismissed: boolean
   onToggleMinimize: () => void
@@ -58,7 +64,7 @@ function SpeakerWindow({
             {camTrack ? (
               <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: '0 0 10px 10px' }} />
             ) : (
-              <div style={s.speakerNoVideo}><VideoOff size={20} color="#444" /></div>
+              <div style={s.speakerNoVideo}><Avatar name={speaker.fullName} avatarUrl={avatarUrl} size={44} /></div>
             )}
           </div>
         </div>
@@ -84,9 +90,11 @@ function SpeakerWindow({
 export function SpeakingIndicator({
   overlayMode = 'visible',
   isPresenting = false,
+  avatarUrlFor,
 }: {
   overlayMode?: 'visible' | 'minimized' | 'hidden'
   isPresenting?: boolean
+  avatarUrlFor?: (name: string) => string | null
 }) {
   const participants = useLiveKitParticipants()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
@@ -106,7 +114,10 @@ export function SpeakingIndicator({
     const tick = setInterval(() => {
       const active = participants
         .filter(p => p.isSpeaking && p.audioLevel > 0.015)
-        .map(p => ({ identity: p.identity, name: (p.name || p.identity).split(' ')[0], level: Math.min(p.audioLevel * 2.5, 1) }))
+        .map(p => {
+          const fullName = p.name || p.identity
+          return { identity: p.identity, name: fullName.split(' ')[0], fullName, level: Math.min(p.audioLevel * 2.5, 1) }
+        })
 
       if (active.length > 0) {
         if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
@@ -145,6 +156,7 @@ export function SpeakingIndicator({
       <SpeakerWindow
         speaker={s1}
         camTrack={cam1}
+        avatarUrl={avatarUrlFor?.(s1.fullName)}
         minimized={minimized1}
         dismissed={dismissed1 === s1.identity}
         onToggleMinimize={() => setMinimized1(v => !v)}
@@ -159,6 +171,7 @@ export function SpeakingIndicator({
         <SpeakerWindow
           speaker={s2}
           camTrack={cam2}
+          avatarUrl={avatarUrlFor?.(s2.fullName)}
           minimized={minimized2}
           dismissed={dismissed2 === s2.identity}
           onToggleMinimize={() => setMinimized2(v => !v)}

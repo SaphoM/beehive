@@ -27,13 +27,19 @@ interface CoHostProps {
   canModerate?: boolean
   actingDisplayName?: string
   onRequestUnmute?: (identity: string) => void
+  // True only for the floating ParticipantsWindow — lets its (now taller,
+  // see roomStyles.ts's pwWindow) panel actually use that height by
+  // wrapping tiles onto additional rows. DockedParticipantsStrip omits this
+  // and stays exactly what it always was: a single horizontally-scrolling
+  // row under the header, where there's no spare vertical room to wrap into.
+  wrap?: boolean
 }
 
-// Shared row of compact attendee tiles — always horizontal, always
-// scrollable, never a grid. Used by both the floating (detached) window
-// and the docked strip below, so dragging between the two never changes
-// what the tiles look like, only the container around them.
-function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDirectChat, canModerate, actingDisplayName, onRequestUnmute }: CoHostProps) {
+// Shared row of compact attendee tiles. Used by both the floating (detached)
+// window and the docked strip below, so dragging between the two never
+// changes what the tiles look like, only the container around them and
+// (via `wrap`) whether they're allowed to reflow onto multiple rows.
+function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDirectChat, canModerate, actingDisplayName, onRequestUnmute, wrap }: CoHostProps) {
   const lkParticipants = useLiveKitParticipants()
   const { localParticipant } = useLocalParticipant()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
@@ -103,7 +109,7 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
   const unmutedOthersCount = lkParticipants.filter(p => p.identity !== localParticipant.identity && p.isMicrophoneEnabled).length
 
   return (
-    <div style={s.dockedInner}>
+    <div style={wrap ? s.dockedInnerWrap : s.dockedInner}>
       {/* Mute all — host/co-host only, and only meaningful once someone
           other than the moderator actually has their mic on. */}
       {canModerate && roomId && unmutedOthersCount > 0 && (
@@ -260,7 +266,7 @@ export function ParticipantsWindow({ onClose, onDock, onDirectChat, roomId, isHo
             <button style={s.pwClose} onClick={onClose}><X size={16} /></button>
           </div>
         </div>
-        <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} supabaseParticipants={supabaseParticipants} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} />
+        <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} supabaseParticipants={supabaseParticipants} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} wrap />
       </div>
     </div>
   )

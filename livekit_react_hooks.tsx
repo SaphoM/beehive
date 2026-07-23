@@ -227,7 +227,12 @@ export function useScheduleRoom() {
     // back by RoomPage's join flow to prove host identity on that one device.
     try { localStorage.setItem(`beehive:hostSecret:${room.id}`, hostSecret) } catch { /* storage unavailable — creator just won't auto-resume as host on this device */ }
 
-    return room as Room
+    // hostSecret is also returned directly (not just stashed in
+    // localStorage) so the caller can use it immediately in the same tick —
+    // SchedulePanel needs it right away to seed the BeeHive Assistant's
+    // shared agenda (POST /api/rooms/:roomId/agenda) without a redundant
+    // localStorage round-trip it just wrote.
+    return { room: room as Room, hostSecret: hostSecret as string }
   }, [])
 
   return { scheduleRoom, loading, error }

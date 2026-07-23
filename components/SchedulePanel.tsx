@@ -3,7 +3,43 @@ import { useScheduleRoom } from '../livekit_react_hooks'
 import { WEB_BASE, STING_RED, saveMeetingPrep } from './roomUtils'
 import { s } from './roomStyles'
 import { MeetingPrep, type MeetingPrepSummary } from './MeetingPrep'
+import { getTemplate } from './meetingTemplates'
 import { TimePicker } from './TimePicker'
+
+const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+  ? 'http://localhost:3001'
+  : ''
+
+// Seeds the BeeHive Bot Assistant's shared, live agenda (meeting_agendas —
+// see supabase/migrations/006_meeting_agenda.sql) with whatever prep
+// template/agenda was picked at scheduling time, so it's already there the
+// instant anyone opens the assistant in the room — not just on whichever
+// single device/browser origin happened to schedule the meeting (that's all
+// saveMeetingPrep's localStorage ever covered, and Electron's file:// origin
+// can never see a web tab's localStorage regardless, so a fix that only
+// touched local storage would still leave the desktop app with nothing).
+// `template.goals` (labelled "Objectives" in MeetingPrep's own UI) isn't
+// part of MeetingPrepSummary/StoredMeetingPrep at all — it's static,
+// deterministic from templateId, so it's looked up fresh here rather than
+// duplicating it into that existing, working type.
+async function seedSharedAgenda(roomId: string, hostSecret: string, organizerName: string, prep: MeetingPrepSummary) {
+  const template = getTemplate(prep.templateId)
+  try {
+    await fetch(`${API_BASE}/api/rooms/${roomId}/agenda`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: prep.title,
+        organizerName,
+        objectives: template?.goals ?? [],
+        items: prep.agenda.map((text, i) => ({ id: `seed-${i}`, text, completed: false, notes: '', order: i })),
+        hostSecret,
+      }),
+    })
+  } catch (e) {
+    console.error('[schedule] seeding shared agenda failed:', e)
+  }
+}
 
 const DURATIONS = [15, 30, 45, 60, 90]
 
@@ -24,6 +60,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   const [copied, setCopied] = useState(false)
   const [prep, setPrep] = useState<MeetingPrepSummary | null>(null)
   const [createdRoomId, setCreatedRoomId] = useState<string | null>(null)
+  const [createdHostSecret, setCreatedHostSecret] = useState<string | null>(null)
 
   const addEmail = () => {
     const e = emailInput.trim().toLowerCase()
@@ -44,13 +81,22 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     // Scheduled meetings go through the backend (not a direct client insert)
     // so they come out waiting-room-gated — only Start Now's own room
     // creation (RoomPage.tsx) stays a direct, ungated client insert.
-    const room = await scheduleRoom(meetingName)
-    if (!room) return
+    const result = await scheduleRoom(meetingName)
+    if (!result) return
+    const { room, hostSecret } = result
     setLink(`${WEB_BASE}?room=${room.id}`)
     setCreatedRoomId(room.id)
+    setCreatedHostSecret(hostSecret)
     // Whatever prep template/checklist/agenda was picked (if any) follows the
-    // room in — read back by MeetingPrepWindow once inside the meeting.
-    if (prep) saveMeetingPrep(room.id, prep)
+    // room in two ways: the existing per-device localStorage copy (read back
+    // by MeetingPrepWindow once inside the meeting, same as always), and now
+    // also the shared BeeHive Assistant agenda (meeting_agendas), so it's
+    // there for every participant regardless of which device/app opens the
+    // room, not just this one.
+    if (prep) {
+      saveMeetingPrep(room.id, prep)
+      seedSharedAgenda(room.id, hostSecret, displayName, prep)
+    }
   }
 
   const copyLink = () => {
@@ -76,7 +122,10 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     window.open(`mailto:${emails.join(',')}?subject=${subject}&body=${body}`)
     // Re-save in case the prep selection changed after the room was created
     // but before the invite was sent (both remain editable in between).
-    if (prep && createdRoomId) saveMeetingPrep(createdRoomId, prep)
+    if (prep && createdRoomId) {
+      saveMeetingPrep(createdRoomId, prep)
+      if (createdHostSecret) seedSharedAgenda(createdRoomId, createdHostSecret, displayName, prep)
+    }
     onScheduled?.({ name: meetingName, date, time, link })
   }
 

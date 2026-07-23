@@ -43,11 +43,15 @@ async function seedSharedAgenda(roomId: string, hostSecret: string, organizerNam
 
 const DURATIONS = [15, 30, 45, 60, 90]
 
-export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onScheduled }: {
+export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onScheduled, onStartMeeting }: {
   displayName: string
   onDisplayNameChange: (v: string) => void
   isSting: boolean
   onScheduled?: (meeting: { name: string; date: string; time: string; link: string }) => void
+  // Enter the just-created scheduled room as host (it holds the seeded
+  // agenda). Without this the host had no in-app way into their own
+  // scheduled room and fell back to Start Now — a fresh, agenda-less room.
+  onStartMeeting?: (roomId: string) => void
 }) {
   const { scheduleRoom, loading } = useScheduleRoom()
   const [roomName, setRoomName] = useState('')
@@ -221,6 +225,18 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
               {copied ? 'Copied!' : 'Copy'}
             </button>
           </div>
+          {/* Enter the scheduled room now, as host — this is the room that
+              holds the agenda just set up; without it the only way in was the
+              link, and the obvious Start Now button makes a different, empty
+              room. Only rendered once the room actually exists (createdRoomId). */}
+          {createdRoomId && onStartMeeting && (
+            <button
+              style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}
+              onClick={() => onStartMeeting(createdRoomId)}
+            >
+              Start meeting now
+            </button>
+          )}
           {emails.length > 0 && (
             <button
               style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}

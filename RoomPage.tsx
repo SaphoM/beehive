@@ -221,11 +221,16 @@ export default function RoomPage() {
     setView('room')
   }
 
-  const handleJoin = async () => {
+  // Join a specific room by id — shared core of both the invite-link "Join
+  // Meeting" flow and the "Start meeting now" button the host gets right
+  // after scheduling (which routes them into the SCHEDULED room, the one
+  // that actually holds the agenda they just set up, rather than the Start
+  // Now path that creates a fresh, agenda-less room).
+  const enterRoom = async (targetRoomId: string) => {
     if (!displayName.trim()) return alert('Enter your name first')
-    if (!joinRoomId) return
-    const result = await joinRoom(joinRoomId, displayName)
+    const result = await joinRoom(targetRoomId, displayName)
     if ('pending' in result) {
+      setJoinRoomId(targetRoomId)
       setWaitingInfo({ requestId: result.requestId, identity: result.identity })
       setView('waiting')
       return
@@ -238,13 +243,28 @@ export default function RoomPage() {
       // here would read as whatever it was *before* this click), so refresh
       // the invite preview to flip straight to the "Meeting Ended" card
       // instead of a generic alert that leaves the now-stale Join button right there.
-      if (result.error === ENDED_MEETING_ERROR) { refreshInviteRoom(); return }
+      if (result.error === ENDED_MEETING_ERROR) { setJoinRoomId(targetRoomId); refreshInviteRoom(); return }
       return alert(result.error)
     }
-    setActiveRoomId(joinRoomId)
+    window.history.pushState({}, '', `?room=${targetRoomId}`)
+    setActiveRoomId(targetRoomId)
     setLivekitRoomName(result.livekitRoomName)
     setToken(result.token)
     setView('room')
+  }
+
+  const handleJoin = async () => {
+    if (!joinRoomId) return
+    await enterRoom(joinRoomId)
+  }
+
+  // The host presses "Start meeting now" in the Schedule tab right after
+  // creating the room — they hold the room's hostSecret (saved to
+  // localStorage by useScheduleRoom during creation), so joinRoom admits
+  // them immediately rather than into the waiting room, and they land in
+  // the scheduled room with its seeded agenda already present.
+  const handleStartScheduled = async (scheduledRoomId: string) => {
+    await enterRoom(scheduledRoomId)
   }
 
   // Called by WaitingRoom the instant the host/co-host admits this attendee —
@@ -326,6 +346,7 @@ export default function RoomPage() {
       onDisplayNameChange={setDisplayName}
       onCreateRoom={handleCreate}
       onJoinRoom={joinRoomId ? handleJoin : undefined}
+      onStartScheduled={handleStartScheduled}
       creating={creating || joining}
       hasInvite={!!joinRoomId}
       inviteRoom={inviteRoom}

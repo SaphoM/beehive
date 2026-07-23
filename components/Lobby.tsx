@@ -61,13 +61,16 @@ function RegisterPanel({ onDismiss }: { onDismiss: () => void }) {
 // Lobby
 // -----------------------------------------------------------------------
 export function Lobby({
-  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
+  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, onStartScheduled, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
   user, showRegister, onDismissRegister,
 }: {
   displayName: string
   onDisplayNameChange: (v: string) => void
   onCreateRoom: () => void
   onJoinRoom?: () => void
+  // Enter the just-scheduled room (as host) directly — routes into the room
+  // that holds the agenda, instead of the Start Now path that makes a fresh one.
+  onStartScheduled?: (roomId: string) => void
   creating: boolean
   hasInvite: boolean
   inviteRoom?: { name: string; participantCount: number; ended_at: string | null } | null
@@ -262,7 +265,7 @@ export function Lobby({
                 )}
               </>
             ) : (
-              <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} isSting={subtext === 'Sting'} onScheduled={handleScheduled} />
+              <SchedulePanel displayName={displayName} onDisplayNameChange={onDisplayNameChange} isSting={subtext === 'Sting'} onScheduled={handleScheduled} onStartMeeting={onStartScheduled} />
             )}
           </div>
 

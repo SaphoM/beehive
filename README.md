@@ -217,6 +217,14 @@ A floating assistant button (bottom-right, clear of the centred control bar) tha
 #### Header — Mobile (≤ 640 px)
 Compact single-row header; timer and secondary controls move elsewhere to save space.
 
+#### Video grid — tiles always equal size
+
+`RoomPage.tsx`'s main video area is LiveKit's own `<GridLayout>`, which picks its column/row count from a fixed table of `{columns, rows, orientation, minWidth}` definitions (`@livekit/components-core`'s `selectGridLayout`) based on the container's current aspect ratio and participant count. Confirmed directly against a real screenshot: for exactly 2 participants, it was landing on a layout wider than the actual tile count (its fallback table includes entries good for "up to 4 tiles" that still apply at 2), producing one full-size tile plus a visibly empty grid cell rather than two equal tiles.
+
+Rather than reach into LiveKit's own layout-selection heuristic — a bigger, riskier change than this was worth — this overrides the CSS it emits instead. A small stylesheet, injected once (same idempotent `document.getElementById` guard pattern already used elsewhere in this codebase, e.g. `WaitingRoom.tsx`'s keyframes), replaces `.lk-grid-layout`'s column/row tracks with `grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important` and `grid-auto-rows: 1fr !important`. `auto-fit` collapses any track with no tile in it to `0` width, so whatever number of tiles are actually present always evenly fills the whole area — no empty cells, no single tile inflating into leftover space, at any participant count. `!important` is required because LiveKit sets `--lk-col-count`/`--lk-row-count` via direct DOM `style.setProperty` calls, which would otherwise re-win on every resize against a non-`!important` override.
+
+Verified with real computed layout, not assumed: reproduced the exact broken scenario (2 real tiles, LiveKit's own `--lk-col-count: 2`/`--lk-row-count: 2` forcing a 2×2 grid) at a real 1280×800 viewport — before the fix this leaves 2 empty cells; with it, `getComputedStyle` confirms `grid-template-columns: 640px 640px 0px 0px 0px` (the 3 unused tracks correctly collapsed) and both real tiles measured exactly 640×800px each. Also checked 1, 3, and 5 tiles: 1280×250px split into one 1280px tile, three 427px tiles, and five 256px tiles respectively — equal in every case.
+
 | Element | Notes |
 |---------|-------|
 | **BEE**HIVE wordmark | Smaller font (12 px, letterSpacing 2); `whiteSpace: nowrap`; left side shrinks before right |

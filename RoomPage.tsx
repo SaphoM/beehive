@@ -121,6 +121,38 @@ import {
 import { createSegmentationEngine } from './components/segmentation/createSegmentationEngine'
 import type { SegmentationEngine } from './components/segmentation/types'
 
+// LiveKit's own <GridLayout> picks its column/row count from a fixed table
+// of {columns, rows, orientation, minWidth} definitions (@livekit/components-
+// core's selectGridLayout) keyed off the *container's* current aspect ratio
+// and participant count — for 2 tiles in a landscape container it should
+// pick a plain 2x1 (two equal tiles side by side), but the actual container
+// (main video area, minus the chat sidebar and any floating panels) doesn't
+// reliably land in "landscape" by that function's simple width/height>1
+// check, and its fallback layouts include entries wider than the visible
+// tile count (e.g. 2x2 for anything up to 4 tiles) — which is exactly what
+// produced one full-size tile plus a visibly empty grid cell, confirmed
+// directly against a real screenshot. Rather than fight LiveKit's own
+// adaptive layout-selection heuristic (a bigger, riskier change reaching
+// into meeting/track code this fix is explicitly scoped away from), this
+// overrides the CSS it emits: `auto-fit` with an explicit minmax collapses
+// any grid track that has no tile in it to 0 width, so whatever count of
+// tiles are actually present always evenly fills the whole area — no empty
+// cells, no single tile inflating to fill leftover space, ever. `!important`
+// is required because LiveKit sets `--lk-col-count`/`--lk-row-count` via
+// direct DOM `style.setProperty` calls in a `useLayoutEffect`, which would
+// otherwise re-win over a plain (non-!important) override on every resize.
+if (typeof document !== 'undefined' && !document.getElementById('bhv-equal-grid-tiles')) {
+  const style = document.createElement('style')
+  style.id = 'bhv-equal-grid-tiles'
+  style.textContent = `
+    .lk-grid-layout {
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+      grid-auto-rows: 1fr !important;
+    }
+  `
+  document.head.appendChild(style)
+}
+
 // Captured HERE, synchronously, at module-evaluation time — not inside a
 // useEffect. This is what makes the desktop deep-link handoff's ?room=
 // actually survive: the handoff URL is

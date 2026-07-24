@@ -39,7 +39,12 @@ function SpeakerWindow({
 
   const wrapStyle: React.CSSProperties = {
     position: 'absolute',
-    bottom: 20,
+    // The desktop control dock (s.controls in roomStyles.ts) sits at
+    // bottom:20 and is 68px tall (48px buttons + 20px vertical padding), so
+    // its top edge is at 88px from the bottom of this same positioning
+    // context. 100px clears it with a small gap — without this, the speaker
+    // window's bottom edge sat right on top of the dock buttons.
+    bottom: 100,
     ...(anchor === 'left' ? { left: 20 } : { right: 20 }),
     display: 'flex',
     flexDirection: 'column',

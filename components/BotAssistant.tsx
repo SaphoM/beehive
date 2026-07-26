@@ -176,26 +176,35 @@ export function BotAssistant({ roomId, displayName, canEdit, hostSecret }: {
     )
   }
 
+  // Minimised: a small, fully-visible pill (same pattern as MeetingPrepWindow
+  // / FullscreenHud) instead of transform-sliding the full panel — the old
+  // approach shifted the panel past its `overflow:hidden` parent's right
+  // edge, clipping it almost entirely off-screen.
+  if (minimized) {
+    return (
+      <button style={st.pill} onClick={() => setMinimized(false)} title="Expand BeeHive Assistant" aria-label="Expand BeeHive Assistant">
+        <Bot size={16} color="#f5a623" />
+        <span style={st.pillTitle}>BeeHive Assistant</span>
+        {draft.items.length > 0 && <span style={st.pillBadge}>{completedCount}/{draft.items.length}</span>}
+        <ChevronRight size={13} color="#888" style={{ transform: 'rotate(180deg)' }} />
+      </button>
+    )
+  }
+
   return (
-    <div style={{ ...st.panel, transform: minimized ? 'translateX(calc(100% - 52px))' : 'translateX(0)' }} role="dialog" aria-label="BeeHive Assistant">
+    <div style={st.panel} role="dialog" aria-label="BeeHive Assistant">
       <div style={st.header}>
         <div style={st.headerTitle}>
           <Bot size={16} color="#f5a623" />
-          {!minimized && <span>BeeHive Assistant</span>}
+          <span>BeeHive Assistant</span>
         </div>
         <div style={{ display: 'flex', gap: 2 }}>
-          {!minimized && (
-            <button style={st.iconBtn} onClick={() => setMinimized(true)} title="Minimise" aria-label="Minimise"><Minus size={14} /></button>
-          )}
-          {minimized && (
-            <button style={st.iconBtn} onClick={() => setMinimized(false)} title="Expand" aria-label="Expand"><ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /></button>
-          )}
+          <button style={st.iconBtn} onClick={() => setMinimized(true)} title="Minimise" aria-label="Minimise"><Minus size={14} /></button>
           <button style={st.iconBtn} onClick={() => { setOpen(false); setMinimized(false) }} title="Close" aria-label="Close"><X size={14} /></button>
         </div>
       </div>
 
-      {!minimized && (
-        <div style={st.body}>
+      <div style={st.body}>
           <div style={st.section}>
             {canEdit ? (
               <input
@@ -313,7 +322,6 @@ export function BotAssistant({ roomId, displayName, canEdit, hostSecret }: {
             )}
           </div>
         </div>
-      )}
     </div>
   )
 }
@@ -339,7 +347,22 @@ const st: Record<string, React.CSSProperties> = {
     background: '#141414', border: '1px solid #3a2c10', borderRadius: 14,
     boxShadow: '0 8px 32px rgba(0,0,0,0.7)', display: 'flex', flexDirection: 'column' as const,
     overflow: 'hidden', fontFamily: "'Roboto', sans-serif",
-    transition: 'transform 0.25s cubic-bezier(0.4,0,0.2,1)',
+  },
+  // Minimised state — a small pill in the same spot the panel/fab occupy,
+  // matching MeetingPrepWindow.tsx's proven collapsed-pill pattern instead
+  // of transform-sliding the full panel (which used to clip past the
+  // parent's overflow:hidden edge).
+  pill: {
+    position: 'absolute', bottom: 90, right: 24, zIndex: 40,
+    display: 'flex', alignItems: 'center', gap: 8,
+    background: '#1a1a1a', border: '1px solid #3a2c10', borderRadius: 20,
+    padding: '8px 14px', cursor: 'pointer', boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+    fontFamily: "'Roboto', sans-serif",
+  },
+  pillTitle: { color: '#ccc', fontSize: 12, fontWeight: 400, whiteSpace: 'nowrap' as const },
+  pillBadge: {
+    background: '#0a0a0a', border: '1px solid #3a2c10', borderRadius: 10,
+    color: '#f5a623', fontSize: 10, fontWeight: 700, padding: '1px 6px',
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',

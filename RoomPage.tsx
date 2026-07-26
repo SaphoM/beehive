@@ -92,6 +92,7 @@ import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { Avatar } from './components/Avatar'
 import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
+import { RoomAudioCoordination } from './components/RoomAudioCoordination'
 import { BotAssistant } from './components/BotAssistant'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
@@ -358,6 +359,18 @@ export default function RoomPage() {
         // toggle buttons once in the room.
         video={false}
         audio={false}
+        // audioCaptureDefaults merges *over* LiveKit's own baseline
+        // (autoGainControl/echoCancellation/noiseSuppression/voiceIsolation
+        // all already true by default — confirmed by reading livekit-client's
+        // source; this app was already close to browsers' practical ceiling
+        // before touching anything). channelCount: 1 is the one genuinely
+        // additive, low-risk constraint on top: explicit mono capture avoids
+        // stereo-channel comb-filtering/phase artifacts some hardware
+        // introduces on a "stereo" mic input that's really a single voice
+        // source, and this is a standard, narrow addition — not a pipeline
+        // replacement. Applies to every future setMicrophoneEnabled() call
+        // (mergeDefaultOptions in livekit-client), not just this initial join.
+        options={{ audioCaptureDefaults: { channelCount: 1 } }}
         onDisconnected={handleLeave}
         style={{ height: 'var(--vh, 100vh)' }}
       >
@@ -418,12 +431,19 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // processor). Applied automatically to every mic track this participant
   // publishes, including after toggling mic off/on (which creates a new
   // track). Silently skipped where unsupported — never blocks the mic.
+  // Also stashes the raw, pre-Krisp capture (`rawMicTrack`) for
+  // RoomAudioCoordination's same-room heuristic, which specifically needs
+  // to see what Krisp would otherwise suppress (another person's voice
+  // bleeding in acoustically) — capturing a reference here doesn't consume
+  // or alter the track; Krisp gets it as normal immediately after.
+  const [rawMicTrack, setRawMicTrack] = useState<MediaStreamTrack | null>(null)
   useEffect(() => {
     let cancelled = false
     const applyFilter = async (pub: LocalTrackPublication) => {
       if (pub.source !== Track.Source.Microphone) return
       const track = pub.track
       if (!track || track.kind !== Track.Kind.Audio) return
+      setRawMicTrack(track.mediaStreamTrack)
       try {
         const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import('@livekit/krisp-noise-filter')
         if (cancelled || !isKrispNoiseFilterSupported()) return
@@ -433,7 +453,13 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const existing = localParticipant.getTrackPublication(Track.Source.Microphone)
     if (existing) applyFilter(existing as LocalTrackPublication)
     localParticipant.on(ParticipantEvent.LocalTrackPublished, applyFilter)
-    return () => { cancelled = true; localParticipant.off(ParticipantEvent.LocalTrackPublished, applyFilter) }
+    const clearRawTrack = (pub: LocalTrackPublication) => { if (pub.source === Track.Source.Microphone) setRawMicTrack(null) }
+    localParticipant.on(ParticipantEvent.LocalTrackUnpublished, clearRawTrack)
+    return () => {
+      cancelled = true
+      localParticipant.off(ParticipantEvent.LocalTrackPublished, applyFilter)
+      localParticipant.off(ParticipantEvent.LocalTrackUnpublished, clearRawTrack)
+    }
   }, [localParticipant])
 
   const tracks = allTracks.filter(t =>
@@ -2727,6 +2753,13 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
           {/* Speaking Indicator */}
           <SpeakingIndicator overlayMode={isPresenting ? overlayMode : 'visible'} isPresenting={isPresenting} avatarUrlFor={avatarUrlFor} />
+
+          <RoomAudioCoordination
+            roomId={roomId}
+            localParticipant={localParticipant}
+            participants={liveKitParticipants}
+            rawMicTrack={rawMicTrack}
+          />
 
           {/* BeeHive Bot Assistant — floating agenda helper, always available */}
           {overlayMode !== 'hidden' && (

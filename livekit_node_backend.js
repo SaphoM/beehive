@@ -108,14 +108,35 @@ const roomService = new RoomServiceClient(
 // in localStorage, and it rides back to this backend on every subsequent
 // token request for this room to prove host identity.
 app.post('/api/rooms/schedule', async (req, res) => {
-  const { name, organisation } = req.body
+  const { name, organisation, accessToken } = req.body
   if (!name) return res.status(400).json({ error: 'name is required' })
 
   const livekitRoomName = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
+  // If the organizer is signed in, record it as a fallback host-recognition
+  // path (see /api/livekit/token below) alongside the existing host_secret —
+  // the secret only lives in the one browser that scheduled the meeting, so
+  // an organizer opening their own invite link from a different device/
+  // browser previously landed in the waiting room with no way in. Verified
+  // via Supabase's own token check (not trusted from the request body raw),
+  // so this can't be spoofed with someone else's user id. Best-effort: an
+  // invalid/expired token or an anonymous scheduler just leaves this null,
+  // exactly as it already behaves today.
+  // scheduler_auth_user_id, NOT the pre-existing created_by column — that
+  // one FKs to the legacy public.users table, not auth.users, so writing a
+  // real session's user.id there would violate its FK for any user without
+  // a matching public.users row (the exact landmine room_participants.
+  // user_id already hit, fixed there via its own auth_user_id bridge
+  // column — same fix shape, new column, here).
+  let schedulerAuthUserId = null
+  if (accessToken) {
+    const { data: { user } } = await supabase.auth.getUser(accessToken)
+    schedulerAuthUserId = user?.id ?? null
+  }
+
   const { data: room, error: roomError } = await supabase
     .from('rooms')
-    .insert({ name, livekit_room_name: livekitRoomName, organisation, requires_admission: true })
+    .insert({ name, livekit_room_name: livekitRoomName, organisation, requires_admission: true, scheduler_auth_user_id: schedulerAuthUserId })
     .select()
     .single()
 
@@ -140,7 +161,7 @@ app.post('/api/rooms/schedule', async (req, res) => {
 // Body: { roomName, displayName, identity, hostSecret? }
 // ============================================================
 app.post('/api/livekit/token', async (req, res) => {
-  const { roomName, displayName, identity, hostSecret } = req.body
+  const { roomName, displayName, identity, hostSecret, accessToken } = req.body
 
   if (!roomName || !displayName) {
     return res.status(400).json({ error: 'roomName and displayName are required' })
@@ -161,7 +182,7 @@ app.post('/api/livekit/token', async (req, res) => {
   // fall through untouched, exactly as before this feature existed.
   const { data: room } = await supabase
     .from('rooms')
-    .select('id, requires_admission')
+    .select('id, requires_admission, scheduler_auth_user_id')
     .eq('livekit_room_name', roomName)
     .single()
 
@@ -174,6 +195,15 @@ app.post('/api/livekit/token', async (req, res) => {
         .eq('room_id', room.id)
         .single()
       isHost = hostRow?.host_secret === hostSecret
+    }
+    // Fallback for the organizer opening their own invite link on a
+    // different browser/device than the one they scheduled from — the
+    // host_secret above only ever exists in that one browser's localStorage.
+    // Verified via Supabase's own token check, so a client can't just claim
+    // to be any user id here.
+    if (!isHost && accessToken && room.scheduler_auth_user_id) {
+      const { data: { user } } = await supabase.auth.getUser(accessToken)
+      isHost = user?.id === room.scheduler_auth_user_id
     }
 
     if (isHost) {

@@ -209,10 +209,17 @@ export function useScheduleRoom() {
     setLoading(true)
     setError(null)
 
+    // Recorded as the room's created_by (if signed in) so the organizer can
+    // also be recognized as host via their account on a different browser/
+    // device than the one that scheduled it — see useJoinRoom's accessToken
+    // below. Anonymous scheduling is unaffected: no session, no accessToken,
+    // created_by just stays null exactly as before this existed.
+    const { data: { session } } = await supabase.auth.getSession()
+
     const resp = await fetch(`${API_BASE}/api/rooms/schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, organisation }),
+      body: JSON.stringify({ name, organisation, accessToken: session?.access_token }),
     })
     setLoading(false)
 
@@ -347,10 +354,15 @@ export function useJoinRoom() {
       let hostSecret: string | null = null
       try { hostSecret = localStorage.getItem(`beehive:hostSecret:${roomId}`) } catch { /* storage unavailable — joins as a regular attendee */ }
 
+      // Fallback host recognition for the organizer opening their own invite
+      // link from a different browser/device than the one that scheduled it
+      // (hostSecret above is localStorage-only, so it's absent there). The
+      // backend verifies this token itself — sending it here doesn't grant
+      // anything on its own.
       const tokenRes = await fetch(`${API_BASE}/api/livekit/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity, hostSecret }),
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity, hostSecret, accessToken: session?.access_token }),
       })
 
       if (tokenRes.status === 202) {

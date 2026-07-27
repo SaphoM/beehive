@@ -116,12 +116,20 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
       const dt = new Date(`${date}T${time || '00:00'}`)
       when = dt.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', ...(time ? { hour: '2-digit', minute: '2-digit' } : {}) })
     }
+    const agendaLines = prep && prep.agenda.length > 0
+      ? `\nSuggested agenda:\n${prep.agenda.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n`
+      : ''
+    const checklistLines = prep && prep.checklist.some(c => c.checked)
+      ? `\nBring/prepare:\n${prep.checklist.filter(c => c.checked).map(c => `- ${c.label}`).join('\n')}\n`
+      : ''
     const body = encodeURIComponent(
       `Hi,\n\nYou're invited to a BeeHive video meeting.\n\n` +
       (roomName ? `Meeting: ${roomName}\n` : '') +
       (when ? `When: ${when}\n` : '') +
-      `\nJoin here:\n${link}\n\n` +
-      `— ${displayName || 'Your host'} via BeeHive`
+      `\nJoin here:\n${link}\n` +
+      agendaLines +
+      checklistLines +
+      `\n— ${displayName || 'Your host'} via BeeHive`
     )
     window.open(`mailto:${emails.join(',')}?subject=${subject}&body=${body}`)
     // Re-save in case the prep selection changed after the room was created

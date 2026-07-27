@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Video } from 'lucide-react'
+import { X, Video, Mic } from 'lucide-react'
 import { ParticipantTile, useTracks, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
@@ -16,10 +16,10 @@ function SpeakerWindow({
   speaker,
   camTrack,
   avatarUrl,
-  minimized,
-  dismissed,
-  onToggleMinimize,
-  onDismiss,
+  videoOpen,
+  onOpenVideo,
+  onCloseVideo,
+  onCloseMonitor,
   anchor,
   overlayMode,
   className,
@@ -27,15 +27,15 @@ function SpeakerWindow({
   speaker: Speaker
   camTrack: ReturnType<typeof useTracks>[number] | undefined
   avatarUrl?: string | null
-  minimized: boolean
-  dismissed: boolean
-  onToggleMinimize: () => void
-  onDismiss: () => void
+  videoOpen: boolean
+  onOpenVideo: () => void
+  onCloseVideo: () => void
+  onCloseMonitor: () => void
   anchor: 'left' | 'right'
   overlayMode: 'visible' | 'minimized' | 'hidden'
   className?: string
 }) {
-  const showWindow = !minimized && !dismissed && overlayMode !== 'minimized'
+  const showWindow = videoOpen && overlayMode !== 'minimized'
 
   const wrapStyle: React.CSSProperties = {
     position: 'absolute',
@@ -59,8 +59,8 @@ function SpeakerWindow({
           <div style={s.speakerWindowHeader}>
             <span style={s.speakerWindowName}>{speaker.name}</span>
             <div style={{ display: 'flex', gap: 4 }}>
-              <button style={s.speakerWindowBtn} title="Minimise" onClick={onToggleMinimize}>—</button>
-              <button style={s.speakerWindowBtn} title="Close" onClick={onDismiss}>
+              <button style={s.speakerWindowBtn} title="Minimise video" onClick={onCloseVideo}>—</button>
+              <button style={s.speakerWindowBtn} title="Close monitor" onClick={onCloseMonitor}>
                 <X size={11} />
               </button>
             </div>
@@ -75,9 +75,20 @@ function SpeakerWindow({
         </div>
       )}
 
-      <div style={s.speakingChip}>
-        {minimized && !dismissed && (
-          <button style={s.speakerRestoreBtn} title="Show video" onClick={onToggleMinimize}>
+      {/* The chip is the persistent audio monitor — it is what's always
+          running while the monitor isn't fully closed. Clicking it opens the
+          video preview; it never opens video on its own (e.g. just because
+          someone started speaking). The window header's — only collapses the
+          video and leaves this chip (and speaker detection) untouched; its ×
+          is the only thing that closes the whole monitor. */}
+      <div
+        style={{ ...s.speakingChip, cursor: videoOpen ? 'default' : 'pointer' }}
+        onClick={videoOpen ? undefined : onOpenVideo}
+        role={videoOpen ? undefined : 'button'}
+        title={videoOpen ? undefined : 'Show video'}
+      >
+        {!videoOpen && (
+          <button style={s.speakerRestoreBtn} title="Show video" onClick={(e) => { e.stopPropagation(); onOpenVideo() }}>
             <Video size={11} />
           </button>
         )}
@@ -105,13 +116,19 @@ export function SpeakingIndicator({
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
   const [speakers, setSpeakers] = useState<Speaker[]>([])
 
-  // Primary speaker (always shown)
-  const [minimized1, setMinimized1] = useState(false)
-  const [dismissed1, setDismissed1] = useState<string | null>(null)
+  // Primary monitor (always active for the meeting unless explicitly closed).
+  // videoOpen1 starts false: joining a meeting activates audio monitoring
+  // only — video only opens when the user clicks the chip. monitorClosed1
+  // is a persistent local choice (× button), independent of who's currently
+  // speaking, so it does NOT auto-clear when a different person starts
+  // talking (unlike the old per-identity "dismissed" behaviour it replaces).
+  const [videoOpen1, setVideoOpen1] = useState(false)
+  const [monitorClosed1, setMonitorClosed1] = useState(false)
 
-  // Second speaker (presentation mode only)
-  const [minimized2, setMinimized2] = useState(false)
-  const [dismissed2, setDismissed2] = useState<string | null>(null)
+  // Second monitor (presentation mode only) — same open/closed model,
+  // scoped to its own state since it's an independent window.
+  const [videoOpen2, setVideoOpen2] = useState(false)
+  const [monitorClosed2, setMonitorClosed2] = useState(false)
 
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -141,46 +158,58 @@ export function SpeakingIndicator({
     }
   }, [participants])
 
-  // Auto-clear dismissals when a new person becomes the primary/secondary speaker
-  useEffect(() => {
-    if (speakers.length > 0 && dismissed1 && speakers[0].identity !== dismissed1) setDismissed1(null)
-    if (speakers.length > 1 && dismissed2 && speakers[1].identity !== dismissed2) setDismissed2(null)
-  }, [speakers, dismissed1, dismissed2])
-
-  if (speakers.length === 0 || overlayMode === 'hidden') return null
+  if (overlayMode === 'hidden') return null
 
   const s1 = speakers[0]
   const s2 = isPresenting && speakers.length >= 2 ? speakers[1] : null
 
-  const cam1 = cameraTracks.find(t => t.participant.identity === s1.identity)
+  const cam1 = s1 ? cameraTracks.find(t => t.participant.identity === s1.identity) : undefined
   const cam2 = s2 ? cameraTracks.find(t => t.participant.identity === s2.identity) : undefined
+
+  // Nothing to show at all: monitor not closed, but no one is speaking —
+  // the audio monitor has no data to display, same as before this fix.
+  if (!monitorClosed1 && !s1) return null
 
   return (
     <>
-      {/* Primary speaker — always bottom-left */}
-      <SpeakerWindow
-        speaker={s1}
-        camTrack={cam1}
-        avatarUrl={avatarUrlFor?.(s1.fullName)}
-        minimized={minimized1}
-        dismissed={dismissed1 === s1.identity}
-        onToggleMinimize={() => setMinimized1(v => !v)}
-        onDismiss={() => setDismissed1(s1.identity)}
-        anchor="left"
-        overlayMode={overlayMode}
-        className="speaking-wrap"
-      />
+      {/* Primary monitor — always bottom-left. The restore control is
+          independent of active-speaker detection: it must stay visible
+          while monitorClosed1 is true even if no one is currently
+          speaking, so a × close can always be undone. */}
+      {monitorClosed1 ? (
+        <button
+          style={{ ...s.speakerMonitorRestore, left: 20 }}
+          title="Show speaking monitor"
+          aria-label="Show speaking monitor"
+          onClick={() => setMonitorClosed1(false)}
+        >
+          <Mic size={15} />
+        </button>
+      ) : s1 && (
+        <SpeakerWindow
+          speaker={s1}
+          camTrack={cam1}
+          avatarUrl={avatarUrlFor?.(s1.fullName)}
+          videoOpen={videoOpen1}
+          onOpenVideo={() => setVideoOpen1(true)}
+          onCloseVideo={() => setVideoOpen1(false)}
+          onCloseMonitor={() => { setVideoOpen1(false); setMonitorClosed1(true) }}
+          anchor="left"
+          overlayMode={overlayMode}
+          className="speaking-wrap"
+        />
+      )}
 
       {/* Second speaker — presentation mode only, bottom-right */}
-      {s2 && dismissed2 !== s2.identity && (
+      {s2 && !monitorClosed2 && (
         <SpeakerWindow
           speaker={s2}
           camTrack={cam2}
           avatarUrl={avatarUrlFor?.(s2.fullName)}
-          minimized={minimized2}
-          dismissed={dismissed2 === s2.identity}
-          onToggleMinimize={() => setMinimized2(v => !v)}
-          onDismiss={() => setDismissed2(s2.identity)}
+          videoOpen={videoOpen2}
+          onOpenVideo={() => setVideoOpen2(true)}
+          onCloseVideo={() => setVideoOpen2(false)}
+          onCloseMonitor={() => { setVideoOpen2(false); setMonitorClosed2(true) }}
           anchor="right"
           overlayMode={overlayMode}
         />

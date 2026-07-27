@@ -174,6 +174,12 @@ export const s: Record<string, React.CSSProperties> = {
   soundBars: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 18 },
   soundBar: { width: 3, height: 18, borderRadius: 2, background: '#48bb78', transformOrigin: '50% 100%', transition: 'transform 0.08s ease' },
   speakingName: { color: '#d0d0d0', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.3 },
+  // Restore control for a fully-closed (×'d) speaking monitor — a small,
+  // low-profile circular button in the same corner the monitor normally
+  // occupies, visible even while no one is currently speaking (its
+  // closed/open state is a persistent user choice, not tied to
+  // active-speaker detection).
+  speakerMonitorRestore: { position: 'absolute' as const, bottom: 100, width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(10px)', border: '1px solid rgba(72,187,120,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#48bb78', cursor: 'pointer', zIndex: 15 },
   shareMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 220, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
   shareMenuHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px 8px', borderBottom: '1px solid #2a2a2a', marginBottom: 2 },
   shareMenuTitle: { color: '#888', fontSize: 10, fontWeight: 300, letterSpacing: 1.5, textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif" },

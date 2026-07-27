@@ -4,7 +4,7 @@ import { REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO } from './roomUtils'
 import { BuiltByFooter } from './BuiltByFooter'
 
 type Mode = 'login' | 'register'
-type Step = 'email' | 'otp' | 'magic_sent'
+type Step = 'email' | 'otp'
 
 const c: Record<string, React.CSSProperties> = {
   root: {
@@ -90,6 +90,14 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
   const [otp, setOtp] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // Web only: the magic link and code are two ways to finish the SAME sign-in,
+  // not two separate screens — sending one no longer replaces the form, so a
+  // code request/entry sits directly under the magic-link button and either
+  // one can still be used. `magicSent` and `otpRequested` are independent
+  // (both can be true at once, e.g. sent a magic link, then also requested a
+  // code) rather than a single step, since either path can complete the sign-in.
+  const [magicSent, setMagicSent] = useState(false)
+  const [otpRequested, setOtpRequested] = useState(false)
 
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
@@ -100,15 +108,17 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
     setBusy(true)
 
     if (isElectron) {
-      // Electron: OTP only (magic links open in system browser, not ideal)
+      // Electron: OTP only (magic links open in system browser, not ideal) —
+      // no magic-link button to sit next to here, so this keeps its own step.
       const { error } = await signInWithOtp(email)
       if (error) { setErr(error); setBusy(false); return }
       setStep('otp')
     } else {
-      // Web: default to magic link; OTP available via "Use code instead"
+      // Web: sends the magic link and shows its confirmation inline, without
+      // leaving this screen — "Send code instead" (below) remains available.
       const { error } = await signInWithMagicLink(email)
       if (error) { setErr(error); setBusy(false); return }
-      setStep('magic_sent')
+      setMagicSent(true)
     }
     setBusy(false)
   }
@@ -118,7 +128,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
     setBusy(true)
     const { error } = await signInWithOtp(email)
     if (error) { setErr(error); setBusy(false); return }
-    setStep('otp')
+    setOtpRequested(true)
     setBusy(false)
   }
 
@@ -133,7 +143,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
     onAuthenticated?.()
   }
 
-  function reset() { setStep('email'); setOtp(''); setErr(null) }
+  function reset() { setStep('email'); setMagicSent(false); setOtpRequested(false); setOtp(''); setErr(null) }
 
   return (
     <div style={c.root}>
@@ -167,53 +177,85 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
           )}
 
           {step === 'email' && mode === 'login' && (
-            <form onSubmit={handleEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <p style={c.label}>Email address</p>
-                <input
-                  style={c.input}
-                  type="email"
-                  placeholder="you@company.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  autoFocus
-                  autoComplete="email"
-                />
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <form onSubmit={handleEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <p style={c.label}>Email address</p>
+                  <input
+                    style={c.input}
+                    type="email"
+                    placeholder="you@company.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    disabled={magicSent || otpRequested}
+                    autoFocus
+                    autoComplete="email"
+                  />
+                </div>
 
-              {err && <p style={c.error}>{err}</p>}
+                {err && !otpRequested && <p style={c.error}>{err}</p>}
 
-              <button style={c.primaryBtn} type="submit" disabled={busy || !email.trim()}>
-                {busy ? 'Sending…' : isElectron ? 'Send code' : 'Send magic link'}
-              </button>
+                {isElectron ? (
+                  <button style={c.primaryBtn} type="submit" disabled={busy || !email.trim()}>
+                    {busy ? 'Sending…' : 'Send code'}
+                  </button>
+                ) : magicSent ? (
+                  <p style={c.success}>Magic link sent to <strong>{email}</strong> — click the link in your email to sign in.</p>
+                ) : (
+                  <button style={c.primaryBtn} type="submit" disabled={busy || !email.trim()}>
+                    {busy ? 'Sending…' : 'Send magic link'}
+                  </button>
+                )}
+              </form>
 
+              {/* Code entry sits directly under the magic-link button rather than
+                  replacing it — either can finish the same sign-in, so requesting
+                  a code (or the magic link) doesn't take the other option away. */}
               {!isElectron && (
                 <>
                   <p style={c.divider}>— or —</p>
-                  <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy || !email.trim()}>
-                    Send code instead
-                  </button>
+                  {otpRequested ? (
+                    <form onSubmit={handleOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      <p style={{ ...c.success, marginBottom: 0 }}>Code sent to <strong>{email}</strong></p>
+                      <div>
+                        <p style={c.label}>Verification code</p>
+                        <input
+                          style={c.otpInput}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          maxLength={8}
+                          placeholder="00000000"
+                          value={otp}
+                          onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                          autoFocus
+                          autoComplete="one-time-code"
+                        />
+                      </div>
+                      {err && <p style={c.error}>{err}</p>}
+                      <button style={c.primaryBtn} type="submit" disabled={busy || otp.length < 8}>
+                        {busy ? 'Verifying…' : 'Verify code'}
+                      </button>
+                    </form>
+                  ) : (
+                    <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy || !email.trim()}>
+                      Send code instead
+                    </button>
+                  )}
                 </>
               )}
-            </form>
-          )}
 
-          {step === 'magic_sent' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <p style={c.success}>
-                Magic link sent to<br />
-                <strong>{email}</strong><br />
-                Click the link in your email to sign in.
-              </p>
-              <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy}>
-                {busy ? 'Sending…' : 'Use code instead'}
-              </button>
-              <button style={c.ghostBtn} type="button" onClick={reset}>
-                Use a different email
-              </button>
+              {(magicSent || otpRequested) && (
+                <button style={c.ghostBtn} type="button" onClick={reset}>
+                  Use a different email
+                </button>
+              )}
             </div>
           )}
 
+          {/* Electron only — OTP is the sole sign-in method there (no magic
+              link to sit next to; see handleEmailSubmit's isElectron branch),
+              so it keeps its own dedicated step. */}
           {step === 'otp' && (
             <form onSubmit={handleOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <p style={{ ...c.success, marginBottom: 0 }}>

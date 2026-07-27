@@ -218,6 +218,24 @@ export const MEETING_TEMPLATES: MeetingTemplate[] = [
     attendees: ['Leadership', 'Department heads', 'Finance'],
     risks: ['Too many priorities', 'Goals not measurable', 'No resourcing'],
   },
+  {
+    id: 'technical', title: 'Technical Meeting', description: 'Design & troubleshoot', prepMinutes: 30,
+    agenda: ['Context & scope', 'Technical walkthrough', 'Trade-offs & alternatives', 'Open questions', 'Decisions', 'Next steps'],
+    documents: ['Architecture diagram', 'Design doc / spec', 'Logs or error reports', 'Relevant code / PRs'],
+    questions: ['What problem are we solving technically?', 'What are the constraints (performance, security, cost)?', 'What alternatives were considered?', 'What are the risks or trade-offs?'],
+    goals: ['Align on a technical approach', 'Surface risks early', 'Record clear decisions'],
+    attendees: ['Engineering lead', 'Relevant engineers', 'Architect (if needed)'],
+    risks: ['Sliding into implementation detail instead of decisions', 'Missing stakeholder for a key call'],
+  },
+  {
+    id: 'support', title: 'Support Call', description: 'Help & troubleshoot', prepMinutes: 15,
+    agenda: ['Understand the issue', 'Reproduce / diagnose', 'Proposed fix or workaround', 'Timeline & next steps', 'Follow-up plan'],
+    documents: ['Ticket / case notes', 'Error logs', 'Account or system details', 'Known-issues list'],
+    questions: ['What exactly is happening, and since when?', 'Can it be reproduced?', 'What is the business impact?', 'What has already been tried?'],
+    goals: ['Diagnose the issue', 'Set clear expectations', 'Agree next steps / SLA'],
+    attendees: ['Support engineer', 'Customer / user', 'Escalation contact (if needed)'],
+    risks: ['Issue not reproducible', 'Unclear severity or impact', 'No follow-up owner'],
+  },
 ]
 
 export const DEFAULT_TEMPLATE_ID = 'client'

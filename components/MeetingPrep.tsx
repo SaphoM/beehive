@@ -3,7 +3,7 @@ import {
   Building2, Handshake, RefreshCw, Lightbulb, Rocket, Users, TrendingUp,
   GraduationCap, Briefcase, Scale, Wrench, UserCheck, ClipboardCheck,
   CalendarDays, CheckCircle2, RotateCcw, DollarSign, Monitor, Search,
-  BarChart3, Map as MapIcon, ArrowLeft, ChevronRight, type LucideIcon,
+  BarChart3, Map as MapIcon, ArrowLeft, ChevronRight, Terminal, LifeBuoy, type LucideIcon,
 } from 'lucide-react'
 import { MEETING_TEMPLATES, getTemplate } from './meetingTemplates'
 
@@ -15,7 +15,7 @@ const TEMPLATE_ICONS: Record<string, LucideIcon> = {
   interview: Briefcase, executive: Scale, workshop: Wrench, 'one-on-one': UserCheck,
   performance: ClipboardCheck, 'sprint-planning': CalendarDays, 'sprint-review': CheckCircle2,
   retro: RotateCcw, investor: DollarSign, demo: Monitor, discovery: Search,
-  quarterly: BarChart3, 'annual-planning': MapIcon,
+  quarterly: BarChart3, 'annual-planning': MapIcon, technical: Terminal, support: LifeBuoy,
 }
 
 // ============================================================

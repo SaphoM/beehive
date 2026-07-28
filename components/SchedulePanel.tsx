@@ -167,7 +167,15 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
         <input
           type="date"
           min={todayStr}
-          style={{ ...s.input, flex: 2, margin: 0, colorScheme: 'dark' as any }}
+          // No forced colorScheme here — Electron's Chromium renders the
+          // native date-picker calendar popup as an unstyled solid black
+          // box under `colorScheme: 'dark'` (it doesn't ship the same
+          // fully-themed dark calendar assets stock desktop Chrome does),
+          // making the whole date field unusable in the desktop app.
+          // Leaving color-scheme unset falls back to the default (light)
+          // native popup, which renders correctly everywhere — the input
+          // box itself still picks up the app's dark styling via s.input.
+          style={{ ...s.input, flex: 2, margin: 0 }}
           value={date}
           onChange={e => setDate(e.target.value)}
         />

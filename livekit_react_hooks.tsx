@@ -255,12 +255,20 @@ export function useRoomInfo(roomId: string | null) {
   const refresh = useCallback(() => {
     if (!roomId) return
     setLoading(true)
+    // participantCount comes from LiveKit's own Room Service
+    // (GET /api/rooms/:roomId/participant-count), not the room_participants.
+    // is_active mirror — that mirror only updates via client-side leave
+    // events plus a participant_left/room_finished webhook, and a production
+    // audit found dozens of rows still marked active hours after everyone
+    // had actually left whenever that webhook didn't land. Every other
+    // participant count in this app already reads live LiveKit data for the
+    // same reason (see RoomPage.tsx's header/dock/alone-timer count).
     Promise.all([
       supabase.from('rooms').select('name, ended_at').eq('id', roomId).single(),
-      supabase.from('room_participants').select('id', { count: 'exact' }).eq('room_id', roomId).eq('is_active', true),
-    ]).then(([roomRes, participantsRes]) => {
+      fetch(`${API_BASE}/api/rooms/${roomId}/participant-count`).then(r => r.ok ? r.json() : { count: 0 }).catch(() => ({ count: 0 })),
+    ]).then(([roomRes, countRes]) => {
       if (roomRes.data) {
-        setRoom({ name: roomRes.data.name, participantCount: participantsRes.count ?? 0, ended_at: roomRes.data.ended_at ?? null })
+        setRoom({ name: roomRes.data.name, participantCount: countRes.count ?? 0, ended_at: roomRes.data.ended_at ?? null })
       }
       setLoading(false)
     })

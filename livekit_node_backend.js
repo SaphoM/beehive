@@ -477,6 +477,40 @@ app.post('/api/rooms/:roomId/grant-co-host', async (req, res) => {
 })
 
 // ============================================================
+// LIVE PARTICIPANT COUNT (for the invite-preview screen)
+// GET /api/rooms/:roomId/participant-count
+// ============================================================
+// The invite-preview count (Lobby.tsx, before a guest has actually joined
+// and connected to LiveKit) used to be a raw count of room_participants rows
+// with is_active=true — a Supabase mirror kept in sync only by client-side
+// leave events plus the participant_left/room_finished webhooks below. In
+// production that mirror drifted: a real audit found dozens of rows still
+// marked is_active=true hours (in some cases days) after the room had
+// genuinely emptied, because a webhook not firing (or firing outside a
+// window this code can control) leaves nothing to ever flip the flag back.
+// Every other participant count in this app already reads live LiveKit data
+// (RoomPage.tsx's header badge/dock/alone-timer all use useParticipants(),
+// with an existing comment there noting the exact same is_active-can-lag
+// problem) — this endpoint brings the one remaining DB-mirror-based count in
+// line with that, by asking LiveKit's own Room Service for the room's actual
+// current participants instead of trusting a local copy.
+app.get('/api/rooms/:roomId/participant-count', async (req, res) => {
+  const { roomId } = req.params
+  const { data: room } = await supabase.from('rooms').select('livekit_room_name').eq('id', roomId).single()
+  if (!room) return res.status(404).json({ error: 'Room not found' })
+
+  try {
+    const participants = await roomService.listParticipants(room.livekit_room_name)
+    return res.json({ count: participants.length })
+  } catch (e) {
+    // listParticipants throws if the LiveKit room doesn't currently exist
+    // server-side (e.g. it was never started, or has already closed) — that
+    // means zero people are in it right now, not an error worth surfacing.
+    return res.json({ count: 0 })
+  }
+})
+
+// ============================================================
 // LIVEKIT WEBHOOK — recording completed
 // POST /api/livekit/webhook
 // ============================================================

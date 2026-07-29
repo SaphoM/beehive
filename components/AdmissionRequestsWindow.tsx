@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { X, UserCheck, UserX } from 'lucide-react'
 import type { PendingAdmissionRequest } from '../livekit_react_hooks'
 import { Avatar } from './Avatar'
@@ -21,6 +21,35 @@ export function AdmissionRequestsWindow({ roomId, pending, hostSecret, actingDis
   onClose: () => void
 }) {
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // When the last pending request is resolved, start a 60s countdown then
+  // auto-close. Cancel immediately if a new request arrives.
+  useEffect(() => {
+    if (pending.length > 0) {
+      // Someone new (or still) waiting — cancel any pending auto-close
+      if (closeTimerRef.current) { clearTimeout(closeTimerRef.current); closeTimerRef.current = null }
+      if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null }
+      setCountdown(null)
+      return
+    }
+    // pending is now empty — start the countdown
+    setCountdown(60)
+    tickTimerRef.current = setInterval(() => {
+      setCountdown(prev => (prev !== null && prev > 1 ? prev - 1 : prev))
+    }, 1000)
+    closeTimerRef.current = setTimeout(() => {
+      if (tickTimerRef.current) clearInterval(tickTimerRef.current)
+      setCountdown(null)
+      onClose()
+    }, 60000)
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+      if (tickTimerRef.current) clearInterval(tickTimerRef.current)
+    }
+  }, [pending.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const decide = async (requestId: string, decision: 'admit' | 'deny') => {
     setBusyId(requestId)
@@ -48,7 +77,14 @@ export function AdmissionRequestsWindow({ roomId, pending, hostSecret, actingDis
       </div>
       <div style={st.body}>
         {pending.length === 0 && (
-          <p style={st.empty}>No one's waiting right now.</p>
+          <p style={st.empty}>
+            No one's waiting right now.
+            {countdown !== null && (
+              <span style={{ display: 'block', color: '#3a3a3a', fontSize: 10, marginTop: 4 }}>
+                Closing in {countdown}s
+              </span>
+            )}
+          </p>
         )}
         {pending.map((r) => (
           <div key={r.id} style={st.row}>

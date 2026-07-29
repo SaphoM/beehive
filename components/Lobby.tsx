@@ -78,7 +78,7 @@ export function Lobby({
   onJoinMeeting?: (roomId: string) => void
   creating: boolean
   hasInvite: boolean
-  inviteRoom?: { name: string; participantCount: number; ended_at: string | null } | null
+  inviteRoom?: { name: string; participantCount: number; ended_at: string | null; scheduled_date: string | null; scheduled_time: string | null } | null
   subtext: Subtext
   onSubtextChange: (v: Subtext) => void
   user?: User | null
@@ -259,6 +259,14 @@ export function Lobby({
                   <div style={s.invitePreview}>
                     <p style={s.inviteLabel}>You've been invited to</p>
                     <p style={s.inviteRoomName}>{inviteRoom.name}</p>
+                    {inviteRoom.scheduled_date && (
+                      <p style={{ ...s.inviteMeta, color: '#aaa', fontSize: 11 }}>
+                        {new Date(`${inviteRoom.scheduled_date}T${inviteRoom.scheduled_time || '00:00'}`).toLocaleString(undefined, {
+                          weekday: 'long', month: 'long', day: 'numeric',
+                          ...(inviteRoom.scheduled_time ? { hour: '2-digit', minute: '2-digit' } : {}),
+                        })}
+                      </p>
+                    )}
                     <p style={s.inviteMeta}>
                       {inviteRoom.participantCount > 0
                         ? `${inviteRoom.participantCount} participant${inviteRoom.participantCount !== 1 ? 's' : ''} in the room`

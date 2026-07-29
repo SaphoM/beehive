@@ -262,7 +262,13 @@ export function useScheduleRoom() {
 // ROOM INFO (for invite preview)
 // ============================================================
 export function useRoomInfo(roomId: string | null) {
-  const [room, setRoom] = useState<{ name: string; participantCount: number; ended_at: string | null } | null>(null)
+  const [room, setRoom] = useState<{
+    name: string
+    participantCount: number
+    ended_at: string | null
+    scheduled_date: string | null
+    scheduled_time: string | null
+  } | null>(null)
   const [loading, setLoading] = useState(false)
 
   const refresh = useCallback(() => {
@@ -277,11 +283,17 @@ export function useRoomInfo(roomId: string | null) {
     // participant count in this app already reads live LiveKit data for the
     // same reason (see RoomPage.tsx's header/dock/alone-timer count).
     Promise.all([
-      supabase.from('rooms').select('name, ended_at').eq('id', roomId).single(),
+      supabase.from('rooms').select('name, ended_at, scheduled_date, scheduled_time').eq('id', roomId).single(),
       fetch(`${API_BASE}/api/rooms/${roomId}/participant-count`).then(r => r.ok ? r.json() : { count: 0 }).catch(() => ({ count: 0 })),
     ]).then(([roomRes, countRes]) => {
       if (roomRes.data) {
-        setRoom({ name: roomRes.data.name, participantCount: countRes.count ?? 0, ended_at: roomRes.data.ended_at ?? null })
+        setRoom({
+          name: roomRes.data.name,
+          participantCount: countRes.count ?? 0,
+          ended_at: roomRes.data.ended_at ?? null,
+          scheduled_date: roomRes.data.scheduled_date ?? null,
+          scheduled_time: roomRes.data.scheduled_time ?? null,
+        })
       }
       setLoading(false)
     })

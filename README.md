@@ -121,6 +121,45 @@ Anyone in a meeting can invite anyone else — no account required on either sid
 
 ---
 
+### Scheduled Meeting Invitations & Carousel
+
+Signed-in users who schedule meetings get a DB-backed invitation system — their upcoming meetings appear in a **Meeting Carousel** in the lobby the moment a room is created, updating live across all their devices via Supabase Realtime.
+
+#### Schema (`supabase/migrations/008_meeting_invitations.sql`)
+
+- `rooms` table: added `scheduled_date text`, `scheduled_time text`, `duration_minutes int`
+- New `meeting_invitations` table: `(id, room_id, invitee_email, invited_by_name, status, responded_at, invited_at, invitee_user_id)` with `UNIQUE(room_id, invitee_email)`. RLS enabled — SELECT for the invitee (by email) or the organizer (by `scheduler_auth_user_id`); no INSERT/UPDATE policy for clients (all writes go through the service-role backend). `ALTER PUBLICATION supabase_realtime ADD TABLE meeting_invitations` enables live updates.
+
+#### Backend endpoints (`livekit_node_backend.js`)
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `POST /api/rooms/schedule` | — | Creates room with `scheduled_date`/`scheduled_time`/`duration_minutes`; mints `hostSecret` |
+| `POST /api/rooms/:roomId/invitations` | `hostSecret` | Upserts invitation rows for a list of emails (idempotent on `room_id + invitee_email`) |
+| `PATCH /api/invitations/:id` | Bearer token | Invitee RSVPs — validates caller email matches `invitee_email`, updates `status` |
+| `GET /api/me/meetings` | Bearer token | Returns organizer rooms + received invitations merged and sorted soonest-first |
+| `DELETE /api/rooms/:roomId` | `hostSecret` | Organizer deletes a scheduled room; cascade removes invitations via FK |
+
+#### `useMyMeetings` hook (`livekit_react_hooks.tsx`)
+
+- Fetches from `GET /api/me/meetings` on mount and re-fetches on any Realtime change to `meeting_invitations`
+- Exposes `meetings: MyMeeting[]`, `loading`, and `updateStatus(invitationId, status)` (optimistic UI update then PATCH)
+- `MyMeeting` interface: `{ id, roomId, roomName, scheduledDate, scheduledTime, durationMinutes, endedAt, role: 'organizer'|'invitee', status, invitationId, organizerName }`
+
+#### `MeetingCarousel` component (`components/MeetingCarousel.tsx`)
+
+Shown in the **Start Now** tab for signed-in users with upcoming meetings. One card visible at a time; paginated with chevrons + dot indicators.
+
+- **`MeetingCard`** — uses the same `s.invitePreview` / `s.inviteLabel` / `s.inviteRoomName` / `s.inviteMeta` styles as the existing `?room=` invite preview card for visual consistency. Meta line: `date · time · duration · countdown` joined with `·`. Gold border when selected.
+  - **Gold `PlayCircle` icon** (right-aligned) — the only launch affordance; clicking opens a `ConfirmSheet` overlay before entering the meeting. **Greyed out and disabled 10 minutes after the scheduled time has passed** (`cursor: not-allowed`, tooltip "Meeting time has passed") — computed per-minute via the existing countdown interval.
+  - **Inline RSVP buttons** (pending invitees only) — Accept / Maybe / Decline; call `updateStatus()` with optimistic update
+  - **Trash icon** (organizer only, top of right column) — clicking shows an inline **Delete / Keep** mini-confirm; confirming reads `hostSecret` from `localStorage` and calls `DELETE /api/rooms/:roomId`, then clears the carousel selection. Prevents accidental deletion with the two-step confirm.
+- **`ConfirmSheet`** — fixed overlay (backdrop blur, Escape/backdrop closes); shows meeting name + date + Start/Join button. Lifted to `Lobby` so both the card icon and the primary button share one confirm flow.
+- **Primary button in Lobby** adapts to the selected card: `Start Meeting` (no scheduled meeting selected) / `Start Scheduled Meeting` (organizer) / `Join Scheduled Meeting` (invitee). A "Start a new meeting instead" secondary button appears when a scheduled meeting is selected.
+- **Auto-selects** the visible card via `useEffect` on carousel index change, keeping the primary button in sync.
+
+---
+
 ### Lobby
 
 - **BEE**HIVE wordmark — `BEE` in Roboto Regular (400), `HIVE` in Roboto Thin (100)
@@ -131,6 +170,7 @@ Anyone in a meeting can invite anyone else — no account required on either sid
 
 **Signature button convention:** every primary-action button in the app follows one rule — **signature gold (`#f5a623`) by default, `STING_RED` when the surrounding context is in Sting mode.** This is `components/roomStyles.ts`'s shared `primaryBtn` (`background: '#f5a623', color: '#000'` — black text for AA contrast on the light gold fill; the same black-on-red pairing also clears AA against `STING_RED`), overridden per-button with `subtext === 'Sting' ? STING_RED : ...` wherever a Meet/Sting toggle is in scope. In-meeting components without direct access to `subtext` (`InviteModal`, `ReactionComposer`) receive it as an `accent` prop computed once in `MeetingRoom` (`const accent = subtext === 'Sting' ? STING_RED : '#f5a623'`) so their primary buttons stay in sync with the room's mode. Applies to: Lobby's Start/Join/Register buttons, Schedule's Create Meeting/Send Invite buttons, the in-room chat send button, the Invite modal's Copy Link button, and the reaction composer's Send button. `AuthScreen`'s buttons use the same `#f5a623` for visual consistency but have no Sting override — there's no Meet/Sting context before signing in. Verified consistent across **every version of the app** (macOS desktop, web desktop browser, mobile web): there is no platform-specific style override anywhere in the codebase (no `isMobile`/`isElectron` branch changes a button's color) — web, desktop, and mobile all render the same `roomStyles.ts`/`AuthScreen.tsx` styles from the same React bundle, so a color fix here is a color fix everywhere at once.
   - **Schedule** — pick date + time (`TimePicker.tsx` — a custom two-column hour/minute dropdown, used because Safari renders no dropdown at all for a native `<input type="time">`; identical look/behavior across Safari, Firefox, Chrome, and the desktop app) + **duration** (15m/30m/45m/1h/1.5h — the 1.5h pill previously showed "1.5h 30m" from unrounded division; now floors to whole hours), add attendee emails as chips, generate an invite link, copy it or send pre-filled email invites via the system mail client; room is created in Supabase up front so the link works immediately. **"Create Meeting & Get Link" is greyed out and disabled** until name, date, and time are all filled in (the same `formReady` gate the Smart Meeting Preparation assistant below uses — both agree on "ready to schedule"). Also includes the **Smart Meeting Preparation** assistant (below). Clicking **Send Email Invite** opens the mail client, shows a "Meeting set up successfully" toast, and returns the host to the **Start Now** tab, where the meeting's name and date/time now appear as a dismissible **Next meeting** card above the usual start controls (persisted in `localStorage` so it survives a page reload; cleared via its own **×**)
+    - **Past-time blocking in the time picker** — when today's date is selected, `TimePicker` disables all hours that have already passed (rendered in a muted `#333`, `cursor: not-allowed`, `pointerEvents: none`). If the selected hour equals the current hour, minutes at or before the current minute are also disabled. Selecting a new hour that is the current hour automatically advances any stale minute selection to `now + 1 min` so the chosen time is always in the future. Future dates are unrestricted.
 - Invite preview — guests visiting a `?room=ROOM_ID` link see the room name and live participant count before joining
 - **Register CTA (Beta)** — the register control card-flips the lobby card to the `RegisterPanel`, which — during the private Beta — shows a **`Beta`** badge and a "Request access from X Spark" button (`mailto:studio@xspark.co.za`) instead of a self-serve form (see [Authentication](#authentication))
 - **Post-meeting register** — guests who joined via room link are prompted to request Beta access when they return to the lobby after a meeting ends (same card-flip animation)

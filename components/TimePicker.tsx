@@ -18,10 +18,12 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const MINUTES = Array.from({ length: 60 }, (_, i) => i)
 const pad = (n: number) => String(n).padStart(2, '0')
 
-export function TimePicker({ value, onChange, style }: {
+export function TimePicker({ value, onChange, style, selectedDate }: {
   value: string
   onChange: (v: string) => void
   style?: React.CSSProperties
+  /** YYYY-MM-DD — when this matches today, past hours/minutes are disabled */
+  selectedDate?: string
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -29,6 +31,13 @@ export function TimePicker({ value, onChange, style }: {
   const minuteColRef = useRef<HTMLDivElement>(null)
 
   const [hh, mm] = value ? value.split(':').map(Number) : [null, null]
+
+  // Determine which hours/minutes are in the past when date === today
+  const now = new Date()
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const isToday = selectedDate === todayStr
+  const nowHour = now.getHours()
+  const nowMinute = now.getMinutes()
 
   useEffect(() => {
     if (!open) return
@@ -53,7 +62,24 @@ export function TimePicker({ value, onChange, style }: {
       ?.scrollIntoView({ block: 'center' })
   }, [open])
 
-  const pick = (h: number, m: number) => onChange(`${pad(h)}:${pad(m)}`)
+  // Picking an hour stays open so the user can continue to minutes.
+  // Picking a minute closes — that's the natural end of selection.
+  const pickHour = (h: number) => {
+    const safeM = isToday && h === nowHour && (mm ?? 0) <= nowMinute
+      ? (nowMinute + 1 < 60 ? nowMinute + 1 : nowMinute)
+      : (mm ?? 0)
+    onChange(`${pad(h)}:${pad(safeM)}`)
+    // Scroll minutes column to first available after hour change
+    setTimeout(() => {
+      minuteColRef.current?.querySelector<HTMLElement>('[data-active="true"]')
+        ?.scrollIntoView({ block: 'center' })
+    }, 0)
+  }
+
+  const pickMinute = (h: number, m: number) => {
+    onChange(`${pad(h)}:${pad(m)}`)
+    setOpen(false)
+  }
 
   return (
     <div ref={rootRef} style={{ position: 'relative', ...style }}>
@@ -71,31 +97,49 @@ export function TimePicker({ value, onChange, style }: {
 
       {open && (
         <div style={t.panel}>
+          {/* Hour column — stays open after pick so user flows to minutes */}
           <div ref={hourColRef} style={t.col}>
-            {HOURS.map(h => (
-              <button
-                key={h}
-                type="button"
-                data-active={h === hh}
-                onClick={() => pick(h, mm ?? 0)}
-                style={{ ...t.cell, ...(h === hh ? t.cellActive : {}) }}
-              >
-                {pad(h)}
-              </button>
-            ))}
+            {HOURS.map(h => {
+              const pastHour = isToday && h < nowHour
+              return (
+                <button
+                  key={h}
+                  type="button"
+                  data-active={h === hh}
+                  disabled={pastHour}
+                  onClick={() => { if (!pastHour) pickHour(h) }}
+                  style={{
+                    ...t.cell,
+                    ...(h === hh ? t.cellActive : {}),
+                    ...(pastHour ? t.cellDisabled : {}),
+                  }}
+                >
+                  {pad(h)}
+                </button>
+              )
+            })}
           </div>
+          {/* Minute column — closes on pick (selection is complete) */}
           <div ref={minuteColRef} style={t.col}>
-            {MINUTES.map(m => (
-              <button
-                key={m}
-                type="button"
-                data-active={m === mm}
-                onClick={() => pick(hh ?? 0, m)}
-                style={{ ...t.cell, ...(m === mm ? t.cellActive : {}) }}
-              >
-                {pad(m)}
-              </button>
-            ))}
+            {MINUTES.map(m => {
+              const pastMinute = isToday && (hh ?? 0) === nowHour && m <= nowMinute
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  data-active={m === mm}
+                  disabled={pastMinute}
+                  onClick={() => { if (!pastMinute) pickMinute(hh ?? 0, m) }}
+                  style={{
+                    ...t.cell,
+                    ...(m === mm ? t.cellActive : {}),
+                    ...(pastMinute ? t.cellDisabled : {}),
+                  }}
+                >
+                  {pad(m)}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
@@ -125,4 +169,5 @@ const t: Record<string, React.CSSProperties> = {
     textAlign: 'center',
   },
   cellActive: { background: '#2a2010', color: '#f5a623', fontWeight: 600 },
+  cellDisabled: { color: '#333', cursor: 'not-allowed', pointerEvents: 'none' as const },
 }

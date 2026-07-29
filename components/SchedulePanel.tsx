@@ -210,7 +210,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
           value={date}
           onChange={e => setDate(e.target.value)}
         />
-        <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} />
+        <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} selectedDate={date || undefined} />
       </div>
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

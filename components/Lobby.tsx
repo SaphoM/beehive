@@ -4,12 +4,13 @@ import { s } from './roomStyles'
 import { SUBTEXTS, STING_RED, REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO, type Subtext } from './roomUtils'
 import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
-import { useAuth, useProfile } from '../livekit_react_hooks'
+import { useAuth, useProfile, useMyMeetings, supabase } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
 import { EditableAvatar } from './Avatar'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 import { BuiltByFooter } from './BuiltByFooter'
 import { Toast } from './Toast'
+import { MeetingCarousel } from './MeetingCarousel'
 
 interface NextMeeting { name: string; date: string; time: string; link: string }
 const NEXT_MEETING_KEY = 'beehive:nextMeeting'
@@ -61,7 +62,7 @@ function RegisterPanel({ onDismiss }: { onDismiss: () => void }) {
 // Lobby
 // -----------------------------------------------------------------------
 export function Lobby({
-  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, onStartScheduled, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
+  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, onStartScheduled, onJoinMeeting, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
   user, showRegister, onDismissRegister,
 }: {
   displayName: string
@@ -71,6 +72,9 @@ export function Lobby({
   // Enter the just-scheduled room (as host) directly — routes into the room
   // that holds the agenda, instead of the Start Now path that makes a fresh one.
   onStartScheduled?: (roomId: string) => void
+  // Join a specific room from the carousel (invitee flow, goes through normal
+  // waiting-room join path rather than the URL-param invite path).
+  onJoinMeeting?: (roomId: string) => void
   creating: boolean
   hasInvite: boolean
   inviteRoom?: { name: string; participantCount: number; ended_at: string | null } | null
@@ -93,6 +97,22 @@ export function Lobby({
     } catch { return null }
   })
   const [showScheduledToast, setShowScheduledToast] = useState(false)
+
+  // Session token needed by the carousel hook — fetched once and refreshed
+  // whenever auth state changes. Only used when user is signed in.
+  const [accessToken, setAccessToken] = useState<string | null>(null)
+  useEffect(() => {
+    if (!user) { setAccessToken(null); return }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setAccessToken(session?.access_token ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+      setAccessToken(s?.access_token ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [user])
+
+  const { meetings, loading: meetingsLoading, updateStatus } = useMyMeetings(accessToken, user?.email)
 
   useEffect(() => { if (showRegister) setFlipped(true) }, [showRegister])
 
@@ -171,7 +191,19 @@ export function Lobby({
               </div>
             )}
 
-            {lobbyTab === 'now' && !hasInvite && nextMeeting && (
+            {/* Carousel — signed-in users see their DB-backed meetings from
+                the invitation system. Anonymous users fall back to the
+                localStorage card from a previously scheduled meeting. */}
+            {lobbyTab === 'now' && !hasInvite && user && meetings.length > 0 && (
+              <MeetingCarousel
+                meetings={meetings}
+                loading={meetingsLoading}
+                onJoin={roomId => (onJoinMeeting ?? onStartScheduled)?.(roomId)}
+                onStart={roomId => onStartScheduled?.(roomId)}
+                onUpdateStatus={updateStatus}
+              />
+            )}
+            {lobbyTab === 'now' && !hasInvite && !user && nextMeeting && (
               <div style={{ ...s.invitePreview, position: 'relative' }}>
                 <button
                   onClick={dismissNextMeeting}

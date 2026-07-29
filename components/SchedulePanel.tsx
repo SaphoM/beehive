@@ -85,7 +85,15 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     // Scheduled meetings go through the backend (not a direct client insert)
     // so they come out waiting-room-gated — only Start Now's own room
     // creation (RoomPage.tsx) stays a direct, ungated client insert.
-    const result = await scheduleRoom(meetingName)
+    // Pass date/time/duration so the backend stores them on the rooms row,
+    // making the meeting show up correctly in the carousel for all invitees.
+    const result = await scheduleRoom(
+      meetingName,
+      undefined,
+      date || undefined,
+      time || undefined,
+      duration,
+    )
     if (!result) return
     const { room, hostSecret } = result
     setLink(`${WEB_BASE}?room=${room.id}`)
@@ -101,6 +109,19 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
       saveMeetingPrep(room.id, prep)
       seedSharedAgenda(room.id, hostSecret, displayName, prep)
     }
+    // Create DB-backed invitations so invitees see this room in their carousel
+    // immediately, across all their devices, without waiting for the email.
+    if (emails.length > 0) {
+      try {
+        await fetch(`${API_BASE}/api/rooms/${room.id}/invitations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails, inviterName: displayName, hostSecret }),
+        })
+      } catch (e) {
+        console.warn('[schedule] invitation creation failed (non-fatal):', e)
+      }
+    }
   }
 
   const copyLink = () => {
@@ -109,7 +130,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const sendEmails = () => {
+  const sendEmails = async () => {
     const subject = encodeURIComponent(`BeeHive Meeting: ${roomName || "You're invited"}`)
     let when = ''
     if (date) {
@@ -137,6 +158,16 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     if (prep && createdRoomId) {
       saveMeetingPrep(createdRoomId, prep)
       if (createdHostSecret) seedSharedAgenda(createdRoomId, createdHostSecret, displayName, prep)
+    }
+    // Upsert invitations — safe to re-call (idempotent on room_id+invitee_email)
+    if (createdRoomId && createdHostSecret && emails.length > 0) {
+      try {
+        await fetch(`${API_BASE}/api/rooms/${createdRoomId}/invitations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails, inviterName: displayName, hostSecret: createdHostSecret }),
+        })
+      } catch { /* non-fatal */ }
     }
     onScheduled?.({ name: meetingName, date, time, link })
   }

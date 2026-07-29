@@ -108,7 +108,7 @@ const roomService = new RoomServiceClient(
 // in localStorage, and it rides back to this backend on every subsequent
 // token request for this room to prove host identity.
 app.post('/api/rooms/schedule', async (req, res) => {
-  const { name, organisation, accessToken } = req.body
+  const { name, organisation, accessToken, scheduledDate, scheduledTime, durationMinutes } = req.body
   if (!name) return res.status(400).json({ error: 'name is required' })
 
   const livekitRoomName = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -136,7 +136,16 @@ app.post('/api/rooms/schedule', async (req, res) => {
 
   const { data: room, error: roomError } = await supabase
     .from('rooms')
-    .insert({ name, livekit_room_name: livekitRoomName, organisation, requires_admission: true, scheduler_auth_user_id: schedulerAuthUserId })
+    .insert({
+      name,
+      livekit_room_name: livekitRoomName,
+      organisation,
+      requires_admission: true,
+      scheduler_auth_user_id: schedulerAuthUserId,
+      ...(scheduledDate ? { scheduled_date: scheduledDate } : {}),
+      ...(scheduledTime ? { scheduled_time: scheduledTime } : {}),
+      ...(durationMinutes ? { duration_minutes: durationMinutes } : {}),
+    })
     .select()
     .single()
 
@@ -638,6 +647,170 @@ app.get('/api/fathom/recordings/:id/transcript', async (req, res) => {
     const msg = e?.name === 'AbortError' ? 'Fathom API timed out' : 'Failed to reach Fathom API'
     res.status(502).json({ error: msg })
   }
+})
+
+// ============================================================
+// MEETING INVITATIONS — create
+// POST /api/rooms/:roomId/invitations
+// Body: { emails: string[], inviterName: string, hostSecret: string }
+// ============================================================
+// Requires hostSecret so only the actual room creator can send invitations.
+// Upserts on (room_id, invitee_email) — safe to call multiple times (e.g.
+// when the host edits the email list and re-sends).
+app.post('/api/rooms/:roomId/invitations', async (req, res) => {
+  const { roomId } = req.params
+  const { emails, inviterName, hostSecret } = req.body
+  if (!Array.isArray(emails) || emails.length === 0 || !inviterName) {
+    return res.status(400).json({ error: 'emails[] and inviterName are required' })
+  }
+
+  const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
+  if (!hostRow || hostRow.host_secret !== hostSecret) {
+    return res.status(403).json({ error: 'Not authorized to invite to this room' })
+  }
+
+  const rows = emails.map(email => ({
+    room_id: roomId,
+    invitee_email: email.toLowerCase().trim(),
+    invited_by_name: inviterName,
+    status: 'pending',
+  }))
+
+  const { error } = await supabase
+    .from('meeting_invitations')
+    .upsert(rows, { onConflict: 'room_id,invitee_email', ignoreDuplicates: false })
+
+  if (error) {
+    console.error('[invitations] upsert failed:', error.message)
+    return res.status(500).json({ error: 'Failed to create invitations' })
+  }
+
+  return res.json({ ok: true, count: rows.length })
+})
+
+// ============================================================
+// MEETING INVITATIONS — accept / decline / tentative
+// PATCH /api/invitations/:id
+// Body: { status: 'accepted'|'declined'|'tentative', accessToken: string }
+// ============================================================
+// Validates the caller's email matches the invitation's invitee_email so
+// nobody can RSVP on someone else's behalf.
+app.patch('/api/invitations/:id', async (req, res) => {
+  const { id } = req.params
+  const { status, accessToken } = req.body
+  if (!['accepted', 'declined', 'tentative'].includes(status)) {
+    return res.status(400).json({ error: 'status must be accepted, declined, or tentative' })
+  }
+  if (!accessToken) return res.status(401).json({ error: 'Authentication required' })
+
+  const { data: { user } } = await supabase.auth.getUser(accessToken)
+  if (!user?.email) return res.status(401).json({ error: 'Invalid or expired token' })
+
+  const { data: inv } = await supabase
+    .from('meeting_invitations')
+    .select('id, invitee_email')
+    .eq('id', id)
+    .single()
+
+  if (!inv) return res.status(404).json({ error: 'Invitation not found' })
+  if (inv.invitee_email !== user.email.toLowerCase()) {
+    return res.status(403).json({ error: 'Not your invitation' })
+  }
+
+  const { error } = await supabase
+    .from('meeting_invitations')
+    .update({ status, responded_at: new Date().toISOString(), invitee_user_id: user.id })
+    .eq('id', id)
+
+  if (error) {
+    console.error('[invitations] patch failed:', error.message)
+    return res.status(500).json({ error: 'Failed to update invitation' })
+  }
+
+  return res.json({ ok: true })
+})
+
+// ============================================================
+// MY MEETINGS — list all rooms the caller organized or was invited to
+// GET /api/me/meetings
+// Headers: Authorization: Bearer <access_token>
+// ============================================================
+// Returns a unified list merging organizer-created rooms and received
+// invitations, sorted soonest-first (nulls — unscheduled rooms — last).
+// The carousel subscribes to Realtime changes on meeting_invitations on the
+// client side and calls this endpoint to re-fetch on any change.
+app.get('/api/me/meetings', async (req, res) => {
+  const raw = req.headers.authorization || ''
+  const accessToken = raw.startsWith('Bearer ') ? raw.slice(7) : raw
+
+  if (!accessToken) return res.status(401).json({ error: 'Authentication required' })
+
+  const { data: { user } } = await supabase.auth.getUser(accessToken)
+  if (!user?.email) return res.status(401).json({ error: 'Invalid or expired token' })
+
+  const [organizedRes, invitedRes] = await Promise.all([
+    // Rooms this user scheduled (they are the organizer)
+    supabase
+      .from('rooms')
+      .select('id, name, scheduled_date, scheduled_time, duration_minutes, ended_at')
+      .eq('scheduler_auth_user_id', user.id)
+      .eq('is_active', true),
+    // Invitations this user received (matched by email)
+    supabase
+      .from('meeting_invitations')
+      .select('id, room_id, status, invited_by_name, invited_at, rooms(id, name, scheduled_date, scheduled_time, duration_minutes, ended_at, is_active)')
+      .eq('invitee_email', user.email.toLowerCase()),
+  ])
+
+  const meetingMap = new Map()
+
+  for (const room of (organizedRes.data ?? [])) {
+    meetingMap.set(room.id, {
+      id: room.id,
+      roomId: room.id,
+      roomName: room.name,
+      scheduledDate: room.scheduled_date ?? null,
+      scheduledTime: room.scheduled_time ?? null,
+      durationMinutes: room.duration_minutes ?? null,
+      endedAt: room.ended_at ?? null,
+      role: 'organizer',
+      status: null,
+      invitationId: null,
+      organizerName: 'You',
+    })
+  }
+
+  for (const inv of (invitedRes.data ?? [])) {
+    const room = inv.rooms
+    // Skip declined, ended, or already-in-map (org takes priority), or inactive rooms
+    if (!room || !room.is_active || meetingMap.has(room.id)) continue
+    if (inv.status === 'declined') continue
+    meetingMap.set(room.id, {
+      id: inv.id,
+      roomId: room.id,
+      roomName: room.name,
+      scheduledDate: room.scheduled_date ?? null,
+      scheduledTime: room.scheduled_time ?? null,
+      durationMinutes: room.duration_minutes ?? null,
+      endedAt: room.ended_at ?? null,
+      role: 'invitee',
+      status: inv.status,
+      invitationId: inv.id,
+      organizerName: inv.invited_by_name || 'Unknown',
+    })
+  }
+
+  // Sort: meetings with a date first (soonest → latest), then undated rooms
+  const meetings = Array.from(meetingMap.values()).sort((a, b) => {
+    const da = a.scheduledDate ? `${a.scheduledDate}T${a.scheduledTime || '00:00'}` : null
+    const db = b.scheduledDate ? `${b.scheduledDate}T${b.scheduledTime || '00:00'}` : null
+    if (da && db) return da < db ? -1 : da > db ? 1 : 0
+    if (da) return -1
+    if (db) return 1
+    return 0
+  })
+
+  return res.json({ meetings })
 })
 
 // ============================================================

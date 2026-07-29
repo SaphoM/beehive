@@ -205,7 +205,13 @@ export function useScheduleRoom() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const scheduleRoom = useCallback(async (name: string, organisation?: string) => {
+  const scheduleRoom = useCallback(async (
+    name: string,
+    organisation?: string,
+    scheduledDate?: string,
+    scheduledTime?: string,
+    durationMinutes?: number,
+  ) => {
     setLoading(true)
     setError(null)
 
@@ -219,7 +225,14 @@ export function useScheduleRoom() {
     const resp = await fetch(`${API_BASE}/api/rooms/schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, organisation, accessToken: session?.access_token }),
+      body: JSON.stringify({
+        name,
+        organisation,
+        accessToken: session?.access_token,
+        ...(scheduledDate ? { scheduledDate } : {}),
+        ...(scheduledTime ? { scheduledTime } : {}),
+        ...(durationMinutes ? { durationMinutes } : {}),
+      }),
     })
     setLoading(false)
 
@@ -782,4 +795,92 @@ export function useRecordings(roomId: string) {
   }, [roomId])
 
   return recordings
+}
+
+// ============================================================
+// MY MEETINGS — carousel data for the lobby
+// ============================================================
+export interface MyMeeting {
+  id: string
+  roomId: string
+  roomName: string
+  scheduledDate: string | null
+  scheduledTime: string | null
+  durationMinutes: number | null
+  endedAt: string | null
+  role: 'organizer' | 'invitee'
+  status: 'pending' | 'accepted' | 'declined' | 'tentative' | null
+  invitationId: string | null
+  organizerName: string
+}
+
+// Fetches all upcoming meetings for the signed-in user (rooms they organized
+// plus invitations they received), subscribing to Realtime changes on the
+// meeting_invitations table so the carousel updates instantly across devices
+// when an invitation is sent, accepted, or declined.
+export function useMyMeetings(accessToken: string | null | undefined, userEmail: string | null | undefined) {
+  const [meetings, setMeetings] = useState<MyMeeting[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!accessToken) { setMeetings([]); return }
+    setLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/api/me/meetings`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (resp.ok) {
+        const { meetings: data } = await resp.json()
+        setMeetings(data ?? [])
+      }
+    } catch { /* network error — keep existing list */ }
+    setLoading(false)
+  }, [accessToken])
+
+  useEffect(() => { load() }, [load])
+
+  // Realtime: any change to this user's invitations triggers a fresh fetch
+  useEffect(() => {
+    if (!userEmail) return
+    const channel = supabase
+      .channel(`my-invitations:${userEmail}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'meeting_invitations',
+        filter: `invitee_email=eq.${userEmail.toLowerCase()}`,
+      }, () => { load() })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [userEmail, load])
+
+  const updateStatus = useCallback(async (
+    invitationId: string,
+    status: 'accepted' | 'declined' | 'tentative',
+  ) => {
+    if (!accessToken) return { error: 'Not authenticated' as string }
+    // Optimistic local update
+    setMeetings(prev =>
+      status === 'declined'
+        ? prev.filter(m => m.invitationId !== invitationId)
+        : prev.map(m => m.invitationId === invitationId ? { ...m, status } : m)
+    )
+    try {
+      const resp = await fetch(`${API_BASE}/api/invitations/${invitationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, accessToken }),
+      })
+      if (!resp.ok) {
+        load() // roll back optimistic update on failure
+        return { error: 'Failed to update' as string }
+      }
+    } catch {
+      load()
+      return { error: 'Network error' as string }
+    }
+    return { error: null as string | null }
+  }, [accessToken, load])
+
+  return { meetings, loading, refresh: load, updateStatus }
 }

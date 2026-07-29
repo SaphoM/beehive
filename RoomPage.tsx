@@ -392,6 +392,7 @@ export default function RoomPage() {
       onCreateRoom={handleCreate}
       onJoinRoom={joinRoomId ? handleJoin : undefined}
       onStartScheduled={handleStartScheduled}
+      onJoinMeeting={enterRoom}
       creating={creating || joining}
       hasInvite={!!joinRoomId}
       inviteRoom={inviteRoom}

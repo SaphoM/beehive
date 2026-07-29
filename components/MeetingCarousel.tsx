@@ -152,6 +152,13 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDeclin
   const isNow = cd === 'Starting now'
   const showRsvp = !isOrganizer && meeting.status === 'pending'
 
+  // Grey out the launch icon 10 minutes after the scheduled time has passed
+  const isExpired = (() => {
+    if (!meeting.scheduledDate) return false
+    const target = new Date(`${meeting.scheduledDate}T${meeting.scheduledTime || '00:00'}`)
+    return Date.now() > target.getTime() + 10 * 60 * 1000
+  })()
+
   async function handleRsvp(action: () => void) {
     setRsvpPending(true)
     await action()
@@ -220,16 +227,18 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDeclin
       {/* Gold PlayCircle — the only launch affordance, right-aligned */}
       {meeting.status !== 'declined' && (
         <button
-          onClick={e => { e.stopPropagation(); onLaunch() }}
-          onMouseEnter={() => setIconHovered(true)}
+          onClick={e => { e.stopPropagation(); if (!isExpired) onLaunch() }}
+          onMouseEnter={() => { if (!isExpired) setIconHovered(true) }}
           onMouseLeave={() => setIconHovered(false)}
-          title={isOrganizer ? 'Start meeting' : 'Join meeting'}
+          title={isExpired ? 'Meeting time has passed' : isOrganizer ? 'Start meeting' : 'Join meeting'}
+          disabled={isExpired}
           style={{
-            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-            color: iconHovered ? '#f5a623' : selected ? 'rgba(245,166,35,0.6)' : '#333',
+            background: 'none', border: 'none', padding: 0,
+            cursor: isExpired ? 'not-allowed' : 'pointer',
+            color: isExpired ? '#2e2e2e' : iconHovered ? '#f5a623' : selected ? 'rgba(245,166,35,0.6)' : '#333',
             display: 'flex', alignItems: 'center', flexShrink: 0,
             transition: 'color 0.15s, transform 0.15s',
-            transform: iconHovered ? 'scale(1.18)' : 'scale(1)',
+            transform: !isExpired && iconHovered ? 'scale(1.18)' : 'scale(1)',
           }}
         >
           <PlayCircle size={22} strokeWidth={1.5} />

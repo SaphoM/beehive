@@ -10,7 +10,8 @@ import { EditableAvatar } from './Avatar'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 import { BuiltByFooter } from './BuiltByFooter'
 import { Toast } from './Toast'
-import { MeetingCarousel } from './MeetingCarousel'
+import { MeetingCarousel, ConfirmSheet } from './MeetingCarousel'
+import type { MyMeeting } from '../livekit_react_hooks'
 
 interface NextMeeting { name: string; date: string; time: string; link: string }
 const NEXT_MEETING_KEY = 'beehive:nextMeeting'
@@ -114,6 +115,11 @@ export function Lobby({
 
   const { meetings, loading: meetingsLoading, updateStatus } = useMyMeetings(accessToken, user?.email)
 
+  // Which carousel card is currently selected — drives the primary button label
+  const [selectedMeeting, setSelectedMeeting] = useState<MyMeeting | null>(null)
+  // Which meeting is pending confirmation in the ConfirmSheet
+  const [confirmMeeting, setConfirmMeeting] = useState<MyMeeting | null>(null)
+
   useEffect(() => { if (showRegister) setFlipped(true) }, [showRegister])
 
   function handleScheduled(meeting: NextMeeting) {
@@ -133,8 +139,26 @@ export function Lobby({
     setTimeout(() => onDismissRegister?.(), 520)
   }
 
+  function handleConfirmLaunch() {
+    if (!confirmMeeting) return
+    const m = confirmMeeting
+    setConfirmMeeting(null)
+    if (m.role === 'organizer') {
+      onStartScheduled?.(m.roomId)
+    } else {
+      onJoinMeeting?.(m.roomId)
+    }
+  }
+
   return (
     <div style={{ ...s.lobby, flexDirection: 'column', gap: 16 }}>
+      {confirmMeeting && (
+        <ConfirmSheet
+          meeting={confirmMeeting}
+          onConfirm={handleConfirmLaunch}
+          onCancel={() => setConfirmMeeting(null)}
+        />
+      )}
       {/* Card-flip scene */}
       <div style={{ perspective: 900 }}>
         <div style={{
@@ -191,15 +215,15 @@ export function Lobby({
               </div>
             )}
 
-            {/* Carousel — signed-in users see their DB-backed meetings from
-                the invitation system. Anonymous users fall back to the
-                localStorage card from a previously scheduled meeting. */}
+            {/* Carousel — signed-in users see their DB-backed meetings.
+                Anonymous users fall back to the localStorage card below. */}
             {lobbyTab === 'now' && !hasInvite && user && meetings.length > 0 && (
               <MeetingCarousel
                 meetings={meetings}
                 loading={meetingsLoading}
-                onJoin={roomId => (onJoinMeeting ?? onStartScheduled)?.(roomId)}
-                onStart={roomId => onStartScheduled?.(roomId)}
+                selectedMeetingId={selectedMeeting?.roomId ?? null}
+                onSelect={setSelectedMeeting}
+                onLaunch={m => setConfirmMeeting(m)}
                 onUpdateStatus={updateStatus}
               />
             )}
@@ -271,15 +295,36 @@ export function Lobby({
                           Start a new meeting instead
                         </button>
                       </>
-                    ) : (
-                      <button
-                        style={{ ...s.primaryBtn, background: subtext === 'Sting' ? STING_RED : '#f5a623' }}
-                        onClick={onCreateRoom}
-                        disabled={creating}
-                      >
-                        {creating ? 'Starting…' : `Start ${subtext}`}
-                      </button>
-                    )}
+                    ) : (() => {
+                      // Primary label adapts to whichever carousel card is selected
+                      const btnLabel = creating
+                        ? (selectedMeeting ? (selectedMeeting.role === 'organizer' ? 'Starting…' : 'Joining…') : 'Starting…')
+                        : selectedMeeting
+                          ? (selectedMeeting.role === 'organizer' ? 'Start Scheduled Meeting' : 'Join Scheduled Meeting')
+                          : `Start ${subtext}`
+
+                      const btnClick = selectedMeeting
+                        ? () => setConfirmMeeting(selectedMeeting)
+                        : onCreateRoom
+
+                      return (
+                        <>
+                          <button
+                            style={{ ...s.primaryBtn, background: subtext === 'Sting' ? STING_RED : '#f5a623' }}
+                            onClick={btnClick}
+                            disabled={creating}
+                          >
+                            {btnLabel}
+                          </button>
+                          {/* "Start a new meeting instead" only shown when a scheduled meeting is selected */}
+                          {selectedMeeting && (
+                            <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
+                              Start a new meeting instead
+                            </button>
+                          )}
+                        </>
+                      )
+                    })()}
                   </>
                 )}
 

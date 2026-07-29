@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
-import { Calendar, Clock, ChevronLeft, ChevronRight, PlayCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { ChevronLeft, ChevronRight, PlayCircle } from 'lucide-react'
 import type { MyMeeting } from '../livekit_react_hooks'
+import { s } from './roomStyles'
 
 export function countdown(date: string, time: string | null): string | null {
   const target = new Date(`${date}T${time || '00:00'}`)
@@ -157,95 +158,55 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDeclin
     setRsvpPending(false)
   }
 
+  // Build the gold meta line — mirrors the "1 participant in the room" line
+  // from the invite preview card. Shows date/time + countdown, or RSVP status.
+  const metaParts: string[] = []
+  if (meeting.scheduledDate) {
+    metaParts.push(formatWhen(meeting.scheduledDate, meeting.scheduledTime))
+    if (meeting.durationMinutes) {
+      metaParts.push(
+        meeting.durationMinutes < 60
+          ? `${meeting.durationMinutes}m`
+          : `${Math.floor(meeting.durationMinutes / 60)}h${meeting.durationMinutes % 60 ? ` ${meeting.durationMinutes % 60}m` : ''}`
+      )
+    }
+  }
+  if (cd) metaParts.push(cd)
+  if (!isOrganizer && meeting.status && meeting.status !== 'pending') {
+    metaParts.push(STATUS_LABELS[meeting.status])
+  }
+
   return (
     <div
       onClick={onSelect}
       style={{
-        width: '100%',
-        background: selected ? '#1e1e1e' : '#181818',
-        border: `1px solid ${selected ? 'rgba(245,166,35,0.35)' : '#242424'}`,
-        borderRadius: 12,
-        padding: '13px 14px',
-        display: 'flex',
+        ...s.invitePreview,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
         cursor: 'pointer',
-        boxSizing: 'border-box' as const,
-        transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
-        boxShadow: selected ? '0 0 0 1px rgba(245,166,35,0.15)' : 'none',
+        // Subtle gold border when selected — same card, just focused
+        border: selected ? '1px solid rgba(245,166,35,0.4)' : '1px solid #2a2a2a',
+        transition: 'border-color 0.15s',
       }}
     >
-      {/* Left: all text info */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {/* Header row: role badge + countdown */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-          <span style={{
-            fontSize: 9, fontWeight: 600, letterSpacing: 0.8, textTransform: 'uppercase' as const,
-            color: isOrganizer ? '#f5a623' : '#666',
-            fontFamily: "'Roboto', sans-serif",
-          }}>
-            {isOrganizer ? 'You organised' : `From ${meeting.organizerName}`}
-          </span>
-          {cd && (
-            <span style={{
-              fontSize: 9, fontWeight: 600, letterSpacing: 0.4,
-              color: isNow ? '#4caf50' : '#f5a623',
-              background: isNow ? 'rgba(76,175,80,0.1)' : 'rgba(245,166,35,0.08)',
-              border: `1px solid ${isNow ? 'rgba(76,175,80,0.25)' : 'rgba(245,166,35,0.2)'}`,
-              borderRadius: 20, padding: '1px 6px',
-              fontFamily: "'Roboto', sans-serif", flexShrink: 0,
-            }}>
-              {cd}
-            </span>
-          )}
-        </div>
-
-        {/* Meeting name */}
-        <p style={{
-          color: '#fff', fontSize: 13, fontWeight: 300, letterSpacing: 1.2,
-          textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif",
-          margin: 0, lineHeight: 1.3,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
-        }}>
+      {/* Text block — identical hierarchy to the invite preview */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <p style={s.inviteLabel}>
+          {isOrganizer ? 'You organised' : `From ${meeting.organizerName}`}
+        </p>
+        <p style={{ ...s.inviteRoomName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
           {meeting.roomName}
         </p>
-
-        {/* Date/time */}
-        {meeting.scheduledDate && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#555', fontSize: 10, fontFamily: "'Roboto', sans-serif" }}>
-            <Calendar size={9} />
-            {formatWhen(meeting.scheduledDate, meeting.scheduledTime)}
-            {meeting.durationMinutes && (
-              <>
-                <span style={{ color: '#2a2a2a' }}>·</span>
-                <Clock size={9} />
-                {meeting.durationMinutes < 60
-                  ? `${meeting.durationMinutes}m`
-                  : `${Math.floor(meeting.durationMinutes / 60)}h${meeting.durationMinutes % 60 ? ` ${meeting.durationMinutes % 60}m` : ''}`}
-              </>
-            )}
-          </div>
+        {metaParts.length > 0 && (
+          <p style={{ ...s.inviteMeta, color: isNow ? '#4caf50' : '#f5a623' }}>
+            {metaParts.join(' · ')}
+          </p>
         )}
 
-        {/* RSVP status badge */}
-        {!isOrganizer && meeting.status && meeting.status !== 'pending' && (
-          <span style={{
-            alignSelf: 'flex-start',
-            fontSize: 9, fontWeight: 600, letterSpacing: 0.5,
-            color: STATUS_COLORS[meeting.status],
-            background: `${STATUS_COLORS[meeting.status]}15`,
-            border: `1px solid ${STATUS_COLORS[meeting.status]}35`,
-            borderRadius: 20, padding: '1px 6px',
-            fontFamily: "'Roboto', sans-serif",
-          }}>
-            {STATUS_LABELS[meeting.status]}
-          </span>
-        )}
-
-        {/* RSVP buttons (pending invitees) */}
+        {/* Inline RSVP buttons for pending invitees */}
         {showRsvp && (
-          <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', gap: 4, marginTop: 4 }} onClick={e => e.stopPropagation()}>
             <button disabled={rsvpPending} onClick={() => handleRsvp(onAccept)}
               style={{ flex: 1, background: 'rgba(76,175,80,0.08)', border: '1px solid rgba(76,175,80,0.35)', borderRadius: 6, color: '#4caf50', fontSize: 10, fontWeight: 600, cursor: 'pointer', padding: '4px 0', fontFamily: "'Roboto', sans-serif", opacity: rsvpPending ? 0.5 : 1 }}>Accept</button>
             <button disabled={rsvpPending} onClick={() => handleRsvp(onTentative)}
@@ -256,7 +217,7 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDeclin
         )}
       </div>
 
-      {/* Right: gold launch icon — the only action affordance on the card */}
+      {/* Gold PlayCircle — the only launch affordance, right-aligned */}
       {meeting.status !== 'declined' && (
         <button
           onClick={e => { e.stopPropagation(); onLaunch() }}
@@ -265,10 +226,10 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDeclin
           title={isOrganizer ? 'Start meeting' : 'Join meeting'}
           style={{
             background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-            color: iconHovered ? '#f5a623' : selected ? 'rgba(245,166,35,0.7)' : '#3a3a3a',
+            color: iconHovered ? '#f5a623' : selected ? 'rgba(245,166,35,0.6)' : '#333',
             display: 'flex', alignItems: 'center', flexShrink: 0,
             transition: 'color 0.15s, transform 0.15s',
-            transform: iconHovered ? 'scale(1.15)' : 'scale(1)',
+            transform: iconHovered ? 'scale(1.18)' : 'scale(1)',
           }}
         >
           <PlayCircle size={22} strokeWidth={1.5} />

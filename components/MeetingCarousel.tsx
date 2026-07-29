@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, PlayCircle } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PlayCircle, Trash2 } from 'lucide-react'
 import type { MyMeeting } from '../livekit_react_hooks'
 import { s } from './roomStyles'
 
@@ -129,16 +129,19 @@ interface MeetingCardProps {
   selected: boolean
   onSelect: () => void
   onLaunch: () => void
+  onDelete: () => void
   onAccept: () => void
   onDecline: () => void
   onTentative: () => void
 }
 
-function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDecline, onTentative }: MeetingCardProps) {
+function MeetingCard({ meeting, selected, onSelect, onLaunch, onDelete, onAccept, onDecline, onTentative }: MeetingCardProps) {
   const [cd, setCd] = useState<string | null>(
     meeting.scheduledDate ? countdown(meeting.scheduledDate, meeting.scheduledTime) : null
   )
   const [iconHovered, setIconHovered] = useState(false)
+  const [trashHovered, setTrashHovered] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [rsvpPending, setRsvpPending] = useState(false)
 
   useEffect(() => {
@@ -224,26 +227,63 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onAccept, onDeclin
         )}
       </div>
 
-      {/* Gold PlayCircle — the only launch affordance, right-aligned */}
-      {meeting.status !== 'declined' && (
-        <button
-          onClick={e => { e.stopPropagation(); if (!isExpired) onLaunch() }}
-          onMouseEnter={() => { if (!isExpired) setIconHovered(true) }}
-          onMouseLeave={() => setIconHovered(false)}
-          title={isExpired ? 'Meeting time has passed' : isOrganizer ? 'Start meeting' : 'Join meeting'}
-          disabled={isExpired}
-          style={{
-            background: 'none', border: 'none', padding: 0,
-            cursor: isExpired ? 'not-allowed' : 'pointer',
-            color: isExpired ? '#2e2e2e' : iconHovered ? '#f5a623' : selected ? 'rgba(245,166,35,0.6)' : '#333',
-            display: 'flex', alignItems: 'center', flexShrink: 0,
-            transition: 'color 0.15s, transform 0.15s',
-            transform: !isExpired && iconHovered ? 'scale(1.18)' : 'scale(1)',
-          }}
-        >
-          <PlayCircle size={22} strokeWidth={1.5} />
-        </button>
-      )}
+      {/* Right-side action column */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+
+        {/* Trash icon — organizer only */}
+        {isOrganizer && !confirmDelete && (
+          <button
+            onClick={e => { e.stopPropagation(); setConfirmDelete(true) }}
+            onMouseEnter={() => setTrashHovered(true)}
+            onMouseLeave={() => setTrashHovered(false)}
+            title="Delete meeting"
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              color: trashHovered ? '#ef4444' : '#333',
+              display: 'flex', alignItems: 'center',
+              transition: 'color 0.15s, transform 0.15s',
+              transform: trashHovered ? 'scale(1.15)' : 'scale(1)',
+            }}
+          >
+            <Trash2 size={14} strokeWidth={1.5} />
+          </button>
+        )}
+
+        {/* Inline delete confirm */}
+        {isOrganizer && confirmDelete && (
+          <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => { setConfirmDelete(false); onDelete() }}
+              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 5, color: '#ef4444', fontSize: 10, fontWeight: 700, cursor: 'pointer', padding: '3px 7px', fontFamily: "'Roboto', sans-serif" }}
+            >Delete</button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 5, color: '#555', fontSize: 10, cursor: 'pointer', padding: '3px 7px', fontFamily: "'Roboto', sans-serif" }}
+            >Keep</button>
+          </div>
+        )}
+
+        {/* Gold PlayCircle — the only launch affordance */}
+        {meeting.status !== 'declined' && (
+          <button
+            onClick={e => { e.stopPropagation(); if (!isExpired) onLaunch() }}
+            onMouseEnter={() => { if (!isExpired) setIconHovered(true) }}
+            onMouseLeave={() => setIconHovered(false)}
+            title={isExpired ? 'Meeting time has passed' : isOrganizer ? 'Start meeting' : 'Join meeting'}
+            disabled={isExpired}
+            style={{
+              background: 'none', border: 'none', padding: 0,
+              cursor: isExpired ? 'not-allowed' : 'pointer',
+              color: isExpired ? '#2e2e2e' : iconHovered ? '#f5a623' : selected ? 'rgba(245,166,35,0.6)' : '#333',
+              display: 'flex', alignItems: 'center',
+              transition: 'color 0.15s, transform 0.15s',
+              transform: !isExpired && iconHovered ? 'scale(1.18)' : 'scale(1)',
+            }}
+          >
+            <PlayCircle size={22} strokeWidth={1.5} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -259,11 +299,12 @@ interface MeetingCarouselProps {
   onSelect: (meeting: MyMeeting | null) => void
   /** Called when the gold icon is clicked — Lobby opens the confirm sheet */
   onLaunch: (meeting: MyMeeting) => void
+  onDelete: (meeting: MyMeeting) => void
   onUpdateStatus: (invitationId: string, status: 'accepted' | 'declined' | 'tentative') => void
 }
 
 export function MeetingCarousel({
-  meetings, loading, selectedMeetingId, onSelect, onLaunch, onUpdateStatus,
+  meetings, loading, selectedMeetingId, onSelect, onLaunch, onDelete, onUpdateStatus,
 }: MeetingCarouselProps) {
   const [idx, setIdx] = useState(0)
 
@@ -322,6 +363,7 @@ export function MeetingCarousel({
         selected={selectedMeetingId === currentMeeting.roomId}
         onSelect={() => onSelect(currentMeeting)}
         onLaunch={() => { onSelect(currentMeeting); onLaunch(currentMeeting) }}
+        onDelete={() => onDelete(currentMeeting)}
         onAccept={() => currentMeeting.invitationId && onUpdateStatus(currentMeeting.invitationId, 'accepted')}
         onDecline={() => currentMeeting.invitationId && onUpdateStatus(currentMeeting.invitationId, 'declined')}
         onTentative={() => currentMeeting.invitationId && onUpdateStatus(currentMeeting.invitationId, 'tentative')}

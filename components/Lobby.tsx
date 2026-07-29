@@ -139,6 +139,24 @@ export function Lobby({
     setTimeout(() => onDismissRegister?.(), 520)
   }
 
+  async function handleDeleteMeeting(meeting: MyMeeting) {
+    let hostSecret: string | null = null
+    try { hostSecret = localStorage.getItem(`beehive:hostSecret:${meeting.roomId}`) } catch { /* storage unavailable */ }
+    if (!hostSecret) return // shouldn't reach here — organizer-only UI
+    const apiBase = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+      ? 'http://localhost:3001' : ''
+    try {
+      await fetch(`${apiBase}/api/rooms/${meeting.roomId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostSecret }),
+      })
+      if (selectedMeeting?.roomId === meeting.roomId) setSelectedMeeting(null)
+    } catch (e) {
+      console.error('[lobby] delete meeting failed:', e)
+    }
+  }
+
   function handleConfirmLaunch() {
     if (!confirmMeeting) return
     const m = confirmMeeting
@@ -224,6 +242,7 @@ export function Lobby({
                 selectedMeetingId={selectedMeeting?.roomId ?? null}
                 onSelect={setSelectedMeeting}
                 onLaunch={m => setConfirmMeeting(m)}
+                onDelete={handleDeleteMeeting}
                 onUpdateStatus={updateStatus}
               />
             )}

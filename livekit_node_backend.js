@@ -814,6 +814,32 @@ app.get('/api/me/meetings', async (req, res) => {
 })
 
 // ============================================================
+// DELETE SCHEDULED MEETING
+// DELETE /api/rooms/:roomId
+// Body: { hostSecret: string }
+// ============================================================
+// Organizer-only. Deletes the room row (cascade removes invitations via FK).
+app.delete('/api/rooms/:roomId', async (req, res) => {
+  const { roomId } = req.params
+  const { hostSecret } = req.body
+
+  if (!hostSecret) return res.status(400).json({ error: 'hostSecret required' })
+
+  const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
+  if (!hostRow || hostRow.host_secret !== hostSecret) {
+    return res.status(403).json({ error: 'Not authorized to delete this room' })
+  }
+
+  const { error } = await supabase.from('rooms').delete().eq('id', roomId)
+  if (error) {
+    console.error('[rooms] delete failed:', error.message)
+    return res.status(500).json({ error: 'Failed to delete room' })
+  }
+
+  return res.json({ ok: true })
+})
+
+// ============================================================
 // HEALTH CHECK
 // ============================================================
 app.get('/health', (_, res) => res.json({ status: 'ok' }))

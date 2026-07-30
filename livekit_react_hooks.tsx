@@ -851,6 +851,20 @@ export function useMyMeetings(accessToken: string | null | undefined, userEmail:
 
   useEffect(() => { load() }, [load])
 
+  // Re-fetch whenever the window regains focus (Electron app switch, tab switch).
+  // This is the primary way the organizer's carousel stays fresh — the Realtime
+  // subscription below only covers meeting_invitations (invitee path), and there
+  // is no long-running Realtime channel for the organizer's own rooms rows.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', load)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', load)
+    }
+  }, [load])
+
   // Realtime: any change to this user's invitations triggers a fresh fetch
   useEffect(() => {
     if (!userEmail) return

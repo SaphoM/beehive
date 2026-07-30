@@ -663,6 +663,42 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     setDmInputs(prev => ({ ...prev, [to]: '' }))
   }
 
+  // Phase 5 — real-time device monitor: detect headphone/mic disconnects mid-meeting
+  // and surface a brief toast. Only active while in the room view.
+  useEffect(() => {
+    if (view !== 'room' || !navigator?.mediaDevices) return
+    let prev: MediaDeviceInfo[] = []
+    const check = async () => {
+      try {
+        const current = await navigator.mediaDevices.enumerateDevices()
+        if (prev.length > 0) {
+          const prevIds = new Set(prev.map(d => d.deviceId))
+          const currIds = new Set(current.map(d => d.deviceId))
+          const lost = prev.filter(d => !currIds.has(d.deviceId))
+          if (lost.length > 0) {
+            const kinds = [...new Set(lost.map(d =>
+              d.kind === 'audioinput' ? 'microphone' : d.kind === 'audiooutput' ? 'speaker' : 'camera'
+            ))]
+            setDeviceErrorToast(`${kinds.map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(' & ')} disconnected — check connections.`)
+          }
+          // New device arrived — dismiss any existing error toast
+          const arrived = current.filter(d => !prevIds.has(d.deviceId))
+          if (arrived.length > 0 && prev.length > 0) {
+            const kinds = [...new Set(arrived.map(d =>
+              d.kind === 'audioinput' ? 'microphone' : d.kind === 'audiooutput' ? 'speaker' : 'camera'
+            ))]
+            setDeviceErrorToast(`${kinds.map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(' & ')} reconnected.`)
+          }
+        }
+        prev = current
+        // Invalidate cache so next lobby visit re-checks
+        try { localStorage.removeItem('beehive:deviceCheck') } catch { /* ok */ }
+      } catch { /* ignore */ }
+    }
+    navigator.mediaDevices.addEventListener('devicechange', check)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', check)
+  }, [view]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const onResize = () => {
       setIsMobile(window.innerWidth <= 640)

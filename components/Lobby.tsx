@@ -12,6 +12,8 @@ import { BuiltByFooter } from './BuiltByFooter'
 import { Toast } from './Toast'
 import { MeetingCarousel, ConfirmSheet } from './MeetingCarousel'
 import type { MyMeeting } from '../livekit_react_hooks'
+import { useDeviceReadiness, isCriticalAudioIssue } from './useDeviceReadiness'
+import { DeviceReadinessBanner } from './DeviceReadinessBanner'
 
 interface NextMeeting { name: string; date: string; time: string; link: string }
 const NEXT_MEETING_KEY = 'beehive:nextMeeting'
@@ -114,6 +116,8 @@ export function Lobby({
   }, [user])
 
   const { meetings, loading: meetingsLoading, updateStatus } = useMyMeetings(accessToken, user?.email)
+  const deviceReadiness = useDeviceReadiness()
+  const criticalAudio = isCriticalAudioIssue(deviceReadiness)
 
   // Which carousel card is currently selected — drives the primary button label
   const [selectedMeeting, setSelectedMeeting] = useState<MyMeeting | null>(null)
@@ -313,10 +317,12 @@ export function Lobby({
                       autoFocus
                     />
 
+                    <DeviceReadinessBanner readiness={deviceReadiness} />
+
                     {hasInvite ? (
                       <>
-                        <button style={{ ...s.primaryBtn, ...(subtext === 'Sting' ? { background: STING_RED } : {}) }} onClick={onJoinRoom} disabled={creating}>
-                          {creating ? 'Joining…' : 'Join Meeting'}
+                        <button style={{ ...s.primaryBtn, ...(subtext === 'Sting' ? { background: STING_RED } : {}), ...(criticalAudio ? { background: '#7a3a00' } : {}) }} onClick={onJoinRoom} disabled={creating}>
+                          {creating ? 'Joining…' : criticalAudio ? 'Resolve Audio Issue' : 'Join Meeting'}
                         </button>
                         <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
                           Start a new meeting instead
@@ -324,11 +330,12 @@ export function Lobby({
                       </>
                     ) : (() => {
                       // Primary label adapts to whichever carousel card is selected
-                      const btnLabel = creating
+                      const baseLabel = creating
                         ? (selectedMeeting ? (selectedMeeting.role === 'organizer' ? 'Starting…' : 'Joining…') : 'Starting…')
                         : selectedMeeting
                           ? (selectedMeeting.role === 'organizer' ? 'Start Scheduled Meeting' : 'Join Scheduled Meeting')
                           : `Start ${subtext}`
+                      const btnLabel = !creating && criticalAudio ? 'Resolve Audio Issue' : baseLabel
 
                       const btnClick = selectedMeeting
                         ? () => setConfirmMeeting(selectedMeeting)
@@ -337,7 +344,7 @@ export function Lobby({
                       return (
                         <>
                           <button
-                            style={{ ...s.primaryBtn, background: subtext === 'Sting' ? STING_RED : '#f5a623' }}
+                            style={{ ...s.primaryBtn, background: criticalAudio ? '#7a3a00' : subtext === 'Sting' ? STING_RED : '#f5a623' }}
                             onClick={btnClick}
                             disabled={creating}
                           >

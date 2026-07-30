@@ -3,6 +3,8 @@ import { supabase } from '../livekit_react_hooks'
 import { s } from './roomStyles'
 import { STING_RED, type Subtext } from './roomUtils'
 import { BuiltByFooter } from './BuiltByFooter'
+import { useDeviceReadiness } from './useDeviceReadiness'
+import { DeviceReadinessBanner } from './DeviceReadinessBanner'
 
 // Shown while a scheduled meeting's admission gate holds an attendee back —
 // subscribes to this specific request's row and reacts the instant the host
@@ -16,6 +18,7 @@ export function WaitingRoom({ requestId, roomName, subtext, onAdmitted, onDenied
 }) {
   const [status, setStatus] = useState<'pending' | 'denied'>('pending')
   const [reason, setReason] = useState<string | null>(null)
+  const deviceReadiness = useDeviceReadiness()
 
   useEffect(() => {
     const channel = supabase
@@ -80,6 +83,10 @@ export function WaitingRoom({ requestId, roomName, subtext, onAdmitted, onDenied
             </button>
           </div>
         )}
+      </div>
+      {/* Device readiness check — shown while the user has time to act */}
+      <div style={{ width: '100%', maxWidth: 400 }}>
+        <DeviceReadinessBanner readiness={deviceReadiness} />
       </div>
       <BuiltByFooter />
     </div>

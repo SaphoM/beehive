@@ -92,6 +92,7 @@ import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { Avatar } from './components/Avatar'
 import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
+import { AdaptiveGrid } from './components/AdaptiveGrid'
 import { RoomAudioCoordination } from './components/RoomAudioCoordination'
 import { BotAssistant } from './components/BotAssistant'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
@@ -2672,12 +2673,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               )}
             </div>
           ) : (
-            <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
-              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                <ParticipantTile />
-                <CameraOffAvatarOverlay avatarUrlFor={avatarUrlFor} />
-              </div>
-            </GridLayout>
+            <AdaptiveGrid tracks={cameraTracks} avatarUrlFor={avatarUrlFor} style={{ height: '100%' }} />
           )}
 
           {/* Mobile floating timer — just below the header, centred over video */}

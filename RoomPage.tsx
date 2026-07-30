@@ -237,6 +237,13 @@ export default function RoomPage() {
       .catch(() => { /* denied or unavailable — toggles will surface it */ })
   }, [view])
 
+  // Notify the auto-updater whether the user is in an active meeting so it
+  // can defer blocking dialogs and non-critical update downloads until after
+  // the call ends.
+  useEffect(() => {
+    window.electronAPI?.setMeetingActive?.(view === 'room')
+  }, [view])
+
   const handleCreate = async () => {
     if (!displayName.trim()) return alert('Enter your name first')
     const room = await createRoom(`Meeting ${new Date().toLocaleTimeString()}`, 'X Spark')

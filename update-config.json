@@ -1,0 +1,32 @@
+{
+  "version": "1.0.246",
+  "releaseDate": "2026-07-30T01:13:24.939Z",
+  "critical": false,
+  "minimumVersion": "1.0.200",
+  "notes": [
+    "Pre-join device readiness check for mic, camera, and speaker",
+    "Real-time device disconnect notifications during active meetings",
+    "Expired meeting cards are now visually greyed after 10 minutes",
+    "Waiting room auto-closes 1 minute after all attendees are admitted",
+    "Performance and reliability improvements"
+  ],
+  "mac": {
+    "url": "REPLACE_WITH_RELEASE_BASE_URL/BeeHive-universal.zip",
+    "sha512": "GosVDDOxcdyU3SRq5ufyolSaElVcZBEtMDESDjsm7xU3OXVnsvfcujBJM4vXVYUmBvNiffeF76aAq6L3Wr9gLw==",
+    "size": 241380070,
+    "dmgUrl": "REPLACE_WITH_RELEASE_BASE_URL/BeeHive-universal.dmg",
+    "dmgSha512": "RJ56atcLBstU4JQXF5pZv+40YWyjkH7igl8R7/h4e7tUKbSZF0JdE8JJTiEcTj7pPJ1LrnTwBmwBpTwXcRsdCw==",
+    "dmgSize": 241431300
+  },
+  "win": {
+    "url": "REPLACE_WITH_RELEASE_BASE_URL/BeeHive-Setup.exe",
+    "sha512": "EqhbsK5frJ5UTgW1B3fzvdz0YYUd76wm14L1wsGe9YY7tSXh8LvLuXOAoXWwm4wIziJ4GysqhIeXnftsbo+H2w==",
+    "size": 232831754,
+    "x64Url": "REPLACE_WITH_RELEASE_BASE_URL/BeeHive-Setup-x64.exe",
+    "x64Sha512": "OhNdW3tPSrciUIDOMlkHjPUBf6w9OWa3SQPFBt+W9HZHYE1bXTS3j3IFFSQ49hSy955t1oRWRyPT3aVGH41nxg==",
+    "x64Size": 120446146,
+    "arm64Url": "REPLACE_WITH_RELEASE_BASE_URL/BeeHive-Setup-arm64.exe",
+    "arm64Sha512": "O4Pod69JSyFKorD5S2D9k7wGa/Qw1cKnNyn5dj/Cd/xyUM/8fLy9lz2FI+dcPYUkkFefFdm6MUoTNDZJq+41Eg==",
+    "arm64Size": 112936858
+  }
+}

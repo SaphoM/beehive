@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu, systemPrefere
 const path = require('path')
 const { existsSync, readFileSync, statSync, mkdirSync } = require('fs')
 const { spawn, execFile, execFileSync } = require('child_process')
+const updater = require('./updater.cjs')
 
 const isDev = !app.isPackaged
 
@@ -103,6 +104,8 @@ async function createWindow() {
   mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('fullscreen-change', true))
   mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('fullscreen-change', false))
 
+  updater.setMainWindow(mainWindow)
+
   if (isDev) {
     // Poll until the Vite dev server is actually responding
     const http = require('http')
@@ -119,6 +122,11 @@ async function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
 }
+
+// ---------------------------------------------------------------------------
+// IPC: current installed app version (used by UpdatePrompt in renderer)
+// ---------------------------------------------------------------------------
+ipcMain.handle('get-app-version', () => app.getVersion())
 
 // ---------------------------------------------------------------------------
 // IPC: open a file in its native macOS / Windows application
@@ -599,9 +607,17 @@ app.whenReady().then(async () => {
   })
   session.defaultSession.setPermissionCheckHandler(() => true)
 
+  // Register updater IPC handlers before the window opens so the renderer
+  // can call them as soon as the page loads.
+  updater.registerIPC()
+  const updateConfigured = updater.configure()
+
   startBackend()
   await new Promise(r => setTimeout(r, 800)) // let backend bind to :3001
   await createWindow()
+
+  // Start background update checks after the window is ready.
+  if (updateConfigured) updater.scheduleChecks()
 
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -625,6 +641,7 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
+  updater.cleanup()
   backendProcess?.kill()
   stopDockClickWatcher()
   if (dockWindow && !dockWindow.isDestroyed()) dockWindow.close()

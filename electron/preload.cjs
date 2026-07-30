@@ -60,4 +60,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('dock-action', handler)
     return () => ipcRenderer.off('dock-action', handler)
   },
+
+  // -------------------------------------------------------------------------
+  // Auto-update API
+  // -------------------------------------------------------------------------
+
+  // Subscribe to update lifecycle events from the main process.
+  // Callback receives: { type, version?, percent?, notes?, critical?, ... }
+  // Returns an unsubscribe function.
+  onUpdateStatus: (cb) => {
+    const handler = (_, data) => cb(data)
+    ipcRenderer.on('update-status', handler)
+    return () => ipcRenderer.off('update-status', handler)
+  },
+
+  // Returns the installed app version string (e.g. "1.0.246").
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  // Start downloading the available update (called after user clicks "Update Now").
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+
+  // Apply the downloaded update and relaunch (called after download completes).
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+
+  // Trigger an on-demand update check (e.g. from a Settings panel).
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  // Dismiss the current update prompt for this session.
+  dismissUpdate: () => ipcRenderer.send('updater-dismiss'),
+
+  // Notify the main process when the user enters or leaves a live meeting.
+  // Prevents blocking update dialogs from interrupting active calls.
+  setMeetingActive: (active) => ipcRenderer.send('set-meeting-active', active),
 })

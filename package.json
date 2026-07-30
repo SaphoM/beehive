@@ -29,6 +29,7 @@
     "@supabase/supabase-js": "^2.110.0",
     "@vitejs/plugin-react": "^6.0.3",
     "dotenv": "^17.4.2",
+    "electron-updater": "^6.8.9",
     "express": "^5.2.1",
     "livekit-client": "^2.20.0",
     "livekit-server-sdk": "^2.16.0",
@@ -46,7 +47,7 @@
   "build": {
     "appId": "co.xspark.beehive",
     "productName": "BeeHive",
-    "copyright": "Copyright \u00a9 2025 X Spark",
+    "copyright": "Copyright © 2025 X Spark",
     "afterSign": "electron/afterSign.cjs",
     "protocols": [
       {
@@ -100,6 +101,11 @@
     },
     "directories": {
       "output": "release"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://beehive-fu8w.onrender.com/updates",
+      "channel": "latest"
     }
   }
 }

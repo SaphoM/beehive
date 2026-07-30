@@ -46,13 +46,15 @@ const GRID_STYLE = `
   grid-auto-rows: 1fr;
 }
 
-/* Standard rectangular tile wrapper */
+/* Standard rectangular tile wrapper — force LiveKit's radius variable to 0
+   so both .lk-participant-tile and its ::after speaking-ring are sharp. */
 .bhv-rect-tile {
   position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  transition: border-radius 0.3s ease;
+  border-radius: 0;
+  --lk-border-radius: 0;
 }
 
 /* Odd-tile row: spans both columns, centres the circle */

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { User } from '@supabase/supabase-js'
 import { s } from './roomStyles'
 import { SUBTEXTS, STING_RED, REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO, type Subtext } from './roomUtils'
@@ -99,7 +99,11 @@ export function Lobby({
       return raw ? JSON.parse(raw) : null
     } catch { return null }
   })
-  const [showScheduledToast, setShowScheduledToast] = useState(false)
+  // One toast channel for every lobby-level confirmation (scheduled, deleted,
+  // and their failure cases) rather than a separate boolean per action.
+  const [toast, setToast] = useState<{ message: string; variant?: 'success' | 'error' } | null>(null)
+  // Stable so Toast's auto-dismiss timer isn't restarted by unrelated re-renders.
+  const dismissToast = useCallback(() => setToast(null), [])
 
   // Session token needed by the carousel hook — fetched once and refreshed
   // whenever auth state changes. Only used when user is signed in.
@@ -115,7 +119,7 @@ export function Lobby({
     return () => subscription.unsubscribe()
   }, [user])
 
-  const { meetings, loading: meetingsLoading, updateStatus } = useMyMeetings(accessToken, user?.email)
+  const { meetings, loading: meetingsLoading, updateStatus, refresh: refreshMeetings } = useMyMeetings(accessToken, user?.email)
   const deviceReadiness = useDeviceReadiness()
   const criticalAudio = isCriticalAudioIssue(deviceReadiness)
 
@@ -130,7 +134,7 @@ export function Lobby({
     setNextMeeting(meeting)
     try { localStorage.setItem(NEXT_MEETING_KEY, JSON.stringify(meeting)) } catch { /* storage unavailable — card just won't survive a refresh */ }
     setLobbyTab('now')
-    setShowScheduledToast(true)
+    setToast({ message: 'Meeting set up successfully' })
   }
 
   function dismissNextMeeting() {
@@ -146,18 +150,37 @@ export function Lobby({
   async function handleDeleteMeeting(meeting: MyMeeting) {
     let hostSecret: string | null = null
     try { hostSecret = localStorage.getItem(`beehive:hostSecret:${meeting.roomId}`) } catch { /* storage unavailable */ }
-    if (!hostSecret) return // shouldn't reach here — organizer-only UI
+    if (!hostSecret) {
+      // Organizer-only UI, so this normally can't happen — but if the secret is
+      // missing (cleared storage, different device) say so instead of silently
+      // doing nothing, which read as "the button is broken".
+      setToast({ message: 'Can only delete from the device that scheduled it', variant: 'error' })
+      return
+    }
     const apiBase = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
       ? 'http://localhost:3001' : ''
     try {
-      await fetch(`${apiBase}/api/rooms/${meeting.roomId}`, {
+      const resp = await fetch(`${apiBase}/api/rooms/${meeting.roomId}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hostSecret }),
       })
+      // Previously unchecked: a 403/500 left the card on screen with no
+      // feedback at all, indistinguishable from a successful delete.
+      if (!resp.ok) {
+        setToast({ message: 'Could not delete meeting — please try again', variant: 'error' })
+        return
+      }
       if (selectedMeeting?.roomId === meeting.roomId) setSelectedMeeting(null)
+      // The room row is gone, so its host secret is dead data — drop it.
+      try { localStorage.removeItem(`beehive:hostSecret:${meeting.roomId}`) } catch { /* best-effort */ }
+      // Re-fetch so the deleted card leaves the carousel immediately rather
+      // than lingering until the next window focus.
+      await refreshMeetings()
+      setToast({ message: 'Meeting deleted' })
     } catch (e) {
       console.error('[lobby] delete meeting failed:', e)
+      setToast({ message: 'Network error — meeting not deleted', variant: 'error' })
     }
   }
 
@@ -407,8 +430,8 @@ export function Lobby({
 
       <BuiltByFooter />
 
-      {showScheduledToast && (
-        <Toast message="Meeting set up successfully" onDone={() => setShowScheduledToast(false)} />
+      {toast && (
+        <Toast message={toast.message} variant={toast.variant} onDone={dismissToast} />
       )}
     </div>
   )

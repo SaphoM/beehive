@@ -1,32 +1,32 @@
 {
-  "version": "1.0.251",
-  "releaseDate": "2026-07-30T09:21:57.973Z",
+  "version": "1.0.252",
+  "releaseDate": "2026-07-30T09:57:28.135Z",
   "critical": false,
   "minimumVersion": "1.0.200",
   "notes": [
-    "Scheduled meeting carousel refresh on app focus",
-    "Rectangular tiles enforced for all even-count meeting layouts",
-    "Adaptive circular tile for odd-count participant layouts",
-    "Meeting ownership auth fallback for host join from any browser",
-    "Performance and reliability improvements"
+    "Fixed blank meeting screen when entering a room",
+    "Scheduled meeting carousel refreshes on app focus",
+    "Rectangular tiles for even-count meeting layouts",
+    "Adaptive circular tile for odd-count layouts",
+    "Meeting host recognised on any browser or device"
   ],
   "mac": {
-    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.251/BeeHive-universal.zip",
-    "sha512": "U8vwCtvr/sxOlY5AZn2sy9YgMGNLW6ETXXuByEcO096AsucO/D4qIqNkNAT/xnPmskKuw3nQ+DNpytuEnYuegw==",
-    "size": 241842488,
-    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.251/BeeHive-universal.dmg",
-    "dmgSha512": "RNed03OHwVsa2wULwWA+3IRx7BcFYddzmh6jTMUQZkWWU96+0A1cSrfHi132T2Tc+gJfyCfg8uu72/svLwH4bw==",
-    "dmgSize": 241897010
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.252/BeeHive-universal.zip",
+    "sha512": "wlzn9idTyfYQ9b3gRI1O0+uCCcN3y+7uED/YGZS/zkUUuz2mGVxVH8AoMWQOwS94n9vcJu7iVxVp5mrPeC91Vg==",
+    "size": 241841589,
+    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.252/BeeHive-universal.dmg",
+    "dmgSha512": "WseUW3//mubL51+CTvCt2xk/VecTO9iudMUgKoH1IhrWlGy0e4J50HnYJDx/D3w8qH6l1lp3EwI4D5tcrSKR2g==",
+    "dmgSize": 241896600
   },
   "win": {
-    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.251/BeeHive-Setup.exe",
-    "sha512": "inKzr96fZ7O3ghnKRayqDkshwGrGKfcHKuowtleTCA+dNYMXF3YMAELTP3pvXsRpF+wGL8P1AljR7itdvwfLyQ==",
-    "size": 233535864,
-    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.251/BeeHive-Setup-x64.exe",
-    "x64Sha512": "Vp9/ipnHGw3DYYe1s+gmawsj4x1UTM/mYv8HIuykOn36naMEz6SYOO1r7Z8+nmuuiMJ2SlRVBsWnR+LdEkUGNA==",
-    "x64Size": 120798148,
-    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.251/BeeHive-Setup-arm64.exe",
-    "arm64Sha512": "Ea0jPh2z83uAMoo2oDYZURYv3ekvqgiAER2y4Qj0v6i6X/ZK9o0VyZov+/8drbtRinG2u/iGOHYPSmDXeojCRA==",
-    "arm64Size": 113288961
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.252/BeeHive-Setup.exe",
+    "sha512": "KrFjuQkAJdWBfhrLFTQbi+AU3z6XFd9bFpeIJYB/iTsGku4mRnkHzvdqHKlMOILCguwkiikL6lrIj9TCpRS3hg==",
+    "size": 233534727,
+    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.252/BeeHive-Setup-x64.exe",
+    "x64Sha512": "Fwa+2x7afFPAr59AeiwZBUSU9u3evI73Hogbu6XNXwCSC+OrcAZ/oEol6qoCUtkx2+f02Q/eO/wZhrgBe0o22w==",
+    "x64Size": 120797655,
+    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.252/BeeHive-Setup-arm64.exe",
+    "arm64Sha512": "5rRwWwKYTMA6A5uS6Y4ImTqcs3M6Liod9t8opApMCwJKE6zJ5d1PE21qlM4BTgBFLDUPzfADPaifr2G7jQ1e5A==",
+    "arm64Size": 113288314
   }
 }

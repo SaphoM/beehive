@@ -672,9 +672,11 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   }
 
   // Phase 5 — real-time device monitor: detect headphone/mic disconnects mid-meeting
-  // and surface a brief toast. Only active while in the room view.
+  // and surface a brief toast. No view check needed: MeetingRoom is only ever
+  // mounted by RoomPage when view === 'room', so being here already means we're
+  // in the meeting. (`view` lives in RoomPage's scope, not this component's.)
   useEffect(() => {
-    if (view !== 'room' || !navigator?.mediaDevices) return
+    if (!navigator?.mediaDevices) return
     let prev: MediaDeviceInfo[] = []
     const check = async () => {
       try {
@@ -705,7 +707,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     }
     navigator.mediaDevices.addEventListener('devicechange', check)
     return () => navigator.mediaDevices.removeEventListener('devicechange', check)
-  }, [view]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onResize = () => {

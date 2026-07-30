@@ -38,8 +38,22 @@ interface CachedCheck {
   speakerLabel: string
 }
 
-const CACHE_KEY = 'beehive:deviceCheck'
+// Bumped to :v2 when the speaker false-positive below was fixed — a stale
+// cached `speaker: 'missing'` would otherwise keep showing the bogus warning
+// for up to CACHE_TTL after the update.
+export const DEVICE_CHECK_CACHE_KEY = 'beehive:deviceCheck:v2'
+const CACHE_KEY = DEVICE_CHECK_CACHE_KEY
 const CACHE_TTL = 5 * 60 * 1000
+
+// Never prompts. Safari doesn't support querying 'microphone'/'camera' and
+// throws, which lands in the catch as 'unsupported'.
+async function queryPermission(name: 'microphone' | 'camera'): Promise<PermissionState | 'unsupported'> {
+  try {
+    if (!navigator.permissions?.query) return 'unsupported'
+    const p = await navigator.permissions.query({ name: name as PermissionName })
+    return p.state
+  } catch { return 'unsupported' }
+}
 
 async function runCheck(): Promise<Omit<CachedCheck, 'ts'>> {
   const result = {
@@ -52,14 +66,12 @@ async function runCheck(): Promise<Omit<CachedCheck, 'ts'>> {
   }
 
   // Fast path: permissions API (no prompt, instant)
-  if (navigator.permissions) {
-    await Promise.allSettled([
-      navigator.permissions.query({ name: 'microphone' as PermissionName })
-        .then(p => { if (p.state === 'denied') result.mic = 'blocked' }),
-      navigator.permissions.query({ name: 'camera' as PermissionName })
-        .then(p => { if (p.state === 'denied') result.camera = 'blocked' }),
-    ])
-  }
+  const [micPerm, camPerm] = await Promise.all([
+    queryPermission('microphone'),
+    queryPermission('camera'),
+  ])
+  if (micPerm === 'denied') result.mic = 'blocked'
+  if (camPerm === 'denied') result.camera = 'blocked'
 
   // Device enumeration — never prompts; labels hidden until permission granted
   try {
@@ -72,7 +84,32 @@ async function runCheck(): Promise<Omit<CachedCheck, 'ts'>> {
       result.mic = mics.length > 0 ? 'ok' : 'missing'
     if (result.camera !== 'blocked')
       result.camera = cams.length > 0 ? 'ok' : 'missing'
-    result.speaker = speakers.length > 0 ? 'ok' : 'missing'
+
+    // An empty audiooutput list usually means "this browser won't tell us",
+    // NOT "this machine has no speakers". Treating it as missing produced a
+    // false "No audio output device found" on Macs whose speakers work fine,
+    // which also flipped the primary button into its muted "Resolve Audio
+    // Issue" state and stood in the way of a normal join.
+    //
+    // Two distinct reasons the list can be empty on a healthy machine:
+    //  1. Safari (and Firefox by default) never enumerate audiooutput at all.
+    //     setSinkId is the capability that governs output-device selection, so
+    //     feature-detecting it tells us whether the list is meaningful here.
+    //  2. Chromium withholds audiooutput entries until microphone permission
+    //     is granted, since output identity is a fingerprinting vector. A
+    //     non-empty label on any device proves permission was granted, which
+    //     is a more reliable signal than the Permissions API alone (Safari
+    //     has no 'microphone' query and reports 'unsupported').
+    //
+    // Only when the list is genuinely trustworthy AND empty do we report
+    // 'missing' — preserving the true positive of every output unplugged.
+    const supportsOutputEnumeration =
+      typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
+    const canTrustOutputList =
+      supportsOutputEnumeration && (micPerm === 'granted' || devices.some(d => d.label !== ''))
+    result.speaker = speakers.length > 0
+      ? 'ok'
+      : canTrustOutputList ? 'missing' : 'unknown'
 
     result.micLabel = mics[0]?.label || (mics.length > 0 ? 'Microphone' : '')
     result.cameraLabel = cams[0]?.label || (cams.length > 0 ? 'Camera' : '')
@@ -125,7 +162,10 @@ export function useDeviceReadiness(): DeviceReadiness {
   return { ...state, recheck: () => check(true) }
 }
 
-// True when audio output is unavailable — callers should warn but not hard-block
+// True when audio output is unavailable — callers should warn but not hard-block.
+// Deliberately checks 'missing' and not 'unknown': an unknown speaker just means
+// the browser hasn't exposed output devices yet (no mic permission), which is the
+// default state for every first-time visitor and must not be treated as a fault.
 export function isCriticalAudioIssue(r: Pick<DeviceReadiness, 'speaker' | 'mic'>): boolean {
   return r.speaker === 'missing' || r.mic === 'blocked'
 }

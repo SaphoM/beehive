@@ -48,7 +48,11 @@ function openSettings(kind: 'microphone' | 'camera') {
 
 export function DeviceReadinessBanner({ readiness }: { readiness: DeviceReadiness }) {
   const { loading, mic, camera, speaker } = readiness
-  const allOk = mic === 'ok' && camera === 'ok' && speaker === 'ok'
+  // 'unknown' speaker means the browser won't enumerate output devices until
+  // mic permission is granted — not an actual fault, so it must not keep the
+  // banner permanently open (see useDeviceReadiness).
+  const speakerFault = speaker === 'missing' || speaker === 'blocked'
+  const allOk = mic === 'ok' && camera === 'ok' && !speakerFault
   const passedRef = useRef(false)
 
   // Mark first-pass once everything is green
@@ -68,8 +72,8 @@ export function DeviceReadinessBanner({ readiness }: { readiness: DeviceReadines
   // Build rows — only for non-ok states (plus camera which shows as warn when missing)
   const rows: Row[] = []
 
-  // Speaker
-  if (speaker !== 'ok') {
+  // Speaker — only a real fault, never the withheld-enumeration 'unknown'
+  if (speakerFault) {
     rows.push({
       label: 'Speakers',
       detail: speaker === 'missing' ? 'No audio output device found' : 'Speaker access blocked',

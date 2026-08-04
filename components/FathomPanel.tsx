@@ -1,79 +1,7 @@
 import { useState } from 'react'
 import { s } from './roomStyles'
 import { useFathomMeetings, useFathomTranscript, type FathomMeeting, type FathomTranscriptLine } from '../livekit_react_hooks'
-
-// Fathom's AI summary (`default_summary.markdown_formatted`) is real markdown
-// — ## / ### headers, **bold**, [text](url) links, "  - " bullets — but was
-// being dumped into a plain <div> as literal text, so the summary rendered
-// with visible "##"/"**"/"[...]( ...)" syntax noise instead of clean prose.
-// This is a small, targeted renderer for exactly the subset Fathom actually
-// emits (confirmed against real API responses), not a general markdown
-// parser — no need for a full markdown library for one bounded, known shape.
-function renderBold(text: string, keyPrefix: string): React.ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, i) =>
-    part.startsWith('**') && part.endsWith('**')
-      ? <strong key={`${keyPrefix}-b${i}`} style={{ color: '#ccc', fontWeight: 600 }}>{part.slice(2, -2)}</strong>
-      : <span key={`${keyPrefix}-p${i}`}>{part}</span>
-  )
-}
-
-function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = []
-  const linkRe = /\[([^\]]+)\]\(([^)]+)\)/g
-  let lastIndex = 0
-  let m: RegExpExecArray | null
-  let i = 0
-  while ((m = linkRe.exec(text))) {
-    if (m.index > lastIndex) nodes.push(...renderBold(text.slice(lastIndex, m.index), `${keyPrefix}-t${i++}`))
-    nodes.push(
-      <a key={`${keyPrefix}-l${i++}`} href={m[2]} target="_blank" rel="noreferrer" style={{ color: '#f5a623', textDecoration: 'none' }}>
-        {renderBold(m[1], `${keyPrefix}-lb${i}`)}
-      </a>
-    )
-    lastIndex = m.index + m[0].length
-  }
-  if (lastIndex < text.length) nodes.push(...renderBold(text.slice(lastIndex), `${keyPrefix}-t${i++}`))
-  return nodes
-}
-
-function FathomSummary({ markdown }: { markdown: string }) {
-  const blocks: React.ReactNode[] = []
-  let listBuffer: string[] = []
-  let listKey = 0
-
-  const flushList = () => {
-    if (listBuffer.length === 0) return
-    const key = `ul-${listKey++}`
-    blocks.push(
-      <ul key={key} style={{ margin: '2px 0 8px', paddingLeft: 18 }}>
-        {listBuffer.map((item, i) => <li key={i} style={{ marginBottom: 4 }}>{renderInline(item, `${key}-${i}`)}</li>)}
-      </ul>
-    )
-    listBuffer = []
-  }
-
-  markdown.split('\n').forEach((line, i) => {
-    const trimmed = line.trim()
-    if (!trimmed) { flushList(); return }
-
-    const bullet = trimmed.match(/^-\s+(.*)/)
-    if (bullet) { listBuffer.push(bullet[1]); return }
-    flushList()
-
-    const h2 = trimmed.match(/^##\s+(.*)/)
-    const h3 = trimmed.match(/^###\s+(.*)/)
-    if (h2) {
-      blocks.push(<div key={i} style={{ color: '#eee', fontSize: 13, fontWeight: 600, marginTop: 10 }}>{h2[1]}</div>)
-    } else if (h3) {
-      blocks.push(<div key={i} style={{ color: '#bbb', fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>{h3[1]}</div>)
-    } else {
-      blocks.push(<div key={i} style={{ marginBottom: 4 }}>{renderInline(trimmed, `p-${i}`)}</div>)
-    }
-  })
-  flushList()
-
-  return <>{blocks}</>
-}
+import { LiteMarkdown } from './liteMarkdown'
 
 function fmtDuration(start?: string, end?: string): string {
   if (!start || !end) return ''
@@ -136,7 +64,7 @@ function FathomMeetingRow({ meeting }: { meeting: FathomMeeting }) {
             <div style={s.fathomSection}>
               <div style={s.fathomSectionTitle}>Summary</div>
               <div style={s.fathomSummaryText}>
-                <FathomSummary markdown={meeting.default_summary.markdown_formatted} />
+                <LiteMarkdown markdown={meeting.default_summary.markdown_formatted} />
               </div>
             </div>
           )}

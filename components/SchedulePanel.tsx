@@ -65,6 +65,12 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   const [prep, setPrep] = useState<MeetingPrepSummary | null>(null)
   const [createdRoomId, setCreatedRoomId] = useState<string | null>(null)
   const [createdHostSecret, setCreatedHostSecret] = useState<string | null>(null)
+  // Meeting Intelligence — opt-in, off by default. No settings row is ever
+  // written unless this is checked (see handleCreate below), which is what
+  // keeps every room that doesn't touch this toggle behaving exactly as it
+  // does today. Start Now has no equivalent toggle — explicit scope
+  // boundary, see the Meeting Intelligence plan.
+  const [enableIntelligence, setEnableIntelligence] = useState(false)
 
   const addEmail = () => {
     const e = emailInput.trim().toLowerCase()
@@ -108,6 +114,23 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     if (prep) {
       saveMeetingPrep(room.id, prep)
       seedSharedAgenda(room.id, hostSecret, displayName, prep)
+    }
+    // Meeting Intelligence settings — best-effort, non-fatal follow-up call
+    // matching the invitation-creation pattern just below. Only ever called
+    // when the toggle is on; leaving it off means no room_intelligence_
+    // settings row is written at all, so the room_started webhook branch
+    // simply finds nothing and never starts a recording — identical to
+    // today's behavior for every room that doesn't touch this toggle.
+    if (enableIntelligence) {
+      try {
+        await fetch(`${API_BASE}/api/rooms/${room.id}/intelligence-settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recordingEnabled: true, aiNotesEnabled: true, hostSecret }),
+        })
+      } catch (e) {
+        console.warn('[schedule] intelligence settings update failed (non-fatal):', e)
+      }
     }
     // Create DB-backed invitations so invitees see this room in their carousel
     // immediately, across all their devices, without waiting for the email.
@@ -233,6 +256,17 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
           ))}
         </div>
       </div>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={enableIntelligence}
+          onChange={e => setEnableIntelligence(e.target.checked)}
+          style={{ width: 14, height: 14, accentColor: '#f5a623', cursor: 'pointer' }}
+        />
+        <span style={{ color: '#aaa', fontSize: 12 }}>Enable recording &amp; AI notes</span>
+        <span style={{ color: '#555', fontSize: 11 }}>— off by default</span>
+      </label>
 
       <div style={{ display: 'flex', gap: 8 }}>
         <input

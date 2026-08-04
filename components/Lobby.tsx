@@ -4,6 +4,7 @@ import { s } from './roomStyles'
 import { SUBTEXTS, STING_RED, REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO, type Subtext } from './roomUtils'
 import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
+import { MeetingNotesPanel } from './MeetingNotesPanel'
 import { useAuth, useProfile, useMyMeetings, supabase } from '../livekit_react_hooks'
 import { LogOut } from 'lucide-react'
 import { EditableAvatar } from './Avatar'
@@ -91,6 +92,7 @@ export function Lobby({
   const { profile, updateProfile } = useProfile(user?.id ?? null)
   const displayNameForAvatar = profile?.full_name ?? user?.email?.split('@')[0] ?? ''
   const [showFathom, setShowFathom] = useState(false)
+  const [showNotes, setShowNotes] = useState(false)
   const [lobbyTab, setLobbyTab] = useState<'now' | 'schedule'>('now')
   const [flipped, setFlipped] = useState(false)
   const [nextMeeting, setNextMeeting] = useState<NextMeeting | null>(() => {
@@ -424,6 +426,14 @@ export function Lobby({
       </button>
 
       {showFathom && <FathomPanel />}
+
+      <button style={s.fathomToggleBtn} onClick={() => setShowNotes(v => !v)}>
+        <span style={{ opacity: 0.5, fontSize: 11 }}>◆</span>
+        Meeting Notes
+        <span style={{ marginLeft: 'auto', opacity: 0.5 }}>{showNotes ? '▲' : '▼'}</span>
+      </button>
+
+      {showNotes && <MeetingNotesPanel accessToken={accessToken} />}
 
       {/* Web only — continue in the desktop app (renders nothing inside Electron) */}
       <OpenDesktopAppButton style={{ maxWidth: 320 }} />

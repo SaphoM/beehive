@@ -1,11 +1,12 @@
 import express from 'express'
-import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
+import { AccessToken, RoomServiceClient, TrackSource, EgressClient, WebhookReceiver } from 'livekit-server-sdk'
 import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { createMeetingIntelligence } from './meetingIntelligence.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -72,7 +73,12 @@ app.use((_req, res, next) => {
   next()
 })
 
-app.use(express.json())
+// The `verify` callback stashes the raw request body alongside Express's
+// already-parsed req.body — added solely so the new webhook signature
+// verification below (WebhookReceiver.receive()) has the exact raw string
+// LiveKit signed. Every existing route's req.body is completely unaffected;
+// this only attaches a new req.rawBody Buffer nothing previously read.
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf } }))
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -92,6 +98,27 @@ const roomService = new RoomServiceClient(
   process.env.LIVEKIT_API_KEY,
   process.env.LIVEKIT_API_SECRET
 )
+
+// Server-side recording for the opt-in Meeting Intelligence pipeline (see
+// meetingIntelligence.js) — same credentials as roomService above, LiveKit
+// Cloud runs the actual Egress infrastructure so no separate worker is
+// needed here, just this API client.
+const egressClient = new EgressClient(
+  process.env.LIVEKIT_URL || process.env.VITE_LIVEKIT_URL,
+  process.env.LIVEKIT_API_KEY,
+  process.env.LIVEKIT_API_SECRET
+)
+
+// Verifies the /api/livekit/webhook request actually came from LiveKit
+// (Authorization header, signed JWT) before any of its branches act on the
+// payload — added specifically because the new room_started/room_finished/
+// egress_ended branches below now trigger paid, stateful actions (starting/
+// stopping egress, writing job rows) from this payload, unlike the
+// pre-existing read-mostly branches. Every genuine LiveKit webhook call
+// already carries a valid signature and continues to pass identically.
+const webhookReceiver = new WebhookReceiver(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET)
+
+const meetingIntelligence = createMeetingIntelligence({ supabase, egressClient })
 
 // ============================================================
 // SCHEDULE A ROOM (waiting-room-gated — Schedule tab only)
@@ -524,7 +551,52 @@ app.get('/api/rooms/:roomId/participant-count', async (req, res) => {
 // POST /api/livekit/webhook
 // ============================================================
 app.post('/api/livekit/webhook', async (req, res) => {
-  const event = req.body
+  // Verified WebhookEvent — see webhookReceiver's instantiation comment
+  // above for why this was added. event.event/.room/.participant/
+  // .egressInfo below are the exact same fields every branch already
+  // destructured from the previously-unverified req.body; only the trust
+  // level of the source changed, not the shape.
+  let event
+  try {
+    event = await webhookReceiver.receive(req.rawBody.toString('utf8'), req.headers.authorization)
+  } catch (e) {
+    console.error('[webhook] signature verification failed:', e?.message)
+    return res.status(401).json({ error: 'Invalid webhook signature' })
+  }
+
+  // ------------------------------------------------------------
+  // Meeting Intelligence — start recording when the room actually goes
+  // live, IF this room has recording_enabled (opt-in, off by default — see
+  // 009_meeting_intelligence.sql). This is the automatic-lifecycle start;
+  // the stop happens inside the existing room_finished branch below, and
+  // the resulting file is picked up by the new, separate egress_ended
+  // branch further down (NOT the pre-existing one, which stays untouched).
+  // Any failure here is caught and logged only — it must never delay or
+  // fail this webhook's response, since LiveKit and the room's own
+  // lifecycle do not depend on this feature at all.
+  // ------------------------------------------------------------
+  if (event.event === 'room_started') {
+    try {
+      const { data: roomRow } = await supabase.from('rooms').select('id').eq('livekit_room_name', event.room?.name).single()
+      if (roomRow) {
+        const { data: settings } = await supabase.from('room_intelligence_settings').select('recording_enabled').eq('room_id', roomRow.id).single()
+        if (settings?.recording_enabled) {
+          const { data: job } = await supabase.from('meeting_intelligence_jobs')
+            .insert({ room_id: roomRow.id, status: 'recording' })
+            .select('id')
+            .single()
+          if (job) {
+            const { egressId, storagePath } = await meetingIntelligence.startMeetingEgress(roomRow.id, event.room.name, job.id)
+            await supabase.from('meeting_intelligence_jobs')
+              .update({ egress_id: egressId, audio_storage_path: storagePath })
+              .eq('id', job.id)
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[intelligence] failed to start egress:', e?.message)
+    }
+  }
 
   if (event.event === 'egress_ended') {
     const { egress_id, room_name, file } = event.egressInfo ?? {}
@@ -584,6 +656,62 @@ app.post('/api/livekit/webhook', async (req, res) => {
       .update({ ended_at: new Date().toISOString(), is_active: false })
       .eq('livekit_room_name', room?.name)
       .eq('is_active', true)
+
+    // ------------------------------------------------------------
+    // Meeting Intelligence — stop recording now that the room is actually
+    // closed. Additive: runs after the existing update above, only for
+    // rooms that have an active job from the room_started branch (i.e.
+    // recording_enabled was on) — a silent no-op for every other room,
+    // identical to today's behavior.
+    // ------------------------------------------------------------
+    try {
+      const { data: roomRow } = await supabase.from('rooms').select('id').eq('livekit_room_name', room?.name).single()
+      if (roomRow) {
+        const { data: job } = await supabase.from('meeting_intelligence_jobs')
+          .select('id, egress_id')
+          .eq('room_id', roomRow.id)
+          .eq('status', 'recording')
+          .maybeSingle()
+        if (job?.egress_id) await egressClient.stopEgress(job.egress_id)
+      }
+    } catch (e) {
+      console.error('[intelligence] stopEgress failed:', e?.message)
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Meeting Intelligence — a FOURTH, independent egress_ended branch (not a
+  // modification of the pre-existing one above, which stays untouched and
+  // keeps feeding the `recordings` table/useRecordings() UI exactly as
+  // before). Only matches egresses this feature itself started (by
+  // egress_id, set at room_started) — for every other egress (the
+  // pre-existing manual/screen-share recording flow), no matching job row
+  // exists and this branch is a silent no-op.
+  //
+  // Note: event.egressInfo here uses the verified WebhookEvent's real field
+  // names (egressId, not egress_id) — see the egress_id/room_name comment
+  // on the pre-existing branch above, which reads the wrong casing for that
+  // (unrelated, pre-existing) field.
+  // ------------------------------------------------------------
+  if (event.event === 'egress_ended') {
+    const { egressId, file } = event.egressInfo ?? {}
+    try {
+      const { data: job } = await supabase.from('meeting_intelligence_jobs').select('id').eq('egress_id', egressId).maybeSingle()
+      if (job && file) {
+        const { data: updated } = await supabase.from('meeting_intelligence_jobs')
+          // audio_storage_path was already set deterministically at
+          // room_started (see meetingIntelligence.js) — file.location here
+          // (correctly cased, unlike the pre-existing branch's fields) is
+          // stored only for observability/debugging, not read by runJob().
+          .update({ status: 'egress_done', audio_url: file.location, updated_at: new Date().toISOString() })
+          .eq('id', job.id)
+          .select()
+          .single()
+        if (updated) setImmediate(() => meetingIntelligence.runJob(updated.id).catch(e => console.error('[intelligence] job failed:', updated.id, e?.message)))
+      }
+    } catch (e) {
+      console.error('[intelligence] egress_ended handling failed:', e?.message)
+    }
   }
 
   res.status(200).json({ received: true })
@@ -814,6 +942,109 @@ app.get('/api/me/meetings', async (req, res) => {
 })
 
 // ============================================================
+// MEETING INTELLIGENCE — opt-in settings toggle
+// POST /api/rooms/:roomId/intelligence-settings
+// Body: { recordingEnabled, aiNotesEnabled, hostSecret?, actingDisplayName? }
+// ============================================================
+// Gated by the exact same isRoomModerator() every other moderation-only
+// endpoint already uses — no parallel auth check invented for this feature.
+// Upserts room_intelligence_settings; no row = feature entirely inactive
+// for that room (the default for every room unless this is called).
+app.post('/api/rooms/:roomId/intelligence-settings', async (req, res) => {
+  const { roomId } = req.params
+  const { recordingEnabled, aiNotesEnabled, hostSecret, actingDisplayName } = req.body
+
+  if (!(await isRoomModerator(roomId, hostSecret, actingDisplayName))) {
+    return res.status(403).json({ error: 'Not authorized to change recording settings for this room' })
+  }
+
+  const { error } = await supabase.from('room_intelligence_settings').upsert({
+    room_id: roomId,
+    recording_enabled: !!recordingEnabled,
+    ai_notes_enabled: !!aiNotesEnabled,
+    updated_at: new Date().toISOString(),
+  })
+  if (error) {
+    console.error('[intelligence] settings upsert failed:', error.message)
+    return res.status(500).json({ error: 'Failed to update recording settings' })
+  }
+
+  return res.json({ ok: true })
+})
+
+// ============================================================
+// MEETING INTELLIGENCE — this user's meeting notes
+// GET /api/me/meeting-notes
+// Header: Authorization: Bearer <accessToken>
+// ============================================================
+// Identity resolution mirrors /api/me/meetings exactly: organizer access via
+// scheduler_auth_user_id, invitee access via meeting_invitations.invitee_email
+// (lowercased). Reads meeting_intelligence_jobs/meeting_intelligence directly
+// via the service-role client — these tables have zero client RLS policies
+// (see 009_meeting_intelligence.sql), so this backend endpoint is the only
+// way any of this data is ever reachable, by design.
+app.get('/api/me/meeting-notes', async (req, res) => {
+  const raw = req.headers.authorization || ''
+  const accessToken = raw.startsWith('Bearer ') ? raw.slice(7) : raw
+  if (!accessToken) return res.status(401).json({ error: 'Authentication required' })
+
+  const { data: { user } } = await supabase.auth.getUser(accessToken)
+  if (!user?.email) return res.status(401).json({ error: 'Invalid or expired token' })
+
+  const [organizedRes, invitedRes] = await Promise.all([
+    supabase.from('rooms').select('id, name').eq('scheduler_auth_user_id', user.id),
+    supabase.from('meeting_invitations').select('room_id, rooms(id, name)').eq('invitee_email', user.email.toLowerCase()).eq('status', 'accepted'),
+  ])
+
+  const roomMap = new Map()
+  for (const room of (organizedRes.data ?? [])) roomMap.set(room.id, room.name)
+  for (const inv of (invitedRes.data ?? [])) {
+    if (inv.rooms && !roomMap.has(inv.rooms.id)) roomMap.set(inv.rooms.id, inv.rooms.name)
+  }
+
+  if (roomMap.size === 0) return res.json({ notes: [] })
+
+  const roomIds = Array.from(roomMap.keys())
+  const [jobsRes, intelligenceRes] = await Promise.all([
+    supabase.from('meeting_intelligence_jobs').select('room_id, status, created_at').in('room_id', roomIds),
+    supabase.from('meeting_intelligence').select('room_id, summary_markdown, action_items, created_at').in('room_id', roomIds),
+  ])
+
+  // A room can only ever have one active pipeline run in this design — take
+  // the most recently created job/intelligence row per room if duplicates
+  // somehow exist (e.g. a room recorded twice on different dates).
+  const latestJobByRoom = new Map()
+  for (const job of (jobsRes.data ?? [])) {
+    const existing = latestJobByRoom.get(job.room_id)
+    if (!existing || job.created_at > existing.created_at) latestJobByRoom.set(job.room_id, job)
+  }
+  const latestIntelligenceByRoom = new Map()
+  for (const row of (intelligenceRes.data ?? [])) {
+    const existing = latestIntelligenceByRoom.get(row.room_id)
+    if (!existing || row.created_at > existing.created_at) latestIntelligenceByRoom.set(row.room_id, row)
+  }
+
+  const notes = roomIds
+    .map(roomId => {
+      const job = latestJobByRoom.get(roomId)
+      const intelligence = latestIntelligenceByRoom.get(roomId)
+      if (!job) return null // feature was never enabled for this room — omit entirely, not a "not_started" row
+      return {
+        roomId,
+        roomName: roomMap.get(roomId),
+        status: job.status,
+        summaryMarkdown: intelligence?.summary_markdown ?? null,
+        actionItems: intelligence?.action_items ?? null,
+        createdAt: job.created_at,
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) // most recent first
+
+  return res.json({ notes })
+})
+
+// ============================================================
 // DELETE SCHEDULED MEETING
 // DELETE /api/rooms/:roomId
 // Body: { hostSecret: string }
@@ -947,4 +1178,12 @@ if (existsSync(distPath)) {
 }
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT, () => console.log(`BeeHive backend running on port ${PORT}`))
+app.listen(PORT, () => {
+  console.log(`BeeHive backend running on port ${PORT}`)
+  // Retries any Meeting Intelligence job stuck in a post-egress stage — see
+  // meetingIntelligence.js's SWEEPABLE_STATUSES for exactly which statuses
+  // this can touch. The first interval-based job in this file; started here
+  // (server boot) rather than at import time so it can't fire before the
+  // server is actually accepting the requests its own retries depend on.
+  meetingIntelligence.startIntelligenceSweep()
+})

@@ -910,3 +910,54 @@ export function useMyMeetings(accessToken: string | null | undefined, userEmail:
 
   return { meetings, loading, refresh: load, updateStatus }
 }
+
+// ============================================================
+// MEETING NOTES — Meeting Intelligence feature (opt-in recording + AI notes)
+// Same shape as useMyMeetings above: fetch on mount + accessToken change,
+// no Realtime subscription (job status only changes via backend-driven
+// pipeline stages, not a live multi-user editing surface like invitations).
+// ============================================================
+export interface MeetingNoteActionItem {
+  owner?: string
+  task: string
+  due_date?: string
+  priority?: string
+}
+
+export interface MeetingNote {
+  roomId: string
+  roomName: string
+  // Mirrors meeting_intelligence_jobs.status exactly — 'recording' |
+  // 'egress_done' | 'transcribing' | 'transcribed' | 'summarizing' |
+  // 'complete' | 'skipped_no_provider' | 'failed'. Rooms where the feature
+  // was never enabled are omitted entirely by the backend, not returned
+  // with a placeholder status.
+  status: string
+  summaryMarkdown: string | null
+  actionItems: MeetingNoteActionItem[] | null
+  createdAt: string
+}
+
+export function useMeetingNotes(accessToken: string | null | undefined) {
+  const [notes, setNotes] = useState<MeetingNote[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!accessToken) { setNotes([]); return }
+    setLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/api/me/meeting-notes`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (resp.ok) {
+        const { notes: data } = await resp.json()
+        setNotes(data ?? [])
+      }
+    } catch { /* network error — keep existing list */ }
+    setLoading(false)
+  }, [accessToken])
+
+  useEffect(() => { load() }, [load])
+
+  return { notes, loading, refresh: load }
+}

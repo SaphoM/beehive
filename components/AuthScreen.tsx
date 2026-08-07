@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react'
+import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useAuth } from '../livekit_react_hooks'
 import { REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO } from './roomUtils'
 import { BuiltByFooter } from './BuiltByFooter'
@@ -98,6 +98,36 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
   // code) rather than a single step, since either path can complete the sign-in.
   const [magicSent, setMagicSent] = useState(false)
   const [otpRequested, setOtpRequested] = useState(false)
+  // Shared 15s cooldown across every action that sends another email for
+  // the same sign-in attempt ("Send code instead" and "Resend magic link").
+  // A magic-link email already carries both the link AND the 6-digit code
+  // (see signInWithOtp's own comment), so firing any of these again right
+  // after a send was producing a fully redundant email through the same
+  // low per-project rate limit. Armed imperatively (not via a state-change
+  // effect) so every sender — the initial magic link, a resend, or a code
+  // request — can (re)start the same countdown, not just the first one.
+  const [sendCooldown, setSendCooldown] = useState(0)
+  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function startCooldown() {
+    if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
+    setSendCooldown(15)
+    cooldownTimerRef.current = setInterval(() => {
+      setSendCooldown(prev => {
+        if (prev <= 1) {
+          if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
+          cooldownTimerRef.current = null
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
+  // Belt-and-braces: clear any running interval if the screen unmounts
+  // mid-countdown (e.g. sign-in completes via a different tab) so it can't
+  // keep ticking against a detached component.
+  useEffect(() => () => { if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current) }, [])
 
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
@@ -119,6 +149,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
       const { error } = await signInWithMagicLink(email)
       if (error) { setErr(error); setBusy(false); return }
       setMagicSent(true)
+      startCooldown()
     }
     setBusy(false)
   }
@@ -129,6 +160,19 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
     const { error } = await signInWithOtp(email)
     if (error) { setErr(error); setBusy(false); return }
     setOtpRequested(true)
+    startCooldown()
+    setBusy(false)
+  }
+
+  // Same underlying send as the initial "Send magic link" — gated by the
+  // shared cooldown above so repeated clicks can't queue up several emails
+  // in a row.
+  async function handleResendMagicLink() {
+    setErr(null)
+    setBusy(true)
+    const { error } = await signInWithMagicLink(email)
+    if (error) { setErr(error); setBusy(false); return }
+    startCooldown()
     setBusy(false)
   }
 
@@ -143,7 +187,11 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
     onAuthenticated?.()
   }
 
-  function reset() { setStep('email'); setMagicSent(false); setOtpRequested(false); setOtp(''); setErr(null) }
+  function reset() {
+    setStep('email'); setMagicSent(false); setOtpRequested(false); setOtp(''); setErr(null)
+    if (cooldownTimerRef.current) { clearInterval(cooldownTimerRef.current); cooldownTimerRef.current = null }
+    setSendCooldown(0)
+  }
 
   return (
     <div style={c.root}>
@@ -200,7 +248,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
                     {busy ? 'Sending…' : 'Send code'}
                   </button>
                 ) : magicSent ? (
-                  <p style={c.success}>Magic link sent to <strong>{email}</strong> — click the link in your email to sign in.</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <p style={c.success}>Magic link sent to <strong>{email}</strong> — click the link in your email to sign in.</p>
+                    <button style={c.ghostBtn} type="button" onClick={handleResendMagicLink} disabled={busy || sendCooldown > 0}>
+                      {sendCooldown > 0 ? `Resend magic link (${sendCooldown}s)` : 'Resend magic link'}
+                    </button>
+                  </div>
                 ) : (
                   <button style={c.primaryBtn} type="submit" disabled={busy || !email.trim()}>
                     {busy ? 'Sending…' : 'Send magic link'}
@@ -238,8 +291,8 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated?: () => void }
                       </button>
                     </form>
                   ) : (
-                    <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy || !email.trim()}>
-                      Send code instead
+                    <button style={c.ghostBtn} type="button" onClick={handleUseOtpInstead} disabled={busy || !email.trim() || sendCooldown > 0}>
+                      {sendCooldown > 0 ? `Send code instead (${sendCooldown}s)` : 'Send code instead'}
                     </button>
                   )}
                 </>

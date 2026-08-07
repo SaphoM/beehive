@@ -31,7 +31,9 @@ Available as a **web app** and a **native desktop app** (Electron, macOS / Windo
 | Icons | Lucide React |
 | Fonts | Roboto (Google Fonts) — Thin (100) / Light (300) / Regular (400) |
 | Backend | Node.js + Express 5 |
-| Meeting Intelligence | Fathom API |
+| Meeting Intelligence (3rd-party) | Fathom API |
+| Meeting Intelligence (native, opt-in) | LiveKit Egress (server-side recording) + pluggable transcription (Whisper / Deepgram) + pluggable LLM summarization (OpenAI / Anthropic / Azure OpenAI) — see [Meeting Intelligence (AI Notes)](#meeting-intelligence-ai-notes--opt-in) |
+| Desktop auto-update | `electron-updater` (generic provider) against a self-hosted feed — see [Desktop Auto-Update](#desktop-auto-update) |
 | Background AI | MediaPipe Tasks Vision `ImageSegmenter` (GPU-delegated), with the legacy MediaPipe Selfie Segmentation API as an automatic fallback — see `components/segmentation/` |
 | Desktop | Electron 42 + electron-builder |
 | Window activation | `beehive-ctl` native helper (`NSRunningApplication`) — bring the shared window's app to the foreground |
@@ -51,6 +53,8 @@ BeeHive uses **passwordless auth** — no passwords, ever.
 | **6-digit OTP** | Enter email → receive code → type code in app (Electron default; also available on web) |
 | **Frictionless room join** | `?room=ID` links bypass auth entirely — guests join directly |
 | **Post-meeting register** | Guests who joined via room link are prompted to **request Beta access** after the meeting ends (card-flip animation in lobby) |
+
+**Resend cooldown (web sign-in only):** `AuthScreen.tsx`'s "Send magic link" and "Send code instead" both call the exact same `supabase.auth.signInWithOtp()` — that one email already carries *both* the magic link and the 6-digit code — so a user clicking straight from one button to the other was firing a second, fully redundant email through Supabase's low per-project email rate limit, exhausting it in a handful of clicks. A "Resend magic link" action now sits next to the sent-confirmation message, and it shares one 15-second cooldown with "Send code instead" — whichever one fires an email arms the countdown on both, re-enabling automatically at zero. Armed imperatively from each send handler (not a state-change effect), so a resend re-arms the same cooldown rather than only the first send. Doesn't apply on Electron, which only ever shows the OTP step (no magic-link button to be redundant with).
 
 **Private Beta — access is invite-only:** BeeHive is in a private Beta, so accounts are **provisioned by X Spark** rather than self-served. The **Register** control (both on the `AuthScreen` and the lobby's post-meeting `RegisterPanel`) is tagged with a **`Beta`** badge and, instead of creating an account, opens a pre-filled `mailto:studio@xspark.co.za` "Request access from X Spark" message. Sign-in for existing accounts (magic link / OTP) is unchanged. The request-access email + `mailto` are defined once in `components/roomUtils.ts` (`REQUEST_ACCESS_EMAIL`, `REQUEST_ACCESS_MAILTO`) and shared by both surfaces.
 
@@ -97,7 +101,7 @@ Admin role is assigned automatically by the seed script. Users provisioned durin
   - **Stable, version-less filenames on GitHub's `latest` release alias** — all URLs above resolve via `releases/latest/download/<name>`, which always serves whatever asset with that exact name is attached to the most recently published release. `package.json`'s `build.mac.artifactName` / `build.win.artifactName` emit exactly these fixed names for the per-arch builds (no version baked into the filename); the combined Windows installer's `BeeHive-Setup.exe` name is electron-builder's own fixed convention for a multi-arch NSIS build, not from that template. The old scheme (`BeeHive-1.0.0-arm64.dmg`, tied to a specific version tag) went stale on every version bump and needed the download URL hand-edited in `DesktopHandoff.tsx` each time — these URLs never need to change again.
   - To publish a new build: `npm run electron:build:mac` and `npm run electron:build:win` (each now builds both architectures for its platform automatically — `--universal` for mac, `--x64 --arm64` for Windows — no manual flag needed), then `gh release upload latest release/<file> --clobber` to replace the asset on the `latest`-aliased release in place — the download URL never needs touching.
   - **The published asset can lag behind the current build** — the download URL is a fixed release-asset link, so the web app always serves whatever installer was last uploaded, *not* what's on disk. Re-run the `gh release upload … --clobber` step whenever a rebuild should reach downloaders. (`gh` must be authenticated — `gh auth login` — before this works; the upload publishes a public asset.)
-  - **Rebuild checklist, every time** (this is the actual verification loop used each time, not just the commands): `npm run electron:build:mac` / `:win` → confirm the version baked in matches the committed count (`/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" release/mac-universal/BeeHive.app/Contents/Info.plist` on mac, `grep version release/latest.yml` covers both) → `lipo -info` on both the main executable and the bundled `beehive-ctl` helper to confirm `x86_64 arm64` → `codesign --verify --deep --strict` → install to `/Applications` via `ditto`, `tccutil reset ScreenCapture co.xspark.beehive` (ad-hoc re-signing changes the app's identity every build, orphaning the prior Screen Recording grant), then launch and confirm the process is actually running. Only *then* is a build "done" — a successful `electron-builder` exit code alone doesn't mean the shipped artifact is correct.
+  - **Rebuild checklist, every time** (this is the actual verification loop used each time, not just the commands): `npm run electron:build:mac` / `:win` → confirm the version baked in matches the committed count (`/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" release/mac-universal/BeeHive.app/Contents/Info.plist` on mac, `grep version release/latest.yml` covers both) → `lipo -info` on both the main executable and the bundled `beehive-ctl` helper to confirm `x86_64 arm64` → `codesign --verify --deep --strict` → install to `/Applications` via `ditto`, **`tccutil reset ScreenCapture co.xspark.beehive`** (ad-hoc re-signing changes the app's identity every single build, silently orphaning the prior Screen Recording grant — see the screen-sharing section below for exactly what this looks like when skipped: System Settings shows the toggle already on, sharing fails anyway, and nothing in the UI explains why), then launch and confirm the process is actually running. **Skipping the `tccutil reset` step is not a minor omission — it is the single most common cause of "screen share stopped working" after a reinstall**, confirmed directly by reproducing it. Only *then* is a build "done" — a successful `electron-builder` exit code alone doesn't mean the shipped artifact is correct.
   - **First-launch bypass is surfaced in the UI** — because these installers are only ad-hoc code-signed (no paid Apple Developer ID / Windows publisher cert — see the macOS code-signing note under *Building a distributable*), a downloaded app is blocked on first open by Gatekeeper ("cannot verify developer") / SmartScreen. `DesktopHandoff.tsx` shows a one-line hint under the download link telling the user the one-time bypass (macOS: right-click → Open; Windows: More info → Run anyway) so **install actually completes** rather than dead-ending at that dialog. Truly frictionless (double-click) install would require a paid Apple Developer ID + notarization, which this project does not have
   - Override either with a differently-hosted binary via `VITE_DESKTOP_DOWNLOAD_MAC_URL` / `VITE_DESKTOP_DOWNLOAD_WIN_URL`
 
@@ -242,6 +246,51 @@ A floating assistant button (bottom-right, clear of the centred control bar) tha
 - **Extension points for the explicitly-out-of-scope "Future Ready" list** (AI summaries, live transcription, automatic minutes, task generation, calendar/Jira/Trello/M365/Workspace sync): every `AgendaItem` already carries a stable `id` for any future feature to key off; `meeting_agendas` is a single room-scoped row with the same RLS shape as every other realtime table here, so a future `summary`/`transcript_url` column is an additive migration, not a new table or a new access-control model.
 - **Verified**: full endpoint round-trip (write → read back from the database → confirmed exact match), authorization rejection (`403`)/validation rejection (`400`), RLS write rejection (confirmed via actual row content, not just HTTP status), production build succeeds, and the component's full module graph (including its `lucide-react` and `livekit_react_hooks` imports) loads with zero reference/resolution errors in a live browser. **Not independently screenshotted rendering live** — mounting it in isolation outside the app's own React tree hit a module-resolution wall in this environment (bare `react`/`react-dom` specifiers only resolve inside Vite's own transform pipeline, i.e. for modules already part of the app's real import graph), and a full authenticated meeting session wasn't available to test through the real UI. Stated plainly rather than assumed.
 
+### Meeting Intelligence (AI Notes) — opt-in
+
+A fully server-side, opt-in pipeline that automatically generates a transcript, executive summary, and structured action items after an eligible meeting ends — built as a completely isolated addition with a hard constraint: nothing about the live meeting experience (WebRTC, media pipeline, waiting room, existing scheduling behavior, chat, desktop/web apps) changes in any observable way, and the feature must never be able to degrade meeting reliability even if every downstream stage fails.
+
+- **Off by default, everywhere.** No `room_intelligence_settings` row for a room means the feature is entirely inactive for it — this is the default for every existing room and for every **Start Now** room (which never gets a row written at all). Opt-in is a single checkbox in `SchedulePanel.tsx` ("Enable recording & AI notes — off by default") when scheduling a meeting; there is no equivalent toggle on Start Now, by design.
+- **Architecture**: `BeeHive Meeting → LiveKit Room → LiveKit Egress (server-side, audio-only recording) → LiveKit webhook → DB-backed job queue → transcription provider → LLM provider → structured intelligence → BeeHive DB → Meeting Notes UI`. The bot is never part of the client meeting pipeline — it's driven entirely by LiveKit's own `room_started`/`room_finished`/`egress_ended` webhook events, with zero lines added to `RoomPage.tsx` or the join/token path.
+- **Webhook signature verification added** (`livekit_node_backend.js`'s `/api/livekit/webhook`) — the new logic starts/stops a paid, stateful recording from webhook payloads, a materially higher stakes than the endpoint's previous read-mostly branches, so `WebhookReceiver.receive()` now verifies the request actually came from LiveKit before any branch (new or pre-existing) acts on it. Every genuine LiveKit call already carries a valid signature and passes identically; only spoofed requests are newly rejected. The pre-existing `egress_ended` (→ `recordings` table), `participant_left`, and `room_finished` branches are untouched — only their input's trust level changed.
+- **Recording**: an audio-only `RoomCompositeEgress` (video isn't needed — nothing downstream uses it) starts on `room_started` if `recording_enabled` is set, and stops on `room_finished`. Uploads directly into a **private** Supabase Storage bucket (`meeting-intelligence`) via Supabase's S3-compatible endpoint (`S3Upload` egress output) — the audio never transits any storage outside the project. A **fourth, independent** `egress_ended` branch (not a modification of the pre-existing one) picks up the finished file by matching `egress_id`; for the pre-existing manual-recording flow (no matching job row), it's a silent no-op.
+- **Processing queue**: this deployment has no Redis/worker dyno, so the "queue" is a DB-backed job table (`meeting_intelligence_jobs`) driven by `setImmediate` (dispatched right after the webhook responds) plus a 5-minute sweep that retries anything stuck in a post-egress stage. Every stage checks its own output column before redoing work, so a retry (or a rare double-dispatch race) is always safe. `runJob(jobId)` takes only an id and re-derives everything from the row — the same shape a real queue worker would use, so swapping in BullMQ/SQS later wouldn't change this module's interface.
+- **Pluggable providers**, both via `providers/*.js` factory functions reading an env var + matching API key, returning `null` (not throwing) when unconfigured:
+  - **Transcription**: OpenAI Whisper or Deepgram (`TRANSCRIPTION_PROVIDER`)
+  - **LLM summarization**: OpenAI, Anthropic, or Azure OpenAI (`LLM_PROVIDER`) — prompted to emit exactly the bounded markdown subset `LiteMarkdown` already renders (`## ` / `### ` headers, `**bold**`, `[text](url)`, `- ` bullets): Executive Summary, Decisions Made, Action Items (owner/task/due date/priority where inferable), Questions Raised, Risks, Timeline
+  - An unconfigured provider marks the job `skipped_no_provider` — a **terminal, non-error** state, never a retryable failure and never something that blocks the meeting or the recording itself. The sweep retries `skipped_no_provider` jobs too, so configuring a provider later automatically drains the backlog with no manual re-trigger.
+- **Speaker attribution**: only where the transcription provider's diarization supports it (Deepgram groups consecutive same-speaker words; Whisper has none). Never fabricates an identity — an unidentified speaker stays `"Speaker 0"`, `"Speaker 1"`, etc.
+- **Meeting Notes UI** (`components/MeetingNotesPanel.tsx`, `components/liteMarkdown.tsx`): a new collapsible "Meeting Notes ▼" section in the lobby, immediately after the existing Fathom panel — same toggle-button pattern, same list/expandable-row structure, zero changes to the existing meeting UI. Per-row status chip: **Notes ready** (`complete`) / **Processing…** (`recording`/`egress_done`/`transcribing`/`transcribed`/`summarizing`) / **Recording only** (`skipped_no_provider` — audio captured, no AI provider configured yet). `components/liteMarkdown.tsx` is `FathomPanel.tsx`'s markdown renderer extracted verbatim into a shared `<LiteMarkdown/>` — a pure, behavior-identical extraction (visually confirmed), so the LLM-generated summaries (which target the same bounded subset) don't need a second, duplicate renderer.
+- **New tables** (`supabase/migrations/009_meeting_intelligence.sql`) — `room_intelligence_settings`, `meeting_intelligence_jobs`, `meeting_transcripts`, `meeting_intelligence`, plus the private `meeting-intelligence` storage bucket. All four tables follow the `room_hosts` precedent: RLS enabled with **zero client policies** and `REVOKE ALL FROM anon, authenticated` — reachable only via the backend's service-role client. New endpoints `POST /api/rooms/:roomId/intelligence-settings` (gated by the existing `isRoomModerator()`, not a new permission system) and `GET /api/me/meeting-notes` (mirrors `/api/me/meetings`'s identity resolution exactly).
+- **Fault tolerance**: every new webhook branch is wrapped so a failure (LiveKit Egress, the webhook itself, the queue, transcription, the LLM, storage) is caught, logged, and left for the sweep to retry — never delays or fails the webhook's own response, and never touches the room's actual lifecycle. Meeting reliability always takes priority over this feature.
+- **Extension points, deliberately not built yet**: live captions/translation, an AI meeting coach, action-item tracking, CRM/Jira/Asana/Linear/ClickUp sync, Microsoft 365/Google Workspace/Slack notifications. The provider-factory pattern and the job table's stage shape are designed so each of these is an additive module later, not a redesign.
+- **Not yet live in production**: requires the migration above applied (additive-only, no existing table touched) plus real credentials — 4 Supabase S3 keys (Dashboard → Project Settings → Storage → S3 Connection) and at least one transcription + one LLM provider key — none of which exist in `.env` yet. Recording and the rest of the pipeline behave correctly and safely without them (see `skipped_no_provider` above); only the AI stages need them to actually run.
+
+---
+
+### Desktop Auto-Update
+
+The desktop app checks for, downloads, and installs its own updates — `electron-updater` (generic provider) against a self-hosted feed, `${VITE_WEB_BASE_URL}/updates`, served by the same Express backend that hosts everything else.
+
+- **Checks**: once ~15s after launch, then every 4 hours, via `electron/updater.cjs`. `autoDownload: false` (explicit user consent before anything downloads) and `allowDowngrade: false` (a compromised or misconfigured feed can never push an older, potentially vulnerable build).
+- **Meeting-aware**: the renderer tells the main process when it's in an active meeting (`setMeetingActive` IPC). A non-critical update that arrives mid-meeting is queued rather than interrupted onto the user immediately, and surfaces once the meeting ends; a critical update still shows, but only as a subtle, non-blocking chip — never a dialog that could disrupt a live call.
+- **UI** (`components/UpdatePrompt.tsx`): fixed bottom-right card, state machine (`idle → checking → available → downloading → ready-to-install`), with Update Now / Later / Skip This Version (persisted in `localStorage`) while available, and a progress bar while downloading. `autoInstallOnAppQuit: true` means even "Later" still installs cleanly the next time the app quits, rather than silently never updating.
+- **Feed** (`livekit_node_backend.js`): `GET /updates/latest-mac.yml`, `GET /updates/latest.yml`, `GET /updates/metadata` — all served from a single `update-config.json` in the project root (`scripts/publish-update.mjs` generates it from a build's `release/latest-mac.yml`/`latest.yml` plus a `--base-url` for wherever the actual binaries are hosted, e.g. a GitHub Release). This file is **not committed with placeholder URLs** — it must be regenerated and committed after every real release, or the feed serves stale metadata.
+- **Cross-platform**: macOS universal (`.dmg`/`.zip`, Apple Silicon + Intel in one artifact) and Windows (combined x64+arm64 NSIS installer), matching the same "one download works everywhere" property as the manual desktop-download links under [Authentication](#authentication).
+
+---
+
+### Device Readiness Check (pre-join)
+
+Before joining a meeting, the lobby silently checks microphone, camera, and speaker availability + browser/OS permission state — **without ever prompting** (`navigator.permissions.query` + `enumerateDevices`, never `getUserMedia`) — so a real problem (blocked mic, no camera, no speaker) is visible and actionable *before* the user is already mid-join, rather than surfacing as a mysterious "why can't they hear me" once inside.
+
+- **Cached for 5 minutes** in `localStorage`, invalidated instantly on any `devicechange` event (headphones plugged/unplugged, etc.) so the check stays current without re-running on every render.
+- **A real false-positive was found and fixed**: an empty `enumerateDevices()` `audiooutput` list was being read as "this machine has no speakers." It almost always means the browser simply won't say — Safari and Firefox never enumerate `audiooutput` at all, and Chromium withholds it until microphone permission is granted (output-device identity is a fingerprinting vector). This was producing a false "No audio output device found" warning on machines with perfectly working speakers, which also repainted the primary Join button into a muted "Resolve Audio Issue" state — a fake blocker in front of an ordinary join. Fixed by feature-detecting `setSinkId` (the actual capability that governs whether outputs are enumerable) combined with mic permission or a non-empty device label as proof permission was ever granted; only when the list is genuinely trustworthy **and** empty is `'missing'` reported — the true positive (a genuinely unplugged output) still warns correctly.
+- **Mid-meeting monitoring**: while in a room, a live `devicechange` listener surfaces a brief toast if the active mic/speaker/camera disconnects (or reconnects) — separate from the pre-join check, gated on actually being in the meeting.
+- `components/useDeviceReadiness.ts` (the hook) + `components/DeviceReadinessBanner.tsx` (the lobby UI) — additive, read-only; never blocks a join, only warns.
+
+---
+
 ### In Meeting
 
 #### Header — Desktop
@@ -372,6 +421,7 @@ Button size: **40 px** on phones ≤ 430 px (`isSmallPhone`), **46 px** on wider
   - **Web — Select Window**: standard browser screen-share picker
   - **Electron — Entire Screen**: uses `desktopCapturer` with `types: ['screen']` to grab the primary display directly — no OS dialog
   - **Electron — Select Window**: opens the `ElectronWindowPicker` modal; **single click** locks the selection (green border); **double-click** or the **Confirm** button shares immediately — moving the mouse does not deselect
+  - **Electron macOS: the Screen Recording permission grant does not survive a rebuild.** Every build of this app is only ad-hoc code-signed (no paid Apple Developer ID — see *Building a distributable*), and macOS's TCC (Transparency, Consent, and Control) database ties a Screen Recording grant to the exact binary signature, not the app's bundle identifier. Re-signing on every `electron-builder` run — which happens on every rebuild — silently orphans the previous grant: **System Settings still shows the "BeeHive" toggle switched on**, but `desktopCapturer.getSources()` fails anyway, and both "Entire Screen" and "Select Window" surface the app's own `deviceErrorToast` ("macOS is still blocking screen capture…") pointing the user back at that already-enabled-looking toggle — genuinely confusing, since the visible state gives no indication anything is wrong. Confirmed directly: after a normal rebuild-and-reinstall cycle, sharing failed with a stale/orphaned grant; running `tccutil reset ScreenCapture co.xspark.beehive`, relaunching, and re-adding BeeHive via the **+** button in System Settings → Privacy & Security → Screen & System Audio Recording resolved it immediately — verified live for both **Entire Screen** (green "Stop Sharing" pill, persistent sharing indicator, correct elapsed timer) and **Select Window** (the `ElectronWindowPicker` showing live real window thumbnails, a locked single-click selection, and the share completing end-to-end). **This is why the *Rebuild checklist* (under "Building a distributable") already called out `tccutil reset` as a required step — it's required on every reinstall, not just the first one, and skipping it is the actual root cause whenever screen share "worked before but not after a rebuild."**
   - Share menu: `position: fixed; bottom: 84px` centered with `maxHeight: calc(100vh - 120px)` — never overflows on 13" displays
   - Controls bar: `maxWidth: 96vw; flexWrap: wrap` — all buttons remain accessible on narrow screens (13" MacBook)
   - Active share bar: source label, **Add Window**, **Switch** (live `replaceTrack`), **Stop Sharing**
@@ -575,13 +625,23 @@ BeeHive connects to [Fathom](https://fathom.video) for AI meeting intelligence.
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/api/rooms/schedule` | Create a waiting-room-gated scheduled room; body: `{ name, organisation }`; returns `{ room, hostSecret }` — see [Waiting Room](#waiting-room--host-delegated-admit-rights-scheduled-meetings-only) |
+| `POST` | `/api/rooms/schedule` | Create a waiting-room-gated scheduled room; body: `{ name, organisation, scheduledDate?, scheduledTime?, durationMinutes? }`; returns `{ room, hostSecret }` — see [Waiting Room](#waiting-room--host-delegated-admit-rights-scheduled-meetings-only) |
 | `POST` | `/api/livekit/token` | Generate LiveKit JWT; body: `{ roomName, displayName, identity, hostSecret? }` — `identity` is a client-generated UUID (falls back to `displayName` if omitted, for older clients); see [Security](#security). On a `requires_admission` room without a valid `hostSecret`, responds **202** `{ status: 'pending', requestId }` (no token) instead of issuing one, or **403** if previously denied |
+| `POST` | `/api/rooms/:roomId/agenda` | Write the room's live shared agenda; authorized via `isRoomModerator()` — see [BeeHive Bot Assistant](#beehive-bot-assistant--live-shared-meeting-agenda) |
 | `POST` | `/api/rooms/:roomId/admit` | Admit or deny a waiting attendee; body: `{ requestId, decision: 'admit'\|'deny', actingDisplayName?, hostSecret? }` — authorized via a matching `hostSecret` or an already-admitted `host`/`co-host` role |
+| `POST` | `/api/rooms/:roomId/mute` | Force-mute a participant (host/co-host only) — via LiveKit's Room Service API, not a client-side capability |
 | `POST` | `/api/rooms/:roomId/grant-co-host` | Delegate (or revoke) admit rights; body: `{ displayName, grant, hostSecret }` — requires `hostSecret` specifically, not just a role check |
-| `POST` | `/api/livekit/webhook` | LiveKit webhook receiver (`egress_ended`, `participant_left`, `room_finished` — the last one ends a room server-side even when every client disconnected ungracefully) |
+| `GET` | `/api/rooms/:roomId/participant-count` | Live participant count for the invite-preview screen, read straight from LiveKit's Room Service (not the DB mirror, which can drift) |
+| `POST` | `/api/livekit/webhook` | LiveKit webhook receiver, signature-verified via `WebhookReceiver` — `room_started`/`egress_ended` (Meeting Intelligence recording lifecycle), `participant_left`, `room_finished` (ends a room server-side even when every client disconnected ungracefully) |
 | `GET` | `/api/fathom/meetings` | Proxy to Fathom meetings list; query: `limit`, `cursor`, `created_after` |
 | `GET` | `/api/fathom/recordings/:id/transcript` | Proxy to Fathom transcript for a recording |
+| `POST` | `/api/rooms/:roomId/invitations` | Upsert scheduled-meeting invitations for a list of emails; requires `hostSecret` — see [Scheduled Meeting Invitations](#scheduled-meeting-invitations--carousel) |
+| `PATCH` | `/api/invitations/:id` | Invitee RSVPs (`accepted`/`declined`/`tentative`); Bearer token, validates caller email matches the invitation |
+| `GET` | `/api/me/meetings` | This user's organized + invited meetings, merged and sorted soonest-first; Bearer token |
+| `POST` | `/api/rooms/:roomId/intelligence-settings` | Opt in/out of recording + AI notes for a scheduled room; requires `isRoomModerator()` — see [Meeting Intelligence](#meeting-intelligence-ai-notes--opt-in) |
+| `GET` | `/api/me/meeting-notes` | This user's Meeting Intelligence results (organizer + accepted-invitee rooms); Bearer token |
+| `DELETE` | `/api/rooms/:roomId` | Organizer deletes a scheduled room; requires `hostSecret`; cascades to invitations via FK |
+| `GET` | `/updates/latest-mac.yml` / `/updates/latest.yml` / `/updates/metadata` | Desktop auto-update feed (electron-updater) — see [Desktop Auto-Update](#desktop-auto-update) |
 | `GET` | `/health` | Health check — `{ status: 'ok' }` |
 
 > File uploads go directly from the browser to **Supabase Storage** using the anon key — no backend route needed.
@@ -610,6 +670,12 @@ beehive/
 │   ├── AdmissionRequestsWindow.tsx     #   host/co-host floating panel — admit/deny waiting attendees
 │   ├── FullscreenHud.tsx               #   floating attendees/hands/reactions/controls panel — full-screen mode only
 │   ├── FathomPanel.tsx                 #   Fathom meetings + FathomMeetingRow
+│   ├── MeetingNotesPanel.tsx           #   Meeting Intelligence (AI notes) results list
+│   ├── liteMarkdown.tsx                #   shared bounded-markdown renderer (Fathom + AI notes)
+│   ├── UpdatePrompt.tsx                #   desktop auto-update UI (available/downloading/ready)
+│   ├── useDeviceReadiness.ts           #   pre-join mic/camera/speaker availability check
+│   ├── DeviceReadinessBanner.tsx       #   lobby UI for the above
+│   ├── MeetingCarousel.tsx             #   scheduled-meetings carousel (lobby, Start Now tab)
 │   ├── ParticipantsWindow.tsx          #   draggable/dockable window + horizontal strip; host-only co-host toggle
 │   ├── BackgroundMenu.tsx              #   background-effects menu
 │   ├── AutoCamWindow.tsx               #   auto-cam floating window
@@ -632,17 +698,32 @@ beehive/
 │                                       #   useChat, useRecordings, useFathomMeetings,
 │                                       #   useFathomTranscript
 ├── livekit_node_backend.js             # Express API: LiveKit token generation,
-│                                       #   LiveKit webhook receiver, Fathom proxy
+│                                       #   LiveKit webhook receiver, Fathom proxy,
+│                                       #   Meeting Intelligence endpoints, update feed
+├── meetingIntelligence.js              # Meeting Intelligence job-runner (egress start/stop,
+│                                       #   DB-backed queue + sweep, per-stage pipeline)
+├── providers/
+│   ├── transcription.js                #   Whisper / Deepgram adapters (pluggable)
+│   └── llm.js                          #   OpenAI / Anthropic / Azure OpenAI adapters (pluggable)
 ├── supabase/
 │   └── migrations/
 │       ├── 001_auth_system.sql         # Auth schema additions (applied)
 │       ├── 002_enable_rls_usage_audit_logs.sql         # RLS fix — see Security (applied)
 │       ├── 003_revoke_public_grants_usage_audit_logs.sql # Grant revocation — see Security (applied)
-│       └── 004_waiting_room.sql        # rooms.requires_admission, room_hosts, admission_requests (applied)
+│       ├── 004_waiting_room.sql        # rooms.requires_admission, room_hosts, admission_requests (applied)
+│       ├── 005_avatars_bucket.sql      # avatars Storage bucket (applied)
+│       ├── 006_meeting_agenda.sql      # meeting_agendas — BeeHive Bot Assistant (applied)
+│       ├── 007_room_scheduler_auth_user_id.sql # rooms.scheduler_auth_user_id + scheduling cols (applied)
+│       ├── 008_meeting_invitations.sql # meeting_invitations table (applied)
+│       └── 009_meeting_intelligence.sql # opt-in recording + AI notes tables (see Meeting Intelligence)
 ├── scripts/
-│   └── seed-dev.js                     # Create 6 X Spark dev users via Supabase Admin API
+│   ├── seed-dev.js                     # Create 6 X Spark dev users via Supabase Admin API
+│   ├── version-count.json              # Git-derived version counter — see Deployment
+│   ├── appVersion.mjs                  # Reads version-count.json → 1.0.N
+│   └── publish-update.mjs              # Post-build: generates update-config.json for the update feed
 ├── electron/
 │   ├── main.cjs                        # Electron main — beehive:// URL scheme + deep-link handler
+│   ├── updater.cjs                     # electron-updater orchestration — see Desktop Auto-Update
 │   ├── preload.cjs                     # contextBridge — exposes electronAPI
 │   ├── beehive-ctl.m                   # native helper — activate a window by CGWindowNumber; watch-clicks (button-state poll for the click-through dock)
 │   ├── dock.html                       # Floating Control Dock UI (plain HTML/JS, separate window)
@@ -653,6 +734,8 @@ beehive/
 │   └── icon.icns                       # macOS app icon
 ├── livekit_supabase_schema.sql         # Base Supabase schema
 ├── livekit_database_recommendation.md  # ADR: Supabase vs Firebase
+├── update-config.json                  # Desktop update feed metadata — generated by publish-update.mjs,
+│                                       #   NOT committed with placeholder URLs (see Desktop Auto-Update)
 ├── index.html                          # App shell + Roboto font + viewport-init.js + module entry
 ├── public/                             # Static assets served as-is by Vite
 │   └── viewport-init.js                #   --vh + zoom-to-fit (externalized from index.html for CSP script-src)
@@ -707,6 +790,29 @@ The live web app deploys via [Render](https://render.com) ([`render.yaml`](./ren
 | `room_hosts` | `room_id` → `host_secret`. RLS enabled with **zero policies** — completely inaccessible to `anon`/`authenticated` (and their default table grants are explicitly revoked too, defense-in-depth), reachable only via the backend's service-role client |
 | `admission_requests` | Pending/admitted/denied join requests, keyed uniquely by `(room_id, identity)`. SELECT/INSERT permissive, **no UPDATE policy for anon/authenticated at all** — status only ever changes via `POST /api/rooms/:roomId/admit` |
 
+**Avatars** ([`005_avatars_bucket.sql`](./supabase/migrations/005_avatars_bucket.sql)): `avatars` Storage bucket — public-read, insert/update/delete restricted to a user's own `{userId}/...` path via `storage.foldername(name)[1] = auth.uid()`.
+
+**BeeHive Bot Assistant** ([`006_meeting_agenda.sql`](./supabase/migrations/006_meeting_agenda.sql)): `meeting_agendas` — one row per room (`title`, `organizer_name`, `objectives text[]`, `items jsonb`). Permissive SELECT, **no INSERT/UPDATE/DELETE policy for anon/authenticated** — writes only via `POST /api/rooms/:roomId/agenda`.
+
+**Scheduled Meeting Invitations** ([`007_room_scheduler_auth_user_id.sql`](./supabase/migrations/007_room_scheduler_auth_user_id.sql), [`008_meeting_invitations.sql`](./supabase/migrations/008_meeting_invitations.sql)):
+
+| Table / Column | Purpose |
+|-----------------|---------|
+| `rooms.scheduler_auth_user_id` | Set when a signed-in user schedules a meeting; lets that user's own account (not just the device that scheduled it) be recognized as host on `/api/livekit/token` |
+| `rooms.scheduled_date` / `scheduled_time` / `duration_minutes` | Powers the Meeting Carousel and sort-soonest-first ordering |
+| `meeting_invitations` | `(id, room_id, invitee_email, invited_by_name, status, responded_at, invited_at, invitee_user_id)`, `UNIQUE(room_id, invitee_email)`. RLS: SELECT for the invitee (by email) or organizer; no client INSERT/UPDATE — see [Scheduled Meeting Invitations](#scheduled-meeting-invitations--carousel) |
+
+**Meeting Intelligence, opt-in** ([`009_meeting_intelligence.sql`](./supabase/migrations/009_meeting_intelligence.sql)) — see [full feature writeup](#meeting-intelligence-ai-notes--opt-in):
+
+| Table | Purpose |
+|-------|---------|
+| `room_intelligence_settings` | Per-room opt-in flags (`recording_enabled`, `ai_notes_enabled`). No row = feature entirely inactive for that room |
+| `meeting_intelligence_jobs` | The DB-backed processing queue — `status` state machine (`recording → egress_done → transcribing → transcribed → summarizing → complete`, plus terminal `skipped_no_provider`/`failed`), `attempts`, `last_error` |
+| `meeting_transcripts` | `full_text` + `segments jsonb` (speaker-attributed only where diarization is available) |
+| `meeting_intelligence` | `summary_markdown` + structured `action_items jsonb` |
+
+All four Meeting Intelligence tables + the private `meeting-intelligence` Storage bucket follow the `room_hosts` precedent: RLS enabled with **zero client policies**, `REVOKE ALL FROM anon, authenticated` — reachable only via the backend's service-role client.
+
 ---
 
 ## Architecture
@@ -718,20 +824,29 @@ React Frontend (Vite — default :5173)
         │
         ├── Supabase (state, RLS, Realtime)
         │         └── PostgreSQL — rooms, participants, chat, recordings,
-        │                          profiles, roles, user_roles
-        │         └── Storage — shared-files bucket (file uploads)
+        │                          profiles, roles, user_roles,
+        │                          meeting_intelligence_jobs/transcripts (opt-in)
+        │         └── Storage — shared-files, avatars, meeting-intelligence (private) buckets
         │
         └── /api/* → Node.js Backend (:3001)
-                        ├── LiveKit Server SDK — token generation
-                        │         └── LiveKit Cloud — media (WebRTC)
-                        ├── LiveKit webhook receiver — recordings, participant-left
-                        └── Fathom API proxy — meeting intelligence
+                        ├── LiveKit Server SDK — token generation, EgressClient, WebhookReceiver
+                        │         └── LiveKit Cloud — media (WebRTC) + server-side Egress recording
+                        ├── LiveKit webhook receiver — recordings, participant-left,
+                        │         and (opt-in) egress start/stop for Meeting Intelligence
+                        ├── meetingIntelligence.js — DB-backed job queue + sweep
+                        │         └── providers/{transcription,llm}.js — pluggable adapters
+                        ├── Fathom API proxy — meeting intelligence (3rd-party)
+                        └── /updates/* — electron-updater feed (desktop auto-update)
 
 Electron (desktop)
         ├── main.cjs — BrowserWindow + IPC handlers
         │         ├── shell.openPath()        — open presentation files natively
         │         ├── desktopCapturer         — enumerate windows for screen share
+        │         │         (macOS: Screen Recording TCC grant does not survive a
+        │         │          rebuild's re-signing — tccutil reset required each time,
+        │         │          see "Screen sharing & presentation mode")
         │         └── beehive:// URL scheme   — intercept magic-link redirects
+        ├── updater.cjs — electron-updater orchestration (see Desktop Auto-Update)
         └── preload.cjs — contextBridge → window.electronAPI
 ```
 
@@ -772,6 +887,28 @@ PORT=3001
 # page if unset; see "Download the desktop app" under Authentication)
 VITE_DESKTOP_DOWNLOAD_MAC_URL=https://github.com/SaphoM/beehive/releases/latest
 VITE_DESKTOP_DOWNLOAD_WIN_URL=https://github.com/SaphoM/beehive/releases/latest
+
+# Desktop auto-update feed (optional — omit to disable the update check entirely)
+UPDATE_FEED_URL=https://beehive-fu8w.onrender.com/updates
+
+# Meeting Intelligence — opt-in AI notes (all optional; the feature degrades
+# gracefully without them, see "Meeting Intelligence (AI Notes)")
+TRANSCRIPTION_PROVIDER=whisper           # 'whisper' | 'deepgram'
+DEEPGRAM_API_KEY=your_deepgram_key       # only if TRANSCRIPTION_PROVIDER=deepgram
+LLM_PROVIDER=openai                      # 'openai' | 'anthropic' | 'azure'
+OPENAI_API_KEY=your_openai_key           # used for both Whisper transcription and the OpenAI LLM provider
+ANTHROPIC_API_KEY=your_anthropic_key     # only if LLM_PROVIDER=anthropic
+AZURE_OPENAI_API_KEY=your_azure_key      # only if LLM_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_DEPLOYMENT=your_deployment_name
+
+# Meeting Intelligence — recording storage (required for recording to work at
+# all once a room opts in; from Supabase Dashboard → Project Settings →
+# Storage → S3 Connection)
+SUPABASE_S3_ENDPOINT=https://your-project.supabase.co/storage/v1/s3
+SUPABASE_S3_REGION=your-region
+SUPABASE_S3_ACCESS_KEY_ID=your_access_key_id
+SUPABASE_S3_SECRET_ACCESS_KEY=your_secret_access_key
 ```
 
 **Supabase Dashboard settings required:**
@@ -936,6 +1073,10 @@ A **breakaway** moves a group into a temporary LiveKit sub-room, isolated from t
 ## Roadmap
 
 - [x] Authentication — Magic Link + Email OTP (no passwords); AuthGate; frictionless `?room=` join; post-meeting register CTA with card-flip animation
+- [x] Resend cooldown on the sign-in screen — "Resend magic link" + "Send code instead" share one 15s cooldown, preventing redundant emails against Supabase's rate limit
+- [x] Device readiness check (pre-join) — silent mic/camera/speaker availability check with no prompt; a 5-min localStorage cache, live devicechange invalidation, and mid-meeting disconnect toasts
+- [x] Meeting Intelligence (AI Notes) — opt-in server-side recording (LiveKit Egress) + pluggable transcription (Whisper/Deepgram) + pluggable LLM summarization (OpenAI/Anthropic/Azure); Meeting Notes lobby panel. **Code complete, not yet live in production** — needs the migration applied + Supabase S3 + a transcription/LLM provider key configured
+- [x] Desktop auto-update — `electron-updater` against a self-hosted feed; meeting-aware deferral, critical-vs-recommended distinction, Skip This Version
 - [x] Invitation system — plain `?room=ROOM_ID` links, open to anyone, no account required; `InviteModal` in meeting controls (superseded the earlier tokenised-invitation backend, which has been removed)
 - [x] User roles — `admin` / `user`; auto-assigned on signup; `is_admin()` RLS helper
 - [x] Electron deep-link — `beehive://` URL scheme intercepts magic-link redirects

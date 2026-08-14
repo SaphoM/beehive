@@ -581,15 +581,55 @@ app.post('/api/livekit/webhook', async (req, res) => {
       if (roomRow) {
         const { data: settings } = await supabase.from('room_intelligence_settings').select('recording_enabled').eq('room_id', roomRow.id).single()
         if (settings?.recording_enabled) {
-          const { data: job } = await supabase.from('meeting_intelligence_jobs')
-            .insert({ room_id: roomRow.id, status: 'recording' })
+          // Idempotency guard: LiveKit's webhook delivery is at-least-once
+          // (it retries), so room_started can genuinely arrive more than
+          // once for the same room going live. Without this check, each
+          // delivery would insert its own job row and start its own real,
+          // billable LiveKit Egress recording — two simultaneous egresses
+          // for one meeting, and room_finished's stop-egress lookup below
+          // only expects one active job per room. One meeting must produce
+          // exactly one recording; a second delivery while one is already
+          // active is a no-op, not a second job.
+          const { data: existing } = await supabase.from('meeting_intelligence_jobs')
             .select('id')
-            .single()
-          if (job) {
-            const { egressId, storagePath } = await meetingIntelligence.startMeetingEgress(roomRow.id, event.room.name, job.id)
-            await supabase.from('meeting_intelligence_jobs')
-              .update({ egress_id: egressId, audio_storage_path: storagePath })
-              .eq('id', job.id)
+            .eq('room_id', roomRow.id)
+            .eq('status', 'recording')
+            .maybeSingle()
+          if (existing) {
+            console.log('[intelligence] room_started received again while a job is already recording — skipping duplicate egress:', roomRow.id)
+          } else {
+            const { data: job, error: insertError } = await supabase.from('meeting_intelligence_jobs')
+              .insert({ room_id: roomRow.id, status: 'recording' })
+              .select('id')
+              .single()
+            if (insertError || !job) {
+              console.error('[intelligence] failed to create job row for opted-in room:', roomRow.id, insertError?.message)
+            } else {
+              // Own try/catch, distinct from the outer one: if the egress
+              // call itself fails (LiveKit rejects the request, network
+              // error, etc.), the job row already exists at this point —
+              // without this, the failure would only be console-logged by
+              // the outer catch below, leaving the job permanently stuck at
+              // 'recording' forever. 'recording' is deliberately excluded
+              // from the sweep's retry set (a long meeting legitimately
+              // sits there for a while), so a job that never actually got a
+              // real egress would otherwise never transition anywhere —
+              // not retried, not marked failed, just a silent zombie the
+              // Meeting Notes UI would show as "Recording…" indefinitely.
+              try {
+                const { egressId, storagePath } = await meetingIntelligence.startMeetingEgress(roomRow.id, event.room.name, job.id)
+                const { error: updateError } = await supabase.from('meeting_intelligence_jobs')
+                  .update({ egress_id: egressId, audio_storage_path: storagePath })
+                  .eq('id', job.id)
+                if (updateError) console.error('[intelligence] failed to record egress_id on job:', job.id, updateError.message)
+              } catch (egressError) {
+                console.error('[intelligence] startMeetingEgress failed, marking job failed:', job.id, egressError?.message)
+                const { error: failError } = await supabase.from('meeting_intelligence_jobs')
+                  .update({ status: 'failed', attempts: 1, last_error: String(egressError?.message ?? egressError).slice(0, 2000), updated_at: new Date().toISOString() })
+                  .eq('id', job.id)
+                if (failError) console.error('[intelligence] additionally failed to record the failure itself:', job.id, failError.message)
+              }
+            }
           }
         }
       }
@@ -667,11 +707,17 @@ app.post('/api/livekit/webhook', async (req, res) => {
     try {
       const { data: roomRow } = await supabase.from('rooms').select('id').eq('livekit_room_name', room?.name).single()
       if (roomRow) {
-        const { data: job } = await supabase.from('meeting_intelligence_jobs')
+        // .limit(1) rather than .maybeSingle() — .maybeSingle() throws if
+        // more than one row matches, and this stop path must never let a
+        // lookup-shape surprise (e.g. a stray leftover row) prevent an
+        // active egress from being stopped and left running indefinitely.
+        const { data: jobs } = await supabase.from('meeting_intelligence_jobs')
           .select('id, egress_id')
           .eq('room_id', roomRow.id)
           .eq('status', 'recording')
-          .maybeSingle()
+          .order('created_at', { ascending: false })
+          .limit(1)
+        const job = jobs?.[0]
         if (job?.egress_id) await egressClient.stopEgress(job.egress_id)
       }
     } catch (e) {
@@ -692,13 +738,29 @@ app.post('/api/livekit/webhook', async (req, res) => {
   // names (egressId, not egress_id) — see the egress_id/room_name comment
   // on the pre-existing branch above, which reads the wrong casing for that
   // (unrelated, pre-existing) field.
+  //
+  // CRITICAL, confirmed via a live debug trace of a real parsed WebhookEvent:
+  // EgressInfo has NO usable singular `file` field — `file = 8` is marked
+  // `[deprecated = true]` in the current @livekit/protocol schema and comes
+  // back completely absent from a real parsed payload (confirmed directly:
+  // Object.keys(event.egressInfo) on a genuine parse never includes `file`
+  // at all). The real, current field is `fileResults` — a repeated
+  // FileInfo array (one entry per output; a RoomCompositeEgressRequest with
+  // a single EncodedFileOutput, which is all startMeetingEgress ever
+  // configures, produces exactly one). Reading `file` here — as originally
+  // written — meant this entire branch silently no-op'd on every real
+  // egress_ended delivery, forever: `if (job && file)` was always false, so
+  // nothing downstream of a real recording finishing would ever have
+  // fired, no matter how correctly everything else in the pipeline was
+  // built. This is the single highest-impact fix in this audit.
   // ------------------------------------------------------------
   if (event.event === 'egress_ended') {
-    const { egressId, file } = event.egressInfo ?? {}
+    const { egressId, fileResults } = event.egressInfo ?? {}
+    const file = fileResults?.[0]
     try {
       const { data: job } = await supabase.from('meeting_intelligence_jobs').select('id').eq('egress_id', egressId).maybeSingle()
       if (job && file) {
-        const { data: updated } = await supabase.from('meeting_intelligence_jobs')
+        const { data: updated, error: updateError } = await supabase.from('meeting_intelligence_jobs')
           // audio_storage_path was already set deterministically at
           // room_started (see meetingIntelligence.js) — file.location here
           // (correctly cased, unlike the pre-existing branch's fields) is
@@ -707,7 +769,11 @@ app.post('/api/livekit/webhook', async (req, res) => {
           .eq('id', job.id)
           .select()
           .single()
-        if (updated) setImmediate(() => meetingIntelligence.runJob(updated.id).catch(e => console.error('[intelligence] job failed:', updated.id, e?.message)))
+        if (updateError || !updated) {
+          console.error('[intelligence] failed to mark job egress_done, job will never be dispatched for processing:', job.id, updateError?.message)
+        } else {
+          setImmediate(() => meetingIntelligence.runJob(updated.id).catch(e => console.error('[intelligence] job failed:', updated.id, e?.message)))
+        }
       }
     } catch (e) {
       console.error('[intelligence] egress_ended handling failed:', e?.message)
@@ -1042,6 +1108,73 @@ app.get('/api/me/meeting-notes', async (req, res) => {
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) // most recent first
 
   return res.json({ notes })
+})
+
+// ============================================================
+// MEETING INTELLIGENCE — manual retry of a permanently failed job
+// POST /api/rooms/:roomId/meeting-notes/retry
+// Header: Authorization: Bearer <accessToken>
+// ============================================================
+// Once a job's attempts reach MAX_ATTEMPTS, meetingIntelligence.js's own
+// sweep query (`.lt('attempts', MAX_ATTEMPTS)`) permanently excludes it —
+// by design, so a permanently-broken job (bad credentials, a provider
+// outage that outlasted every bounded retry) doesn't retry forever. That
+// also means a genuinely 'failed' job has no path back without this:
+// resets attempts/last_error and reverts to whichever stage's output is
+// missing, then dispatches immediately rather than waiting for the sweep.
+// Restricted to the room's organizer specifically (not any accepted
+// invitee, unlike the read-only /api/me/meeting-notes) — retrying
+// triggers real, billable transcription/LLM calls, so only the person who
+// opted the room into recording can re-trigger spend on it.
+app.post('/api/rooms/:roomId/meeting-notes/retry', async (req, res) => {
+  const { roomId } = req.params
+  const raw = req.headers.authorization || ''
+  const accessToken = raw.startsWith('Bearer ') ? raw.slice(7) : raw
+  if (!accessToken) return res.status(401).json({ error: 'Authentication required' })
+
+  const { data: { user } } = await supabase.auth.getUser(accessToken)
+  if (!user?.id) return res.status(401).json({ error: 'Invalid or expired token' })
+
+  const { data: room } = await supabase.from('rooms').select('id, scheduler_auth_user_id').eq('id', roomId).single()
+  if (!room || room.scheduler_auth_user_id !== user.id) {
+    return res.status(403).json({ error: 'Only the meeting organizer can retry processing' })
+  }
+
+  const { data: jobs } = await supabase.from('meeting_intelligence_jobs')
+    .select('*')
+    .eq('room_id', roomId)
+    .eq('status', 'failed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+  const job = jobs?.[0]
+  if (!job) return res.status(404).json({ error: 'No failed job to retry for this room' })
+
+  // A job can fail before any audio ever existed at all (e.g. the initial
+  // LiveKit Egress request itself was rejected) — audio_storage_path is
+  // only ever set once startMeetingEgress genuinely succeeds. Reverting
+  // such a job to 'egress_done' would just fail downloadAudio() again on
+  // every retry, forever, since there's nothing to download; this is a
+  // fundamentally different, non-retryable failure (no recording exists),
+  // not a transient processing hiccup, so say so instead of looping.
+  if (!job.audio_storage_path) {
+    return res.status(422).json({ error: 'This meeting was never successfully recorded — there is no audio to reprocess' })
+  }
+
+  // transcript_id already set means transcription succeeded before the
+  // failure — resume at the summary stage; otherwise resume transcription.
+  const resumeStatus = job.transcript_id ? 'transcribed' : 'egress_done'
+  const { data: reset, error: resetError } = await supabase.from('meeting_intelligence_jobs')
+    .update({ status: resumeStatus, attempts: 0, last_error: null, updated_at: new Date().toISOString() })
+    .eq('id', job.id)
+    .eq('status', 'failed') // still-atomic guard against a race with the sweep/another retry click
+    .select()
+    .maybeSingle()
+  if (resetError || !reset) {
+    return res.status(409).json({ error: 'Job is no longer in a failed state — it may already be retrying' })
+  }
+
+  setImmediate(() => meetingIntelligence.runJob(reset.id).catch(e => console.error('[intelligence] manual retry failed:', reset.id, e?.message)))
+  return res.json({ ok: true, status: resumeStatus })
 })
 
 // ============================================================

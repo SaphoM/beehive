@@ -30,8 +30,14 @@ const MAX_ATTEMPTS = 5
 // excluded — a job stuck there for >10min most likely means the meeting is
 // still genuinely in progress (a long call), not a failure; auto-retrying
 // it would be wrong. Only post-egress stages, where "stuck" unambiguously
-// means our own processing stalled, are eligible.
-const SWEEPABLE_STATUSES = ['egress_done', 'transcribed', 'skipped_no_provider']
+// means our own processing stalled, are eligible. 'transcribing'/
+// 'summarizing' are included so a job doesn't stay stuck forever if the
+// process crashes/restarts mid-claim (see reclaimStuckJob below) — every
+// other status here is a stable rest state a job can safely sit in
+// indefinitely; these two are the only "someone is actively working on
+// this" states, so being stuck there past the threshold always means the
+// worker died, never that work is legitimately still in progress.
+const SWEEPABLE_STATUSES = ['egress_done', 'transcribed', 'skipped_no_provider', 'transcribing', 'summarizing']
 
 // ------------------------------------------------------------
 // createMeetingIntelligence — factory taking the already-instantiated
@@ -88,66 +94,130 @@ export function createMeetingIntelligence({ supabase, egressClient }) {
     return Buffer.from(arrayBuffer)
   }
 
-  async function runTranscriptionStage(job) {
+  // ------------------------------------------------------------
+  // claimStage — the concurrency guard. Atomically flips a job's status
+  // from `fromStatus` to `toStatus` (an ordinary conditional UPDATE, so
+  // Postgres's own row-level locking makes exactly one caller win under
+  // concurrency) and returns the claimed row, or `null` if the job wasn't
+  // in `fromStatus` when this ran — meaning a concurrent runJob() (two
+  // egress_ended deliveries for the same egress, a sweep pass racing a
+  // fresh dispatch, etc.) already claimed it. The caller must bail out on
+  // `null` rather than proceed, which is what makes double-webhook-delivery
+  // produce exactly one transcript/summary instead of duplicates.
+  // ------------------------------------------------------------
+  async function claimStage(jobId, fromStatus, toStatus) {
+    const { data, error } = await supabase
+      .from('meeting_intelligence_jobs')
+      .update({ status: toStatus, updated_at: new Date().toISOString() })
+      .eq('id', jobId)
+      .eq('status', fromStatus)
+      .select()
+      .maybeSingle()
+    if (error) throw new Error(`Failed to claim job stage (${fromStatus} → ${toStatus}): ${error.message}`)
+    return data
+  }
+
+  async function runTranscriptionStage(jobId, fromStatus) {
     const provider = createTranscriptionProvider()
     if (!provider) {
-      await markStatus(job.id, 'skipped_no_provider')
+      await markStatus(jobId, 'skipped_no_provider')
       return
     }
 
-    const audioBuffer = await downloadAudio(job.audio_storage_path)
-    const { text, segments } = await provider.transcribe(audioBuffer, { mimeType: 'audio/ogg' })
+    const claimed = await claimStage(jobId, fromStatus, 'transcribing')
+    if (!claimed) return // lost the race to a concurrent runner — no-op, not an error
 
-    const { data: transcript, error: insertError } = await supabase
-      .from('meeting_transcripts')
-      .insert({ room_id: job.room_id, job_id: job.id, provider: provider.name, full_text: text, segments })
-      .select('id')
-      .single()
-    if (insertError || !transcript) throw new Error(`Failed to store transcript: ${insertError?.message}`)
+    try {
+      const audioBuffer = await downloadAudio(claimed.audio_storage_path)
+      const { text, segments } = await provider.transcribe(audioBuffer, { mimeType: 'audio/ogg' })
 
-    await supabase.from('meeting_intelligence_jobs')
-      .update({ transcript_id: transcript.id, status: 'transcribed', updated_at: new Date().toISOString(), attempts: 0, last_error: null })
-      .eq('id', job.id)
+      const { data: transcript, error: insertError } = await supabase
+        .from('meeting_transcripts')
+        .insert({ room_id: claimed.room_id, job_id: claimed.id, provider: provider.name, full_text: text, segments })
+        .select('id')
+        .single()
+      if (insertError || !transcript) throw new Error(`Failed to store transcript: ${insertError?.message}`)
+
+      await supabase.from('meeting_intelligence_jobs')
+        .update({ transcript_id: transcript.id, status: 'transcribed', updated_at: new Date().toISOString(), attempts: 0, last_error: null })
+        .eq('id', jobId)
+    } catch (e) {
+      // Revert to the pre-claim status (not straight to 'failed') so the
+      // sweep resumes this exact stage on the next pass, up to MAX_ATTEMPTS.
+      await recordFailure(claimed, fromStatus, e)
+      throw e
+    }
   }
 
-  async function runSummaryStage(job) {
+  async function runSummaryStage(jobId, fromStatus) {
     const provider = createLLMProvider()
     if (!provider) {
-      await markStatus(job.id, 'skipped_no_provider')
+      await markStatus(jobId, 'skipped_no_provider')
       return
     }
 
-    const { data: transcript, error: fetchError } = await supabase
-      .from('meeting_transcripts')
-      .select('full_text')
-      .eq('id', job.transcript_id)
-      .single()
-    if (fetchError || !transcript) throw new Error(`Failed to load transcript for summary: ${fetchError?.message}`)
+    const claimed = await claimStage(jobId, fromStatus, 'summarizing')
+    if (!claimed) return // lost the race to a concurrent runner — no-op, not an error
 
-    const { summaryMarkdown, actionItems } = await provider.generate(transcript.full_text)
+    try {
+      const { data: transcript, error: fetchError } = await supabase
+        .from('meeting_transcripts')
+        .select('full_text')
+        .eq('id', claimed.transcript_id)
+        .single()
+      if (fetchError || !transcript) throw new Error(`Failed to load transcript for summary: ${fetchError?.message}`)
 
-    const { error: insertError } = await supabase
-      .from('meeting_intelligence')
-      .insert({ room_id: job.room_id, job_id: job.id, provider: provider.name, summary_markdown: summaryMarkdown, action_items: actionItems })
-    if (insertError) throw new Error(`Failed to store meeting intelligence: ${insertError.message}`)
+      const { summaryMarkdown, actionItems } = await provider.generate(transcript.full_text)
 
-    await supabase.from('meeting_intelligence_jobs')
-      .update({ status: 'complete', updated_at: new Date().toISOString(), attempts: 0, last_error: null })
-      .eq('id', job.id)
+      const { error: insertError } = await supabase
+        .from('meeting_intelligence')
+        .insert({ room_id: claimed.room_id, job_id: claimed.id, provider: provider.name, summary_markdown: summaryMarkdown, action_items: actionItems })
+      if (insertError) throw new Error(`Failed to store meeting intelligence: ${insertError.message}`)
+
+      await supabase.from('meeting_intelligence_jobs')
+        .update({ status: 'complete', updated_at: new Date().toISOString(), attempts: 0, last_error: null })
+        .eq('id', jobId)
+    } catch (e) {
+      await recordFailure(claimed, fromStatus, e)
+      throw e
+    }
   }
 
+  // Supabase-js never throws for a failed query — a failed write resolves
+  // normally with `{ data: null, error: {...} }`, not a rejected promise.
+  // Both status-writing helpers below explicitly check that field and log
+  // on failure; without this, a transient write failure here would leave a
+  // job silently stuck with no trace anywhere of why, exactly the class of
+  // silent failure this pipeline is required not to have.
   async function markStatus(jobId, status) {
-    await supabase.from('meeting_intelligence_jobs')
+    const { error } = await supabase.from('meeting_intelligence_jobs')
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', jobId)
+    if (error) console.error('[intelligence] markStatus write failed:', jobId, status, error.message)
   }
 
   async function recordFailure(job, stageStatus, error) {
     const attempts = (job.attempts ?? 0) + 1
     const nextStatus = attempts >= MAX_ATTEMPTS ? 'failed' : stageStatus
-    await supabase.from('meeting_intelligence_jobs')
+    const { error: writeError } = await supabase.from('meeting_intelligence_jobs')
       .update({ status: nextStatus, attempts, last_error: String(error?.message ?? error).slice(0, 2000), updated_at: new Date().toISOString() })
       .eq('id', job.id)
+    if (writeError) console.error('[intelligence] recordFailure write failed:', job.id, writeError.message, '— original error was:', error?.message ?? error)
+  }
+
+  // ------------------------------------------------------------
+  // reclaimStuckJob — called by the sweep for a job found sitting in
+  // 'transcribing'/'summarizing' past the stuck threshold. Those two
+  // statuses only ever exist between claimStage() and the stage's own
+  // completion/failure handling a moment later — sitting there for 10+
+  // minutes means the process died mid-stage (deploy, crash, OOM) and
+  // never got to revert it itself. Reverts to the correct pre-claim status
+  // (bumping attempts/last_error the same way a normal failure would) so
+  // the job becomes eligible for a normal claim-and-retry again.
+  // ------------------------------------------------------------
+  async function reclaimStuckJob(job) {
+    const revertTo = job.status === 'transcribing' ? 'egress_done' : 'transcribed'
+    await recordFailure(job, revertTo, new Error(`Reclaimed: stuck in '${job.status}' past the stuck threshold (worker likely died mid-stage)`))
   }
 
   // ------------------------------------------------------------
@@ -162,41 +232,56 @@ export function createMeetingIntelligence({ supabase, egressClient }) {
     const { data: job, error } = await supabase.from('meeting_intelligence_jobs').select('*').eq('id', jobId).single()
     if (error || !job) return
 
+    // Each branch below passes the exact status it observed as `fromStatus`
+    // into the stage function's own claimStage() call — if a concurrent
+    // runJob() (a second webhook delivery, an overlapping sweep tick) has
+    // already moved the job off that status by the time the claim runs,
+    // claimStage() atomically fails to match and the stage function
+    // no-ops. This is what makes runJob() itself safe to call more than
+    // once concurrently for the same job — the actual duplicate-work guard
+    // lives in claimStage(), not here; this function just decides which
+    // stage to attempt based on a snapshot that may already be stale by
+    // the time the attempt lands, and that's fine.
     try {
       if (job.status === 'egress_done') {
-        await runTranscriptionStage(job)
+        await runTranscriptionStage(jobId, 'egress_done')
         // Re-fetch: runTranscriptionStage may have just flipped this to
         // 'transcribed' or 'skipped_no_provider' — chain straight into the
         // summary stage in the same pass rather than waiting for the next
         // sweep cycle, when transcription succeeded.
         const { data: updated } = await supabase.from('meeting_intelligence_jobs').select('*').eq('id', jobId).single()
-        if (updated?.status === 'transcribed') await runSummaryStage(updated)
+        if (updated?.status === 'transcribed') await runSummaryStage(jobId, 'transcribed')
         return
       }
       if (job.status === 'transcribed') {
-        await runSummaryStage(job)
+        await runSummaryStage(jobId, 'transcribed')
         return
       }
       if (job.status === 'skipped_no_provider') {
         // An operator may have configured a provider since this job last
         // ran — re-check from whichever stage is actually still missing.
         if (!job.transcript_id) {
-          await runTranscriptionStage(job)
+          await runTranscriptionStage(jobId, 'skipped_no_provider')
           const { data: updated } = await supabase.from('meeting_intelligence_jobs').select('*').eq('id', jobId).single()
-          if (updated?.status === 'transcribed') await runSummaryStage(updated)
+          if (updated?.status === 'transcribed') await runSummaryStage(jobId, 'transcribed')
         } else {
-          await runSummaryStage(job)
+          await runSummaryStage(jobId, 'skipped_no_provider')
         }
         return
       }
-      // 'recording', 'complete', 'failed': nothing to do — see SWEEPABLE_STATUSES.
+      // 'recording', 'transcribing', 'summarizing', 'complete', 'failed':
+      // nothing for a fresh dispatch to do — 'transcribing'/'summarizing'
+      // mean another runJob() call already has this job claimed; only the
+      // sweep's reclaimStuckJob() (below) is allowed to touch those, and
+      // only past the stuck threshold.
     } catch (e) {
-      // Which stage was in flight determines which status the retry should
-      // resume from.
-      const stageStatus = job.status === 'transcribed' || (job.status === 'skipped_no_provider' && job.transcript_id)
-        ? 'transcribed'
-        : 'egress_done'
-      await recordFailure(job, stageStatus, e)
+      // The stage functions already record their own failure on the job row
+      // (reverting to their fromStatus) before rethrowing — but this outer
+      // catch can also be reached by a failure that never made it into a
+      // stage function at all (e.g. the re-fetch .select() calls above,
+      // between stages). Never swallow silently: log it even though there's
+      // no single job-row write that unambiguously belongs to it here.
+      console.error('[intelligence] runJob failed outside a stage handler:', jobId, e?.message)
     }
   }
 
@@ -208,14 +293,20 @@ export function createMeetingIntelligence({ supabase, egressClient }) {
     setInterval(async () => {
       try {
         const cutoff = new Date(Date.now() - STUCK_THRESHOLD_MS).toISOString()
+        // Select full rows (not just id) — reclaimStuckJob needs .status to
+        // decide which pre-claim state to revert to.
         const { data: stuck } = await supabase
           .from('meeting_intelligence_jobs')
-          .select('id')
+          .select('*')
           .in('status', SWEEPABLE_STATUSES)
           .lt('updated_at', cutoff)
           .lt('attempts', MAX_ATTEMPTS)
         for (const row of stuck ?? []) {
-          setImmediate(() => runJob(row.id).catch(e => console.error('[intelligence] sweep runJob failed:', row.id, e?.message)))
+          if (row.status === 'transcribing' || row.status === 'summarizing') {
+            setImmediate(() => reclaimStuckJob(row).catch(e => console.error('[intelligence] sweep reclaim failed:', row.id, e?.message)))
+          } else {
+            setImmediate(() => runJob(row.id).catch(e => console.error('[intelligence] sweep runJob failed:', row.id, e?.message)))
+          }
         }
       } catch (e) {
         console.error('[intelligence] sweep query failed:', e?.message)

@@ -959,5 +959,28 @@ export function useMeetingNotes(accessToken: string | null | undefined) {
 
   useEffect(() => { load() }, [load])
 
-  return { notes, loading, refresh: load }
+  // Manual retry for a permanently-failed job (status 'failed', past the
+  // backend's bounded automatic retry count) — see POST .../meeting-notes/retry.
+  // Optimistically flips the row to a "Processing…" status locally so the
+  // button doesn't sit inert while the real update comes from a re-fetch.
+  const retry = useCallback(async (roomId: string) => {
+    if (!accessToken) return { error: 'Not authenticated' as string }
+    try {
+      const resp = await fetch(`${API_BASE}/api/rooms/${roomId}/meeting-notes/retry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        return { error: (body.error as string) || 'Failed to retry' }
+      }
+      const { status } = await resp.json()
+      setNotes(prev => prev.map(n => n.roomId === roomId ? { ...n, status } : n))
+      return { error: null as string | null }
+    } catch {
+      return { error: 'Network error' as string }
+    }
+  }, [accessToken])
+
+  return { notes, loading, refresh: load, retry }
 }

@@ -23,16 +23,34 @@ function statusLabel(status: string): { text: string; color: string } {
   switch (status) {
     case 'complete': return { text: 'Notes ready', color: '#48bb78' }
     case 'skipped_no_provider': return { text: 'Recording only', color: '#888' }
-    case 'failed': return { text: 'Processing failed', color: '#e05252' }
+    case 'failed': return { text: 'Failed', color: '#e05252' }
     case 'recording': return { text: 'Recording…', color: '#f5a623' }
     default: return { text: 'Processing…', color: '#f5a623' } // egress_done / transcribing / transcribed / summarizing
   }
 }
 
-function MeetingNoteRow({ note }: { note: MeetingNote }) {
+function MeetingNoteRow({ note, onRetry }: { note: MeetingNote; onRetry: (roomId: string) => Promise<{ error: string | null }> }) {
   const [expanded, setExpanded] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
   const hasContent = !!note.summaryMarkdown || (note.actionItems?.length ?? 0) > 0
   const status = statusLabel(note.status)
+  const isFailed = note.status === 'failed'
+
+  const handleRetry = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRetrying(true)
+    setRetryError(null)
+    // Some retry failures (e.g. no audio was ever recorded — see the
+    // backend's 422) are permanent, not transient — surfacing the message
+    // instead of silently doing nothing matches "no silent failures" for
+    // the UI layer, not just the backend pipeline.
+    const { error } = await onRetry(note.roomId)
+    setRetrying(false)
+    if (error) setRetryError(error)
+    // On success the row re-renders with a new status from the parent's
+    // optimistic update, which naturally replaces the Retry button.
+  }
 
   return (
     <div style={s.fathomRow}>
@@ -42,10 +60,23 @@ function MeetingNoteRow({ note }: { note: MeetingNote }) {
           <span style={{ ...s.fathomRowDuration, color: status.color }}>{status.text}</span>
         </div>
         <div style={s.fathomRowTitle}>{note.roomName}</div>
-        {hasContent && (
+        {isFailed && (
+          <button
+            style={{ background: 'transparent', border: '1px solid #e05252', color: '#e05252', borderRadius: 6, fontSize: 11, padding: '3px 10px', cursor: retrying ? 'default' : 'pointer', marginLeft: 'auto' }}
+            onClick={handleRetry}
+            disabled={retrying}
+          >
+            {retrying ? 'Retrying…' : 'Retry'}
+          </button>
+        )}
+        {!isFailed && hasContent && (
           <span style={{ ...s.fathomChip, marginLeft: 'auto' }}>{expanded ? '▲' : '▼'}</span>
         )}
       </button>
+
+      {retryError && (
+        <div style={{ color: '#e05252', fontSize: 11, padding: '0 12px 8px' }}>{retryError}</div>
+      )}
 
       {expanded && hasContent && (
         <div style={s.fathomDetail}>
@@ -82,7 +113,7 @@ function MeetingNoteRow({ note }: { note: MeetingNote }) {
 }
 
 export function MeetingNotesPanel({ accessToken }: { accessToken: string | null | undefined }) {
-  const { notes, loading } = useMeetingNotes(accessToken)
+  const { notes, loading, retry } = useMeetingNotes(accessToken)
 
   return (
     <div style={s.fathomPanel}>
@@ -102,7 +133,7 @@ export function MeetingNotesPanel({ accessToken }: { accessToken: string | null 
 
       {notes.length > 0 && (
         <div style={s.fathomList}>
-          {notes.map(n => <MeetingNoteRow key={n.roomId} note={n} />)}
+          {notes.map(n => <MeetingNoteRow key={n.roomId} note={n} onRetry={retry} />)}
         </div>
       )}
     </div>

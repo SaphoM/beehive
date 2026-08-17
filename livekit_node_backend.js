@@ -556,19 +556,33 @@ app.post('/api/livekit/webhook', async (req, res) => {
   // .egressInfo below are the exact same fields every branch already
   // destructured from the previously-unverified req.body; only the trust
   // level of the source changed, not the shape.
+  // TEMPORARY AUDIT DIAGNOSTIC — logs that a POST hit this endpoint at all,
+  // before signature verification, so a "LiveKit never delivers" failure can
+  // be told apart from a "delivery arrives but fails verification" failure.
+  // To be removed once the AI Note Taker root-cause investigation is
+  // complete. Never throws, never blocks the response.
+  supabase.from('_audit_webhook_debug').insert({
+    event_type: '__raw_post_received__',
+    room_name: null,
+    raw: { headers: req.headers, bodyLength: req.rawBody?.length ?? null },
+  }).then(() => {}, () => {})
+
   let event
   try {
     event = await webhookReceiver.receive(req.rawBody.toString('utf8'), req.headers.authorization)
   } catch (e) {
     console.error('[webhook] signature verification failed:', e?.message)
+    supabase.from('_audit_webhook_debug').insert({
+      event_type: '__signature_verification_failed__',
+      room_name: null,
+      raw: { message: e?.message },
+    }).then(() => {}, () => {})
     return res.status(401).json({ error: 'Invalid webhook signature' })
   }
 
   // TEMPORARY AUDIT DIAGNOSTIC — logs every verified webhook event type this
-  // deployment actually receives from LiveKit Cloud, to a scratch table
-  // (_audit_webhook_debug), so it can be inspected without server console
-  // access. Never throws, never blocks the response. To be removed once the
-  // AI Note Taker root-cause investigation is complete.
+  // deployment actually receives from LiveKit Cloud, to the same scratch
+  // table, so it can be inspected without server console access.
   supabase.from('_audit_webhook_debug').insert({
     event_type: event?.event ?? null,
     room_name: event?.room?.name ?? event?.egressInfo?.roomName ?? null,

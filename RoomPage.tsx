@@ -245,6 +245,24 @@ export default function RoomPage() {
     window.electronAPI?.setMeetingActive?.(view === 'room')
   }, [view])
 
+  // Prewarm Krisp's noise-filter module (a multi-MB WASM/ML payload) as
+  // early as the lobby, well before any mic track exists — so that when a
+  // mic is later enabled, MeetingRoom's applyFilter effect only pays for
+  // Krisp's own init() (WASM instantiate + audio graph setup), not the
+  // network fetch/parse of the module itself. This is a latency mitigation,
+  // not a structural fix: livekit-client's audioCaptureDefaults.processor
+  // (the mechanism that would attach a processor before the mic track is
+  // ever published, closing the race outright) was tried and reverted —
+  // in the installed livekit-client version it attaches the processor
+  // *before* the newly created track's AudioContext is set (LocalParticipant
+  // .createTracks calls track.setAudioContext() only after createLocalTracks
+  // already resolves), so LocalAudioTrack.setProcessor() always throws
+  // "Audio context needs to be set on LocalAudioTrack in order to enable
+  // processors" — confirmed live, see the noise-suppression audit report.
+  useEffect(() => {
+    import('@livekit/krisp-noise-filter').catch(() => {})
+  }, [])
+
   const handleCreate = async () => {
     if (!displayName.trim()) return alert('Enter your name first')
     const room = await createRoom(`Meeting ${new Date().toLocaleTimeString()}`, 'X Spark')
@@ -440,6 +458,12 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   // processor). Applied automatically to every mic track this participant
   // publishes, including after toggling mic off/on (which creates a new
   // track). Silently skipped where unsupported — never blocks the mic.
+  // RoomPage prewarms Krisp's module as early as the lobby (see its own
+  // comment) so the dynamic import below almost always resolves from cache
+  // by the time this runs — closing most, though not all, of the window
+  // between "mic track published" and "suppression actually attached"; see
+  // the noise-suppression audit report for why a structural (zero-window)
+  // fix wasn't shipped here.
   // Also stashes the raw, pre-Krisp capture (`rawMicTrack`) for
   // RoomAudioCoordination's same-room heuristic, which specifically needs
   // to see what Krisp would otherwise suppress (another person's voice

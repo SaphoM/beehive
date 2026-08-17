@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, PlayCircle, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PlayCircle, Trash2, Pencil } from 'lucide-react'
 import type { MyMeeting } from '../livekit_react_hooks'
 import { s } from './roomStyles'
+import { TimePicker } from './TimePicker'
+
+const EDIT_DURATIONS = [15, 30, 45, 60, 90]
 
 export function countdown(date: string, time: string | null): string | null {
   const target = new Date(`${date}T${time || '00:00'}`)
@@ -120,6 +123,137 @@ export function ConfirmSheet({ meeting, onConfirm, onCancel }: ConfirmSheetProps
 }
 
 // -----------------------------------------------------------------------
+// EditMeetingSheet — opened from the pencil icon, organizer only. Same
+// overlay convention as ConfirmSheet (fixed backdrop, Escape/backdrop-click
+// closes) with the exact date/time/duration controls SchedulePanel.tsx
+// already uses, so editing a meeting feels identical to scheduling one.
+// -----------------------------------------------------------------------
+interface EditMeetingSheetProps {
+  meeting: MyMeeting
+  onSave: (updates: { name: string; scheduledDate: string; scheduledTime: string; durationMinutes: number }) => Promise<{ error: string | null }>
+  onCancel: () => void
+}
+
+function EditMeetingSheet({ meeting, onSave, onCancel }: EditMeetingSheetProps) {
+  const [name, setName] = useState(meeting.roomName)
+  const [date, setDate] = useState(meeting.scheduledDate ?? '')
+  const [time, setTime] = useState(meeting.scheduledTime ?? '')
+  const [duration, setDuration] = useState(meeting.durationMinutes ?? 30)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !saving) onCancel() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onCancel, saving])
+
+  const canSave = name.trim() !== '' && date !== '' && time !== '' && !saving
+
+  async function handleSave() {
+    if (!canSave) return
+    setSaving(true)
+    setErr(null)
+    const { error } = await onSave({ name: name.trim(), scheduledDate: date, scheduledTime: time, durationMinutes: duration })
+    setSaving(false)
+    if (error) setErr(error)
+    else onCancel() // success — the parent's refetch already updated the card, just close
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0]
+
+  return (
+    <div
+      onClick={() => !saving && onCancel()}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 16,
+          padding: '24px 28px', width: 320, display: 'flex', flexDirection: 'column', gap: 14,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+          fontFamily: "'Roboto', sans-serif",
+        }}
+      >
+        <span style={{ color: '#555', fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' }}>
+          Edit scheduled meeting
+        </span>
+
+        <input
+          style={s.input}
+          placeholder="Meeting name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          autoFocus
+        />
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="date"
+            min={todayStr}
+            style={{ ...s.input, flex: 2, margin: 0 }}
+            value={date}
+            onChange={e => setDate(e.target.value)}
+          />
+          <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} selectedDate={date || undefined} />
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' as const }}>
+          <span style={{ color: '#666', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase' as const, flexShrink: 0 }}>Duration</span>
+          {EDIT_DURATIONS.map(d => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDuration(d)}
+              style={{
+                background: duration === d ? '#2a2010' : '#1a1a1a',
+                border: `1px solid ${duration === d ? '#f5a623' : '#2a2a2a'}`,
+                borderRadius: 16, color: duration === d ? '#f5a623' : '#888',
+                fontSize: 12, padding: '5px 12px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif",
+              }}
+            >
+              {d < 60 ? `${d}m` : `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}m` : ''}`}
+            </button>
+          ))}
+        </div>
+
+        {err && (
+          <p style={{ color: '#ef4444', fontSize: 11, margin: 0 }}>{err}</p>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+          <button
+            onClick={handleSave}
+            disabled={!canSave}
+            style={{
+              background: canSave ? '#f5a623' : '#2a2a2a', color: canSave ? '#000' : '#666', border: 'none', borderRadius: 10,
+              padding: '12px 20px', fontSize: 13, fontWeight: 600, cursor: canSave ? 'pointer' : 'default', width: '100%',
+            }}
+          >
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={saving}
+            style={{
+              background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 10,
+              padding: '11px 20px', fontSize: 13, cursor: saving ? 'default' : 'pointer', width: '100%',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------
 // MeetingCard — informational, no full-width button.
 // Gold PlayCircle icon on the right triggers the confirmation sheet.
 // Clicking anywhere on the card body selects it.
@@ -129,17 +263,19 @@ interface MeetingCardProps {
   selected: boolean
   onSelect: () => void
   onLaunch: () => void
+  onEdit: () => void
   onDelete: () => void
   onAccept: () => void
   onDecline: () => void
   onTentative: () => void
 }
 
-function MeetingCard({ meeting, selected, onSelect, onLaunch, onDelete, onAccept, onDecline, onTentative }: MeetingCardProps) {
+function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, onAccept, onDecline, onTentative }: MeetingCardProps) {
   const [cd, setCd] = useState<string | null>(
     meeting.scheduledDate ? countdown(meeting.scheduledDate, meeting.scheduledTime) : null
   )
   const [iconHovered, setIconHovered] = useState(false)
+  const [editHovered, setEditHovered] = useState(false)
   const [trashHovered, setTrashHovered] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [rsvpPending, setRsvpPending] = useState(false)
@@ -230,6 +366,25 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onDelete, onAccept
       {/* Right-side action column */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0 }}>
 
+        {/* Edit icon — organizer only, hidden while the delete-confirm row is showing to avoid a cramped/ambiguous action column */}
+        {isOrganizer && !confirmDelete && (
+          <button
+            onClick={e => { e.stopPropagation(); onEdit() }}
+            onMouseEnter={() => setEditHovered(true)}
+            onMouseLeave={() => setEditHovered(false)}
+            title="Edit meeting"
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              color: editHovered ? '#f5a623' : '#333',
+              display: 'flex', alignItems: 'center',
+              transition: 'color 0.15s, transform 0.15s',
+              transform: editHovered ? 'scale(1.15)' : 'scale(1)',
+            }}
+          >
+            <Pencil size={13} strokeWidth={1.5} />
+          </button>
+        )}
+
         {/* Trash icon — organizer only */}
         {isOrganizer && !confirmDelete && (
           <button
@@ -300,13 +455,18 @@ interface MeetingCarouselProps {
   /** Called when the gold icon is clicked — Lobby opens the confirm sheet */
   onLaunch: (meeting: MyMeeting) => void
   onDelete: (meeting: MyMeeting) => void
+  /** Persists the edit; the carousel owns the sheet itself since — unlike
+      launch/delete — editing doesn't need to coordinate with Lobby's
+      primary button or a second confirm step. */
+  onEdit: (meeting: MyMeeting, updates: { name: string; scheduledDate: string; scheduledTime: string; durationMinutes: number }) => Promise<{ error: string | null }>
   onUpdateStatus: (invitationId: string, status: 'accepted' | 'declined' | 'tentative') => void
 }
 
 export function MeetingCarousel({
-  meetings, loading, selectedMeetingId, onSelect, onLaunch, onDelete, onUpdateStatus,
+  meetings, loading, selectedMeetingId, onSelect, onLaunch, onDelete, onEdit, onUpdateStatus,
 }: MeetingCarouselProps) {
   const [idx, setIdx] = useState(0)
+  const [editingMeeting, setEditingMeeting] = useState<MyMeeting | null>(null)
 
   const count = meetings.length
   const safeIdx = Math.min(idx, Math.max(0, count - 1))
@@ -363,11 +523,20 @@ export function MeetingCarousel({
         selected={selectedMeetingId === currentMeeting.roomId}
         onSelect={() => onSelect(currentMeeting)}
         onLaunch={() => { onSelect(currentMeeting); onLaunch(currentMeeting) }}
+        onEdit={() => setEditingMeeting(currentMeeting)}
         onDelete={() => onDelete(currentMeeting)}
         onAccept={() => currentMeeting.invitationId && onUpdateStatus(currentMeeting.invitationId, 'accepted')}
         onDecline={() => currentMeeting.invitationId && onUpdateStatus(currentMeeting.invitationId, 'declined')}
         onTentative={() => currentMeeting.invitationId && onUpdateStatus(currentMeeting.invitationId, 'tentative')}
       />
+
+      {editingMeeting && (
+        <EditMeetingSheet
+          meeting={editingMeeting}
+          onSave={updates => onEdit(editingMeeting, updates)}
+          onCancel={() => setEditingMeeting(null)}
+        />
+      )}
     </div>
   )
 }

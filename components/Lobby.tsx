@@ -121,7 +121,7 @@ export function Lobby({
     return () => subscription.unsubscribe()
   }, [user])
 
-  const { meetings, loading: meetingsLoading, updateStatus, refresh: refreshMeetings } = useMyMeetings(accessToken, user?.email)
+  const { meetings, loading: meetingsLoading, updateStatus, updateMeeting, refresh: refreshMeetings } = useMyMeetings(accessToken, user?.email)
   const deviceReadiness = useDeviceReadiness()
   const criticalAudio = isCriticalAudioIssue(deviceReadiness)
 
@@ -184,6 +184,22 @@ export function Lobby({
       console.error('[lobby] delete meeting failed:', e)
       setToast({ message: 'Network error — meeting not deleted', variant: 'error' })
     }
+  }
+
+  // Same hostSecret-from-localStorage lookup as handleDeleteMeeting above —
+  // organizer-only UI, so this should always find one; the sheet surfaces
+  // the error itself (via its own err state) rather than a toast, since
+  // it's already the thing the user is looking at.
+  async function handleEditMeeting(
+    meeting: MyMeeting,
+    updates: { name: string; scheduledDate: string; scheduledTime: string; durationMinutes: number },
+  ) {
+    let hostSecret: string | null = null
+    try { hostSecret = localStorage.getItem(`beehive:hostSecret:${meeting.roomId}`) } catch { /* storage unavailable */ }
+    if (!hostSecret) return { error: 'Can only edit from the device that scheduled it' }
+    const result = await updateMeeting(meeting.roomId, hostSecret, updates)
+    if (!result.error) setToast({ message: 'Meeting updated' })
+    return result
   }
 
   function handleConfirmLaunch() {
@@ -272,6 +288,7 @@ export function Lobby({
                 onSelect={setSelectedMeeting}
                 onLaunch={m => setConfirmMeeting(m)}
                 onDelete={handleDeleteMeeting}
+                onEdit={handleEditMeeting}
                 onUpdateStatus={updateStatus}
               />
             )}

@@ -908,7 +908,35 @@ export function useMyMeetings(accessToken: string | null | undefined, userEmail:
     return { error: null as string | null }
   }, [accessToken, load])
 
-  return { meetings, loading, refresh: load, updateStatus }
+  // Organizer-only edit of a scheduled meeting's own details. Uses the same
+  // hostSecret + PATCH /api/rooms/:roomId pattern the Delete flow already
+  // established, rather than the Bearer-token identity check the RSVP path
+  // above uses — hostSecret is what actually proves "I'm the organizer" for
+  // rooms scheduled anonymously too, matching every other host-only action
+  // in this app (Delete, agenda edits, admit/deny).
+  const updateMeeting = useCallback(async (
+    roomId: string,
+    hostSecret: string,
+    updates: { name?: string; scheduledDate?: string; scheduledTime?: string; durationMinutes?: number },
+  ) => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostSecret, ...updates }),
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        return { error: (body.error as string) || 'Failed to update meeting' }
+      }
+      await load() // re-fetch so the carousel reflects the edit immediately
+      return { error: null as string | null }
+    } catch {
+      return { error: 'Network error' as string }
+    }
+  }, [load])
+
+  return { meetings, loading, refresh: load, updateStatus, updateMeeting }
 }
 
 // ============================================================

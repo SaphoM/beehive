@@ -1178,6 +1178,48 @@ app.post('/api/rooms/:roomId/meeting-notes/retry', async (req, res) => {
 })
 
 // ============================================================
+// EDIT SCHEDULED MEETING
+// PATCH /api/rooms/:roomId
+// Body: { hostSecret: string, name?, scheduledDate?, scheduledTime?, durationMinutes? }
+// ============================================================
+// Organizer-only, same auth as DELETE below. Only ever updates the fields
+// actually present in the body — a client omitting a field leaves it
+// untouched rather than nulling it out, so a partial edit (e.g. just the
+// time) can't accidentally wipe the name or duration. Existing invitees
+// see the new date/time immediately: they read the same `rooms` row via
+// GET /api/me/meetings, no separate re-invite step needed.
+app.patch('/api/rooms/:roomId', async (req, res) => {
+  const { roomId } = req.params
+  const { hostSecret, name, scheduledDate, scheduledTime, durationMinutes } = req.body
+
+  if (!hostSecret) return res.status(400).json({ error: 'hostSecret required' })
+
+  const { data: hostRow } = await supabase.from('room_hosts').select('host_secret').eq('room_id', roomId).single()
+  if (!hostRow || hostRow.host_secret !== hostSecret) {
+    return res.status(403).json({ error: 'Not authorized to edit this room' })
+  }
+
+  const updates = {}
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: 'name cannot be empty' })
+    updates.name = name.trim()
+  }
+  if (scheduledDate !== undefined) updates.scheduled_date = scheduledDate
+  if (scheduledTime !== undefined) updates.scheduled_time = scheduledTime
+  if (durationMinutes !== undefined) updates.duration_minutes = durationMinutes
+
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'No fields to update' })
+
+  const { data: room, error } = await supabase.from('rooms').update(updates).eq('id', roomId).select().single()
+  if (error || !room) {
+    console.error('[rooms] edit failed:', error?.message)
+    return res.status(500).json({ error: 'Failed to update meeting' })
+  }
+
+  return res.json({ ok: true, room })
+})
+
+// ============================================================
 // DELETE SCHEDULED MEETING
 // DELETE /api/rooms/:roomId
 // Body: { hostSecret: string }

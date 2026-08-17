@@ -84,7 +84,7 @@ async function createWindow() {
 
   // Allow window.open() (used by the "Pop out" presentation viewer) to spawn a
   // real native child window instead of being blocked by Electron's default deny
-  mainWindow.webContents.setWindowOpenHandler(({ frameName }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ frameName, url }) => {
     if (frameName === 'beehive-popout') {
       return {
         action: 'allow',
@@ -96,6 +96,20 @@ async function createWindow() {
           webPreferences: { contextIsolation: true, nodeIntegration: false },
         },
       }
+    }
+    // Non-http(s) URLs (mailto:, tel:, etc. — e.g. SchedulePanel.tsx's "Send
+    // Email Invite" button, window.open('mailto:...')) can never render as
+    // page content. A real browser hands these to the OS's own protocol
+    // handler and never shows a tab for them; Electron's generic 'allow'
+    // below has no such special case, so it was spawning a real, blank,
+    // permanently-orphaned BrowserWindow for every one of these — the
+    // reported "blank window on every scheduled meeting" bug, since
+    // inviting attendees by email is a normal part of scheduling. Hand off
+    // to shell.openExternal (the same mechanism a browser uses) and deny
+    // the window-open request so no window is ever created for it.
+    if (!/^https?:\/\//i.test(url)) {
+      shell.openExternal(url)
+      return { action: 'deny' }
     }
     return { action: 'allow' }
   })

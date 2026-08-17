@@ -526,6 +526,7 @@ export function MeetingCarousel({
       </div>
 
       <MeetingCard
+        key={currentMeeting.roomId}
         meeting={currentMeeting}
         selected={selectedMeetingId === currentMeeting.roomId}
         onSelect={() => onSelect(currentMeeting)}

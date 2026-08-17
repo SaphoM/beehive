@@ -15,9 +15,16 @@ export function countdown(date: string, time: string | null): string | null {
   if (mins < 60) return `In ${mins}m`
   const hrs = Math.floor(mins / 60)
   if (hrs < 24) return `In ${hrs}h`
-  const days = Math.floor(hrs / 24)
-  if (days === 1) return 'Tomorrow'
-  return `In ${days}d`
+  // Beyond same-day: label by calendar-date difference, not elapsed hours.
+  // Dividing elapsed hours by 24 undercounts whenever the meeting isn't
+  // exactly N*24h away (e.g. late tonight to early afternoon two calendar
+  // days later is ~36-40 elapsed hours, which floor(hrs/24) reports as
+  // "Tomorrow" instead of the correct "In 2 days").
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const dayDiff = Math.round((startOfDay(target).getTime() - startOfDay(new Date()).getTime()) / 86400000)
+  if (dayDiff === 1) return 'Tomorrow'
+  if (dayDiff > 1) return `In ${dayDiff} days`
+  return `In ${hrs}h`
 }
 
 export function formatWhen(date: string, time: string | null): string {

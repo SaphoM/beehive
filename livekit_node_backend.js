@@ -564,6 +564,17 @@ app.post('/api/livekit/webhook', async (req, res) => {
     return res.status(401).json({ error: 'Invalid webhook signature' })
   }
 
+  // TEMPORARY AUDIT DIAGNOSTIC — logs every verified webhook event type this
+  // deployment actually receives from LiveKit Cloud, to a scratch table
+  // (_audit_webhook_debug), so it can be inspected without server console
+  // access. Never throws, never blocks the response. To be removed once the
+  // AI Note Taker root-cause investigation is complete.
+  supabase.from('_audit_webhook_debug').insert({
+    event_type: event?.event ?? null,
+    room_name: event?.room?.name ?? event?.egressInfo?.roomName ?? null,
+    raw: event,
+  }).then(() => {}, () => {})
+
   // ------------------------------------------------------------
   // Meeting Intelligence — start recording when the room actually goes
   // live, IF this room has recording_enabled (opt-in, off by default — see

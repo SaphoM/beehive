@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient, Session, User } from '@supabase/supabase-js'
 
 export const supabase = createClient(
@@ -1073,6 +1073,21 @@ export function usePersonalNotes(roomId: string | null, identity: string | null,
       setPending(false)
     }
   }, [roomId, identity, displayName, pending, storageKey])
+
+  // Default on: auto-start the moment this participant's identity is known,
+  // once per connection — the toggle itself doesn't move, this just means
+  // nobody has to click it first. Fires at most once per mount (autoStarted
+  // ref, not `enabled`) so an explicit manual Stop is never silently
+  // reversed by this effect re-running; a resumed session found in
+  // sessionStorage (sessionSecret already set) also skips the call
+  // entirely, both to avoid a redundant request and to avoid this effect
+  // ever fighting a Stop that already ran earlier in the same connection.
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (!roomId || !identity || autoStarted.current || sessionSecret) return
+    autoStarted.current = true
+    start()
+  }, [roomId, identity, sessionSecret, start])
 
   const stop = useCallback(async () => {
     if (!roomId || !identity || !sessionSecret || pending) return

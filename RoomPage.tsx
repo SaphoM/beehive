@@ -95,6 +95,7 @@ import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
 import { DEVICE_CHECK_CACHE_KEY } from './components/useDeviceReadiness'
 import { RoomAudioCoordination } from './components/RoomAudioCoordination'
 import { BotAssistant } from './components/BotAssistant'
+import { PersonalNotesToggle } from './components/PersonalNotesToggle'
 import { SpeakingIndicator } from './components/SpeakingIndicator'
 import { ScreenShareMenu } from './components/ScreenShareMenu'
 import { ScreenShareBar } from './components/ScreenShareBar'
@@ -2835,6 +2836,13 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
           {/* BeeHive Bot Assistant — floating agenda helper, always available */}
           {overlayMode !== 'hidden' && (
             <BotAssistant roomId={roomId} displayName={displayName} canEdit={canAdmit} hostSecret={myHostSecret} />
+          )}
+
+          {/* Personal AI Note Taker — one per participant, fully isolated
+              from every other participant's session (see PersonalNotesToggle
+              / usePersonalNotes / 010_personal_meeting_notes.sql). */}
+          {overlayMode !== 'hidden' && (
+            <PersonalNotesToggle roomId={roomId} identity={localParticipant.identity || null} displayName={displayName} />
           )}
 
           {/* Full-screen HUD — floating attendees/hands/reactions/controls window,

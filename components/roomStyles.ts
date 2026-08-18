@@ -102,8 +102,13 @@ export const s: Record<string, React.CSSProperties> = {
   lobbyTabRow: { display: 'flex', gap: 4, background: '#111', border: '1px solid #1e1e1e', borderRadius: 10, padding: 4 },
   lobbyTab: { flex: 1, background: 'transparent', border: 'none', borderRadius: 7, color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', padding: '7px 0', letterSpacing: 0.5, transition: 'all 0.15s' },
   lobbyTabActive: { background: '#1e1e1e', color: '#f5a623', border: '1px solid #2a2a2a' },
-  fathomToggleBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: '1px solid #222', borderRadius: 10, padding: '8px 16px', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', width: 360, letterSpacing: 0.5 },
-  fathomPanel: { width: 360, background: '#111', border: '1px solid #1e1e1e', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' as const },
+  // Both sit directly inside `lobby`'s WebkitAppRegion: 'drag' region (unlike
+  // lobbyCard, which opts out at its own root) — without their own no-drag
+  // here, Electron's frameless-window drag handling swallows every click on
+  // these buttons and everything inside the expanded panel (rows, Retry,
+  // etc.) as a window-drag gesture before it ever reaches React's onClick.
+  fathomToggleBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: '1px solid #222', borderRadius: 10, padding: '8px 16px', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', width: 360, letterSpacing: 0.5, WebkitAppRegion: 'no-drag' as any },
+  fathomPanel: { width: 360, background: '#111', border: '1px solid #1e1e1e', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' as const, WebkitAppRegion: 'no-drag' as any },
   fathomHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #1e1e1e' },
   fathomHeaderTitle: { color: '#f5a623', fontSize: 10, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 2 },
   fathomLink: { color: '#5b5ef4', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", textDecoration: 'none' },

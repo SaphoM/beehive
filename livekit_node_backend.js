@@ -78,7 +78,18 @@ app.use((_req, res, next) => {
 // verification below (WebhookReceiver.receive()) has the exact raw string
 // LiveKit signed. Every existing route's req.body is completely unaffected;
 // this only attaches a new req.rawBody Buffer nothing previously read.
-app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf } }))
+// `type` widened beyond express.json()'s default 'application/json' match:
+// LiveKit Cloud sends webhook deliveries as `Content-Type:
+// application/webhook+json`, which the default matcher silently skips —
+// body-parser then never runs, req.body/req.rawBody stay undefined, and the
+// webhook handler crashed on req.rawBody.toString() before signature
+// verification ever ran. Confirmed live: a real LiveKit delivery logged
+// bodyLength: null and "Cannot read properties of undefined (reading
+// 'toString')" — this was the root cause, not a signature mismatch.
+app.use(express.json({
+  type: ['application/json', 'application/webhook+json'],
+  verify: (req, _res, buf) => { req.rawBody = buf },
+}))
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -566,6 +577,15 @@ app.post('/api/livekit/webhook', async (req, res) => {
     room_name: null,
     raw: { headers: req.headers, bodyLength: req.rawBody?.length ?? null },
   }).then(() => {}, () => {})
+
+  // Defensive guard, independent of the express.json() type fix above — if a
+  // future LiveKit content-type variant (or any other unparsed body) ever
+  // slips past the matcher again, fail loudly with a clear diagnosable error
+  // instead of crashing on req.rawBody.toString().
+  if (!req.rawBody) {
+    console.error('[webhook] request body was not captured — check express.json() type matcher against this request\'s Content-Type:', req.headers['content-type'])
+    return res.status(400).json({ error: 'Request body not received' })
+  }
 
   let event
   try {

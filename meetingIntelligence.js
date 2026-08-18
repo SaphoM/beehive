@@ -149,6 +149,38 @@ export function createMeetingIntelligence({ supabase, egressClient }) {
     }
   }
 
+  // ------------------------------------------------------------
+  // generatePersonalNote — runs the LLM over the room's (shared) transcript
+  // for exactly ONE participant's note session, independently of every
+  // other participant's. Called from two places: runSummaryStage's fan-out
+  // below (the normal case — transcript just became ready) and directly
+  // from the /personal-notes/start endpoint (the late-enable case — a
+  // participant opts in after the room's transcript is already done, so
+  // there is no future runSummaryStage pass to catch them). Idempotent:
+  // no-ops if this row already has a summary, so it's always safe to call
+  // speculatively.
+  // ------------------------------------------------------------
+  async function generatePersonalNote(personalNote, transcriptText, provider) {
+    if (personalNote.summary_markdown) return // already generated — never overwrite
+    try {
+      const { summaryMarkdown, actionItems } = await provider.generate(transcriptText)
+      const { error } = await supabase.from('personal_meeting_notes')
+        .update({ summary_markdown: summaryMarkdown, action_items: actionItems, last_error: null, updated_at: new Date().toISOString() })
+        .eq('id', personalNote.id)
+      if (error) console.error('[intelligence] failed to store personal note:', personalNote.id, error.message)
+    } catch (e) {
+      // One participant's generation failing must never affect any other
+      // participant's session, or the shared job's own status — recorded
+      // only on this row, visible to that one participant via the retrieval
+      // endpoint, never silently blank.
+      console.error('[intelligence] personal note generation failed:', personalNote.id, e?.message)
+      const { error } = await supabase.from('personal_meeting_notes')
+        .update({ last_error: String(e?.message ?? e).slice(0, 2000), updated_at: new Date().toISOString() })
+        .eq('id', personalNote.id)
+      if (error) console.error('[intelligence] additionally failed to record personal note failure:', personalNote.id, error.message)
+    }
+  }
+
   async function runSummaryStage(jobId, fromStatus) {
     const provider = createLLMProvider()
     if (!provider) {
@@ -167,12 +199,24 @@ export function createMeetingIntelligence({ supabase, egressClient }) {
         .single()
       if (fetchError || !transcript) throw new Error(`Failed to load transcript for summary: ${fetchError?.message}`)
 
-      const { summaryMarkdown, actionItems } = await provider.generate(transcript.full_text)
+      // Fan out to every participant who opted in with their own,
+      // independent AI Note Taker session — see 010_personal_meeting_notes
+      // .sql. Each participant's note is generated and stored in their own
+      // row; nobody's session is enabled, disabled, or overwritten by
+      // another's. Rows that already have a summary (a late joiner whose
+      // /personal-notes/start already triggered generation directly) are
+      // skipped by generatePersonalNote's own idempotency check, not by
+      // filtering here, so a race between the two call sites can never
+      // double-generate or corrupt either write.
+      const { data: personalNotes, error: notesError } = await supabase
+        .from('personal_meeting_notes')
+        .select('*')
+        .eq('room_id', claimed.room_id)
+      if (notesError) throw new Error(`Failed to load personal note sessions: ${notesError.message}`)
 
-      const { error: insertError } = await supabase
-        .from('meeting_intelligence')
-        .insert({ room_id: claimed.room_id, job_id: claimed.id, provider: provider.name, summary_markdown: summaryMarkdown, action_items: actionItems })
-      if (insertError) throw new Error(`Failed to store meeting intelligence: ${insertError.message}`)
+      for (const note of (personalNotes ?? [])) {
+        await generatePersonalNote(note, transcript.full_text, provider)
+      }
 
       await supabase.from('meeting_intelligence_jobs')
         .update({ status: 'complete', updated_at: new Date().toISOString(), attempts: 0, last_error: null })
@@ -314,5 +358,41 @@ export function createMeetingIntelligence({ supabase, egressClient }) {
     }, SWEEP_INTERVAL_MS)
   }
 
-  return { startMeetingEgress, runJob, startIntelligenceSweep }
+  // ------------------------------------------------------------
+  // generateForLateJoiner — called from /personal-notes/start when a
+  // participant opts in AFTER the room's shared transcript is already
+  // available (job status 'transcribed' or 'complete'): runSummaryStage's
+  // fan-out already ran and will never run again for this job, so this row
+  // would otherwise sit blank forever. No-ops (returns false) if the
+  // transcript isn't ready yet — the normal fan-out in runSummaryStage will
+  // reach this row once it is, since it queries *all* personal_meeting_notes
+  // for the room at that point, including ones created after the job
+  // started. Never throws — errors land on the row via generatePersonalNote
+  // itself, same as the normal path.
+  // ------------------------------------------------------------
+  async function generateForLateJoiner(roomId, personalNoteId) {
+    const { data: job } = await supabase
+      .from('meeting_intelligence_jobs')
+      .select('transcript_id, status')
+      .eq('room_id', roomId)
+      .not('transcript_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!job?.transcript_id) return false
+
+    const provider = createLLMProvider()
+    if (!provider) return false
+
+    const [{ data: note }, { data: transcript }] = await Promise.all([
+      supabase.from('personal_meeting_notes').select('*').eq('id', personalNoteId).single(),
+      supabase.from('meeting_transcripts').select('full_text').eq('id', job.transcript_id).single(),
+    ])
+    if (!note || !transcript) return false
+
+    await generatePersonalNote(note, transcript.full_text, provider)
+    return true
+  }
+
+  return { startMeetingEgress, runJob, startIntelligenceSweep, generateForLateJoiner }
 }

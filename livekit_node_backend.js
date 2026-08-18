@@ -5,7 +5,7 @@ import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, readFileSync } from 'fs'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomBytes } from 'crypto'
 import { createMeetingIntelligence } from './meetingIntelligence.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -567,17 +567,6 @@ app.post('/api/livekit/webhook', async (req, res) => {
   // .egressInfo below are the exact same fields every branch already
   // destructured from the previously-unverified req.body; only the trust
   // level of the source changed, not the shape.
-  // TEMPORARY AUDIT DIAGNOSTIC — logs that a POST hit this endpoint at all,
-  // before signature verification, so a "LiveKit never delivers" failure can
-  // be told apart from a "delivery arrives but fails verification" failure.
-  // To be removed once the AI Note Taker root-cause investigation is
-  // complete. Never throws, never blocks the response.
-  supabase.from('_audit_webhook_debug').insert({
-    event_type: '__raw_post_received__',
-    room_name: null,
-    raw: { headers: req.headers, bodyLength: req.rawBody?.length ?? null },
-  }).then(() => {}, () => {})
-
   // Defensive guard, independent of the express.json() type fix above — if a
   // future LiveKit content-type variant (or any other unparsed body) ever
   // slips past the matcher again, fail loudly with a clear diagnosable error
@@ -592,22 +581,8 @@ app.post('/api/livekit/webhook', async (req, res) => {
     event = await webhookReceiver.receive(req.rawBody.toString('utf8'), req.headers.authorization)
   } catch (e) {
     console.error('[webhook] signature verification failed:', e?.message)
-    supabase.from('_audit_webhook_debug').insert({
-      event_type: '__signature_verification_failed__',
-      room_name: null,
-      raw: { message: e?.message },
-    }).then(() => {}, () => {})
     return res.status(401).json({ error: 'Invalid webhook signature' })
   }
-
-  // TEMPORARY AUDIT DIAGNOSTIC — logs every verified webhook event type this
-  // deployment actually receives from LiveKit Cloud, to the same scratch
-  // table, so it can be inspected without server console access.
-  supabase.from('_audit_webhook_debug').insert({
-    event_type: event?.event ?? null,
-    room_name: event?.room?.name ?? event?.egressInfo?.roomName ?? null,
-    raw: event,
-  }).then(() => {}, () => {})
 
   // ------------------------------------------------------------
   // Meeting Intelligence — start recording when the room actually goes
@@ -1084,16 +1059,193 @@ app.post('/api/rooms/:roomId/intelligence-settings', async (req, res) => {
 })
 
 // ============================================================
+// PERSONAL AI NOTE TAKER — per-participant session start/stop/retrieve
+// ============================================================
+// Each participant gets their own note-taking session, isolated from every
+// other participant's — see 010_personal_meeting_notes.sql for the full
+// rationale. These three endpoints are the ONLY way personal_meeting_notes
+// is ever read or written (RLS: zero client policies, service-role only).
+//
+// Ownership model: participantIdentity is the LiveKit connection identity
+// the client already generated for /api/livekit/token — visible to other
+// participants via LiveKit's room roster, so it is NEVER sufficient on its
+// own to control or read a session. sessionSecret (opaque, minted server
+// -side, known only to the owning client) is required for every call except
+// the very first /start for a given identity. A signed-in caller may
+// additionally prove ownership via their accessToken matching the row's
+// owner_user_id, without needing to hold the secret (mirrors organizer/
+// invitee access to the room itself).
+
+// POST /api/rooms/:roomId/personal-notes/start
+// Body: { participantIdentity, displayName, accessToken? }
+// Idempotent: a second call for an identity that already has an ACTIVE
+// session returns 409 without revealing that session's secret (closing the
+// snoop-the-roster-then-hijack-the-session hole participant_identity alone
+// would otherwise open) — the legitimate owner's own client already has its
+// secret cached from the first call and has no reason to ask again.
+app.post('/api/rooms/:roomId/personal-notes/start', async (req, res) => {
+  const { roomId } = req.params
+  const { participantIdentity, displayName, accessToken } = req.body
+  if (!participantIdentity) return res.status(400).json({ error: 'participantIdentity required' })
+
+  const { data: existing } = await supabase
+    .from('personal_meeting_notes')
+    .select('id, status')
+    .eq('room_id', roomId)
+    .eq('participant_identity', participantIdentity)
+    .maybeSingle()
+
+  if (existing?.status === 'active') {
+    return res.status(409).json({ error: 'This participant already has an active AI Note Taker session' })
+  }
+
+  let ownerUserId = null
+  if (accessToken) {
+    const { data: { user } } = await supabase.auth.getUser(accessToken)
+    ownerUserId = user?.id ?? null
+  }
+
+  // Recording must actually be running for any personal note session to
+  // ever produce a transcript — force it on without touching ai_notes_enabled
+  // (a separate, room-level flag some other flow may already be using), and
+  // without clobbering recording_enabled if an organizer already turned it
+  // on themselves via SchedulePanel. Supabase upsert only writes the columns
+  // named here; every other existing column on the row is left exactly as
+  // it was.
+  const { error: settingsError } = await supabase.from('room_intelligence_settings')
+    .upsert({ room_id: roomId, recording_enabled: true, updated_at: new Date().toISOString() }, { onConflict: 'room_id' })
+  if (settingsError) console.error('[intelligence] personal-notes/start failed to enable recording:', roomId, settingsError.message)
+
+  let noteId
+  if (existing) {
+    // Restart of a previously-stopped session for this exact identity —
+    // reactivate the same row (preserving any notes already generated —
+    // see meetingIntelligence.js's generatePersonalNote, which never
+    // overwrites an existing summary) rather than creating a second row,
+    // and mint a fresh secret since the old one may have been discarded by
+    // the client that stopped it.
+    const newSecret = randomBytes(18).toString('hex')
+    const { data: updated, error: updateError } = await supabase.from('personal_meeting_notes')
+      .update({ status: 'active', session_secret: newSecret, display_name: displayName ?? null, owner_user_id: ownerUserId, updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select('id, session_secret')
+      .single()
+    if (updateError || !updated) {
+      console.error('[intelligence] personal-notes/start restart failed:', existing.id, updateError?.message)
+      return res.status(500).json({ error: 'Failed to restart AI Note Taker session' })
+    }
+    noteId = updated.id
+    res.json({ ok: true, id: updated.id, sessionSecret: updated.session_secret, restarted: true })
+  } else {
+    const { data: created, error: insertError } = await supabase.from('personal_meeting_notes')
+      .insert({ room_id: roomId, participant_identity: participantIdentity, display_name: displayName ?? null, owner_user_id: ownerUserId })
+      .select('id, session_secret')
+      .single()
+    if (insertError || !created) {
+      console.error('[intelligence] personal-notes/start failed:', roomId, participantIdentity, insertError?.message)
+      return res.status(500).json({ error: 'Failed to start AI Note Taker session' })
+    }
+    noteId = created.id
+    res.json({ ok: true, id: created.id, sessionSecret: created.session_secret, restarted: false })
+  }
+
+  // Late-join case: the room's transcript may already be sitting complete
+  // if this participant enabled AI Notes after everyone else's fan-out
+  // already ran — fire-and-forget, after the response, so a slow LLM call
+  // never delays this endpoint. No-ops safely if the transcript isn't ready
+  // yet (the normal fan-out will reach this row when it is).
+  meetingIntelligence.generateForLateJoiner(roomId, noteId)
+    .catch(e => console.error('[intelligence] generateForLateJoiner failed:', noteId, e?.message))
+})
+
+// POST /api/rooms/:roomId/personal-notes/stop
+// Body: { participantIdentity, sessionSecret }
+// Never deletes notes already generated — only marks the session inactive
+// so a late transcript-ready fan-out skips it going forward.
+app.post('/api/rooms/:roomId/personal-notes/stop', async (req, res) => {
+  const { roomId } = req.params
+  const { participantIdentity, sessionSecret } = req.body
+  if (!participantIdentity || !sessionSecret) {
+    return res.status(400).json({ error: 'participantIdentity and sessionSecret required' })
+  }
+
+  const { data: row } = await supabase.from('personal_meeting_notes')
+    .select('id, session_secret')
+    .eq('room_id', roomId)
+    .eq('participant_identity', participantIdentity)
+    .maybeSingle()
+  if (!row || row.session_secret !== sessionSecret) {
+    return res.status(403).json({ error: 'Not authorized to stop this AI Note Taker session' })
+  }
+
+  const { error } = await supabase.from('personal_meeting_notes')
+    .update({ status: 'stopped', updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+  if (error) {
+    console.error('[intelligence] personal-notes/stop failed:', row.id, error.message)
+    return res.status(500).json({ error: 'Failed to stop AI Note Taker session' })
+  }
+  return res.json({ ok: true })
+})
+
+// GET /api/rooms/:roomId/personal-notes/me
+// Header: X-Participant-Identity + X-Session-Secret, OR Authorization: Bearer <accessToken>
+// Returns exactly one participant's own session — never another's, by
+// construction: the query is always scoped to the identity+secret (or
+// owner_user_id) presented, not to the room alone.
+app.get('/api/rooms/:roomId/personal-notes/me', async (req, res) => {
+  const { roomId } = req.params
+  const identity = req.headers['x-participant-identity']
+  const secret = req.headers['x-session-secret']
+  const rawAuth = req.headers.authorization || ''
+  const accessToken = rawAuth.startsWith('Bearer ') ? rawAuth.slice(7) : rawAuth
+
+  let query = supabase.from('personal_meeting_notes').select('*').eq('room_id', roomId)
+  if (identity && secret) {
+    query = query.eq('participant_identity', identity).eq('session_secret', secret)
+  } else if (accessToken) {
+    const { data: { user } } = await supabase.auth.getUser(accessToken)
+    if (!user) return res.status(401).json({ error: 'Invalid or expired token' })
+    query = query.eq('owner_user_id', user.id)
+  } else {
+    return res.status(400).json({ error: 'participantIdentity+sessionSecret or an access token is required' })
+  }
+
+  const { data: note, error } = await query.maybeSingle()
+  if (error) {
+    console.error('[intelligence] personal-notes/me query failed:', roomId, error.message)
+    return res.status(500).json({ error: 'Failed to load AI Note Taker session' })
+  }
+  if (!note) return res.status(404).json({ error: 'No AI Note Taker session found' })
+
+  return res.json({
+    id: note.id,
+    status: note.status,
+    summaryMarkdown: note.summary_markdown,
+    actionItems: note.action_items,
+    lastError: note.last_error,
+    createdAt: note.created_at,
+    updatedAt: note.updated_at,
+  })
+})
+
+// ============================================================
 // MEETING INTELLIGENCE — this user's meeting notes
 // GET /api/me/meeting-notes
 // Header: Authorization: Bearer <accessToken>
 // ============================================================
-// Identity resolution mirrors /api/me/meetings exactly: organizer access via
+// Room discovery mirrors /api/me/meetings exactly: organizer access via
 // scheduler_auth_user_id, invitee access via meeting_invitations.invitee_email
-// (lowercased). Reads meeting_intelligence_jobs/meeting_intelligence directly
-// via the service-role client — these tables have zero client RLS policies
-// (see 009_meeting_intelligence.sql), so this backend endpoint is the only
-// way any of this data is ever reachable, by design.
+// (lowercased) — this only determines which ROOMS this user has any
+// business seeing notes for. The notes themselves are then scoped further,
+// to personal_meeting_notes rows this user personally owns
+// (owner_user_id = their own id) — being an organizer or invitee of a room
+// no longer implies visibility into another participant's personal AI
+// notes for it; a user who never started their own AI Note Taker session
+// for a room sees nothing for that room, by design (see
+// 010_personal_meeting_notes.sql). Reads go via the service-role client —
+// these tables have zero client RLS policies, so this backend endpoint is
+// the only way any of this data is ever reachable.
 app.get('/api/me/meeting-notes', async (req, res) => {
   const raw = req.headers.authorization || ''
   const accessToken = raw.startsWith('Bearer ') ? raw.slice(7) : raw
@@ -1116,40 +1268,39 @@ app.get('/api/me/meeting-notes', async (req, res) => {
   if (roomMap.size === 0) return res.json({ notes: [] })
 
   const roomIds = Array.from(roomMap.keys())
-  const [jobsRes, intelligenceRes] = await Promise.all([
-    supabase.from('meeting_intelligence_jobs').select('room_id, status, created_at').in('room_id', roomIds),
-    supabase.from('meeting_intelligence').select('room_id, summary_markdown, action_items, created_at').in('room_id', roomIds),
-  ])
-
-  // A room can only ever have one active pipeline run in this design — take
-  // the most recently created job/intelligence row per room if duplicates
-  // somehow exist (e.g. a room recorded twice on different dates).
-  const latestJobByRoom = new Map()
-  for (const job of (jobsRes.data ?? [])) {
-    const existing = latestJobByRoom.get(job.room_id)
-    if (!existing || job.created_at > existing.created_at) latestJobByRoom.set(job.room_id, job)
-  }
-  const latestIntelligenceByRoom = new Map()
-  for (const row of (intelligenceRes.data ?? [])) {
-    const existing = latestIntelligenceByRoom.get(row.room_id)
-    if (!existing || row.created_at > existing.created_at) latestIntelligenceByRoom.set(row.room_id, row)
+  // owner_user_id filter is the actual privacy boundary here — without it,
+  // this would return every participant's notes for a shared room, not just
+  // this user's own.
+  const { data: personalNotes, error } = await supabase
+    .from('personal_meeting_notes')
+    .select('room_id, status, summary_markdown, action_items, last_error, created_at')
+    .in('room_id', roomIds)
+    .eq('owner_user_id', user.id)
+  if (error) {
+    console.error('[intelligence] /api/me/meeting-notes query failed:', error.message)
+    return res.status(500).json({ error: 'Failed to load meeting notes' })
   }
 
-  const notes = roomIds
-    .map(roomId => {
-      const job = latestJobByRoom.get(roomId)
-      const intelligence = latestIntelligenceByRoom.get(roomId)
-      if (!job) return null // feature was never enabled for this room — omit entirely, not a "not_started" row
-      return {
-        roomId,
-        roomName: roomMap.get(roomId),
-        status: job.status,
-        summaryMarkdown: intelligence?.summary_markdown ?? null,
-        actionItems: intelligence?.action_items ?? null,
-        createdAt: job.created_at,
-      }
-    })
-    .filter(Boolean)
+  // A room can only ever have one of this user's own sessions per the
+  // unique (room_id, participant_identity) index feeding restarts back into
+  // the same row — this is only a defensive "most recent" pick in case that
+  // invariant is ever violated by a future data path.
+  const latestByRoom = new Map()
+  for (const row of (personalNotes ?? [])) {
+    const existing = latestByRoom.get(row.room_id)
+    if (!existing || row.created_at > existing.created_at) latestByRoom.set(row.room_id, row)
+  }
+
+  const notes = Array.from(latestByRoom.entries())
+    .map(([roomId, note]) => ({
+      roomId,
+      roomName: roomMap.get(roomId),
+      status: note.status,
+      summaryMarkdown: note.summary_markdown ?? null,
+      actionItems: note.action_items ?? null,
+      lastError: note.last_error ?? null,
+      createdAt: note.created_at,
+    }))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) // most recent first
 
   return res.json({ notes })

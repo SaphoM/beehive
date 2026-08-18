@@ -25,11 +25,15 @@ export function PersonalNotesToggle({
 
   return (
     <>
+      {/* Stacked directly above BotAssistant's own fab (bottom:90, right:24,
+          zIndex:40, 52px tall — see BotAssistant.tsx's `st.fab`), not on top
+          of it: same right-edge alignment, positioned clear of its full
+          height plus a gap so the two floating buttons never overlap. */}
       <button
         onClick={() => setOpen(v => !v)}
         title="Your personal AI Note Taker"
         style={{
-          position: 'absolute', bottom: 90, right: 20, zIndex: 15,
+          position: 'absolute', bottom: 154, right: 24, zIndex: 40,
           width: 44, height: 44, borderRadius: '50%',
           background: enabled ? '#f5a623' : 'rgba(10,10,10,0.85)',
           border: enabled ? 'none' : '1px solid #333',
@@ -44,7 +48,7 @@ export function PersonalNotesToggle({
       {open && (
         <div
           style={{
-            position: 'absolute', bottom: 142, right: 20, zIndex: 16,
+            position: 'absolute', bottom: 206, right: 24, zIndex: 41,
             width: 300, maxHeight: 420, overflowY: 'auto',
             background: 'rgba(12,12,12,0.97)', backdropFilter: 'blur(12px)',
             border: '1px solid #333', borderRadius: 12, padding: 14,

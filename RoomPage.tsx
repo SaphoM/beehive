@@ -58,6 +58,7 @@ import {
   RoomAudioRenderer,
   useTracks,
   useLocalParticipant,
+  useRoomContext,
   TrackToggle,
   useParticipants as useLiveKitParticipants,
 } from '@livekit/components-react'
@@ -453,6 +454,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   )
   const { localParticipant } = useLocalParticipant()
   const liveKitParticipants = useLiveKitParticipants()
+  const room = useRoomContext()
 
   // Background-noise suppression on the mic — filters ambient noise and
   // isolates the speaker's voice (Krisp, via LiveKit's official track
@@ -654,7 +656,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   const [presentAppName, setPresentAppName] = useState('')
   const [desktopSources, setDesktopSources] = useState<Array<{ id: string; name: string; thumbnail: string; appIcon: string | null; display_id: string }>>([])
   const [showWindowPicker, setShowWindowPicker] = useState(false)
-  const [pendingSource, setPendingSource] = useState<{ id: string; name: string; thumbnail: string } | null>(null)
+  const [pendingSource, setPendingSource] = useState<{ id: string; name: string; thumbnail: string; captureId?: string; isScreen?: boolean } | null>(null)
   const [detectingWindow, setDetectingWindow] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [presentQueue, setPresentQueue] = useState<File[]>([])
@@ -715,6 +717,21 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
               d.kind === 'audioinput' ? 'microphone' : d.kind === 'audiooutput' ? 'speaker' : 'camera'
             ))]
             setDeviceErrorToast(`${kinds.map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(' & ')} disconnected — check connections.`)
+            // Attempt automatic recovery for a lost microphone specifically.
+            // livekit-client's own devicechange handling (Room.
+            // selectDefaultDevices) deliberately skips falling back to a
+            // replacement device for audioinput on every non-Safari browser
+            // (its "switch to first available device" branch explicitly
+            // excludes audioinput unless isSafariBased()) — so on Chrome/
+            // Edge, the overwhelming majority of Windows users, a physically
+            // removed microphone is left silently pointing at a
+            // now-nonexistent device with no automatic recovery at all,
+            // until the user leaves and rejoins the meeting. This fills
+            // exactly that gap. Best-effort: if this fails, the toast above
+            // has already told the user what happened.
+            if (lost.some(d => d.kind === 'audioinput') && localParticipant.isMicrophoneEnabled) {
+              room?.switchActiveDevice('audioinput', 'default').catch(() => {})
+            }
           }
           // New device arrived — dismiss any existing error toast
           const arrived = current.filter(d => !prevIds.has(d.deviceId))
@@ -1854,6 +1871,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       const mediaTrack = (pub?.track as any)?.mediaStreamTrack as MediaStreamTrack | undefined
       const label = mediaTrack?.label || 'Your screen'
       if (mediaTrack) {
+        // Biases the encoder toward sharpness/detail for static presentation
+        // content — see shareDesktopSource's identical fix for the full
+        // rationale; this is the web (non-Electron) capture path.
+        if ('contentHint' in mediaTrack) mediaTrack.contentHint = 'detail'
         const stream = new MediaStream([mediaTrack])
         setLocalShareStream(stream)
         // If the user chose a whole monitor in the native dialog, the preview
@@ -2223,14 +2244,32 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
             chromeMediaSource: 'desktop',
             chromeMediaSourceId: sourceId,
             minWidth: 1280,
-            maxWidth: 1920,
+            // Previously capped at 1920x1080 — below the native/physical
+            // resolution of most Retina MacBook displays (e.g. a 14" MBP
+            // reports ~3024x1964), so any capture at or above 1080p was
+            // being downscaled by getUserMedia itself before BeeHive ever
+            // saw the frame — no CSS/object-fit change downstream can
+            // recover detail that was already thrown away here. Raised to
+            // a 4K ceiling; minWidth/minHeight are unchanged (still just a
+            // floor, never forces upscaling of a genuinely small window).
+            maxWidth: 3840,
             minHeight: 720,
-            maxHeight: 1080,
+            maxHeight: 2160,
           },
         },
       })
       const [rawTrack] = stream.getVideoTracks()
       if (!rawTrack) return
+
+      // Biases the encoder toward sharpness/detail over motion smoothness —
+      // correct for static presentation content (slides, text, diagrams).
+      // Never set anywhere in this capture path before; left at the
+      // browser's default, which is tuned for camera video, not screen
+      // content. (LiveKit's own track processor can still force this back
+      // to 'motion' under specific SVC/simulcast codec negotiations as its
+      // own documented workaround — outside this app's control — but this
+      // ensures BeeHive is never the one leaving it unset.)
+      if ('contentHint' in rawTrack) rawTrack.contentHint = 'detail'
 
       const livekitTrack = new LocalVideoTrack(rawTrack, undefined, false)
       await localParticipant.publishTrack(livekitTrack, { source: Track.Source.ScreenShare })
@@ -2288,6 +2327,8 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         if (shouldHide) setRoomHidden(false)
         const [rawTrack] = stream.getVideoTracks()
         if (!rawTrack) { stream.getTracks().forEach(t => t.stop()); return }
+        // See shareDesktopSource's identical fix for the full rationale.
+        if ('contentHint' in rawTrack) rawTrack.contentHint = 'detail'
         const livekitTrack = new LocalVideoTrack(rawTrack, undefined, false)
         await localParticipant.publishTrack(livekitTrack, { source: Track.Source.ScreenShare })
         setLocalShareStream(stream)
@@ -2303,6 +2344,34 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     }
   }, [notifyScreenPermissionProblem, shareDesktopSource, clearBeforeShare, localParticipant])
 
+  // Resolves a detected presentation-app WINDOW source to the SCREEN source
+  // it currently sits on, matched via display_id (already forwarded by
+  // electron/main.cjs's get-desktop-sources handler for both window and
+  // screen entries). Root cause of "presentation mode doesn't scale/follow":
+  // capturing the window by its chromeMediaSourceId stops following Keynote/
+  // PowerPoint the instant they enter their own full-screen presentation
+  // mode — macOS treats that as a new Space/window, so the window-handle
+  // capture freezes on the pre-presentation editing view while the actual
+  // full-screen slide plays on. Verified live (two-participant test):
+  // display-matched screen capture correctly followed into full-screen;
+  // window capture did not. Falls back to the window itself if no matching
+  // screen source is found (a non-following share beats none at all) — the
+  // window's own thumbnail/name still drive the confirmation preview either
+  // way, only the actual capture target changes.
+  const resolvePresentationCaptureSource = (
+    match: { id: string; name: string; thumbnail: string; display_id?: string },
+    allSources: { id: string; display_id?: string }[],
+  ) => {
+    const screenMatch = allSources.find(s => s.id.startsWith('screen:') && s.display_id === match.display_id)
+    return {
+      id: match.id,
+      name: match.name,
+      thumbnail: match.thumbnail,
+      captureId: screenMatch?.id ?? match.id,
+      isScreen: !!screenMatch,
+    }
+  }
+
   const sharePresentationWindow = useCallback(async () => {
     if (!window.electronAPI) return
     setDetectingWindow(true)
@@ -2313,7 +2382,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
         keywords.some(kw => src.name.toLowerCase().includes(kw))
       )
       if (match) {
-        setPendingSource({ id: match.id, name: match.name, thumbnail: match.thumbnail })
+        setPendingSource(resolvePresentationCaptureSource(match, sources))
       } else {
         setDesktopSources(sources)
         setShowWindowPicker(true)
@@ -2328,10 +2397,11 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     window.electronAPI?.stopFloating()
     setPendingFile(null)
     setPresentStep('idle')
-    const id = pendingSource.id
+    const id = pendingSource.captureId ?? pendingSource.id
     const name = pendingSource.name
+    const isScreen = pendingSource.isScreen ?? false
     setPendingSource(null)
-    await shareDesktopSource(id, false, name)
+    await shareDesktopSource(id, isScreen, name)
   }, [pendingSource, shareDesktopSource])
 
   const openQueuedFile = useCallback(async (file: File) => {
@@ -2345,7 +2415,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     const keywords = ['keynote', 'powerpoint', 'impress', 'slides']
     const match = sources.find(src => keywords.some(kw => src.name.toLowerCase().includes(kw)))
     if (match) {
-      setPendingSource({ id: match.id, name: match.name, thumbnail: match.thumbnail })
+      setPendingSource(resolvePresentationCaptureSource(match, sources))
     } else {
       setDesktopSources(sources)
       setShowWindowPicker(true)

@@ -1084,6 +1084,31 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     return () => { supabase.removeChannel(channel) }
   }, [roomId])
 
+  // Stale-hand cleanup — raisedHands above is a plain ephemeral broadcast
+  // with no awareness of its own of whether the participant it names is
+  // still actually in the room: it only ever shrinks when that exact
+  // participant's own client sends hand_lowered (toggleRaiseHand/
+  // dismissHand below), or a host calls lowerAllHands. leaveWithNotification
+  // never sends hand_lowered, and a crash/force-quit/lost-network departure
+  // can't send anything at all — so a raised hand was orphaned on every
+  // other participant's screen whenever someone left without explicitly
+  // lowering it first, not just on ungraceful exits.
+  // liveKitParticipants (useParticipants()) is the authoritative, already-
+  // relied-upon presence source this app already trusts for the live
+  // participant count elsewhere — populated from LiveKit's own real
+  // ParticipantConnected/Disconnected roster events, not raw track state,
+  // so it doesn't flicker on a brief reconnect the way inferring from
+  // individual tracks could. Once a raised hand's owner drops out of that
+  // roster, prune just that one entry — every other participant's hand is
+  // untouched. Matched by name, not LiveKit's own per-connection `identity`
+  // (a random UUID) — raisedHands has always kept its own `identity` field
+  // as the participant's display name (see toggleRaiseHand/dismissHand),
+  // which is exactly what liveKitParticipants' `.name` carries too.
+  useEffect(() => {
+    const activeNames = new Set(liveKitParticipants.map(p => p.name))
+    setRaisedHands(prev => prev.filter(h => activeNames.has(h.identity)))
+  }, [liveKitParticipants])
+
   // Moderation nudges — currently just "please unmute yourself" requests.
   // LiveKit has no server-side force-*unmute* primitive (mutePublishedTrack
   // is one-directional — see livekit_node_backend.js's /mute endpoint
@@ -2080,6 +2105,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
     // of the leave sequence (chat notice, DB updates, onLeave) even starts.
     try { await localParticipant.setCameraEnabled(false) } catch {}
     try { await localParticipant.setMicrophoneEnabled(false) } catch {}
+    // Lower a raised hand on the way out — instant for everyone else via the
+    // broadcast, rather than waiting on the (also-correct, but not
+    // immediate) roster-diff cleanup below to notice the departure. That
+    // cleanup remains the real backstop for every departure this can't
+    // cover — crash, force-quit, lost network — this is just the fast path
+    // for the ordinary "click Leave" case.
+    if (myHandRaised) {
+      try { handsChannelRef.current?.send({ type: 'broadcast', event: 'hand_lowered', payload: { identity: displayName } }) } catch {}
+    }
     // Same fire-and-forget exit as stopShare — Leave should end a driven
     // presentation exactly like Stop Sharing does, not just disconnect BeeHive.
     window.electronAPI?.stopPresentation?.()
@@ -2092,7 +2126,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       }
     } catch { /* best-effort */ }
     onLeave()
-  }, [roomId, displayName, onLeave, localParticipant])
+  }, [roomId, displayName, onLeave, localParticipant, myHandRaised])
 
   // StrictMode mounts effects twice in dev, which double-inserted the
   // "joined" announcement — guard so one join announces exactly once.

@@ -482,9 +482,21 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
       setRawMicTrack(track.mediaStreamTrack)
       try {
         const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import('@livekit/krisp-noise-filter')
-        if (cancelled || !isKrispNoiseFilterSupported()) return
+        if (cancelled) return
+        if (!isKrispNoiseFilterSupported()) {
+          console.warn('[audio] noise suppression unsupported on this platform — mic is transmitting unprocessed audio')
+          return
+        }
         await track.setProcessor(KrispNoiseFilter())
-      } catch { /* best-effort — never block the mic on a filter failure */ }
+        console.info('[audio] noise suppression active')
+      } catch (err) {
+        // Never block the mic on a filter failure — but don't swallow it
+        // silently either. A failed attach means this participant keeps
+        // transmitting *unprocessed* audio (background/keyboard noise
+        // included) with nothing in the UI to say so, which previously made
+        // the failure impossible to diagnose from a user report alone.
+        console.warn('[audio] noise suppression failed to attach — mic is transmitting unprocessed audio', err)
+      }
     }
     const existing = localParticipant.getTrackPublication(Track.Source.Microphone)
     if (existing) applyFilter(existing as LocalTrackPublication)

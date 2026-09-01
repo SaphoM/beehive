@@ -1,0 +1,264 @@
+# Builds and publishes the BeeHive desktop apps from CI.
+#
+# Why this exists: release assets are ~230MB each, and uploading them from a
+# local machine repeatedly failed with `read: operation timed out` partway
+# through the transfer. Worse, a failed upload still leaves the *release*
+# created — and an assetless release becomes `releases/latest`, which breaks
+# the public download links in DesktopHandoff.tsx (they point at
+# `releases/latest/download/<stable-name>`) and sends visitors to a GitHub
+# login wall. Building and uploading from GitHub's own network removes the
+# local connection from the critical path entirely.
+#
+# It also generates and commits update-config.json, which the backend serves
+# at /updates/latest{,-mac}.yml for electron-updater. That file previously
+# pointed at a v1.0.252 release that was never actually published, so every
+# auto-update check 404'd. Generating it here — from the same run that
+# uploaded the assets — means the feed can only ever reference URLs that
+# genuinely exist.
+#
+# Trigger manually from the Actions tab. The version is read from the
+# committed scripts/version-count.json (via scripts/appVersion.mjs), so bump
+# and push that first, exactly as the local release flow already does.
+
+name: Release Desktop Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      critical:
+        description: "Mark this update as critical (prompts users immediately, even mid-meeting)"
+        type: boolean
+        default: false
+      notes:
+        description: "Release notes, comma-separated (blank uses a generic message)"
+        type: string
+        required: false
+
+# Prevent two release runs from racing to create the same tag/assets.
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+jobs:
+  # Resolve the version once, so the mac build, windows build, and release job
+  # can never disagree about what they are building.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: v${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - id: v
+        run: echo "version=$(node scripts/appVersion.mjs)" >> "$GITHUB_OUTPUT"
+
+  build-mac:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # .env is gitignored but IS shipped inside the app (package.json's
+      # build.extraResources maps it to app/.env), so the packaged build needs
+      # it present. It must exist before `npm ci`, because postinstall runs
+      # `vite build`, which reads the VITE_* values out of it.
+      - name: Write .env
+        run: printf '%s\n' "$ENV_FILE" > .env
+        env:
+          ENV_FILE: ${{ secrets.BEEHIVE_ENV_FILE }}
+
+      - run: npm ci
+
+      # No paid Developer ID certificate is configured. electron-builder skips
+      # signing in that case, and electron/afterSign.cjs ad-hoc-signs with
+      # entitlements as a fallback — the same behavior as a local build.
+      # Disabling auto-discovery keeps electron-builder from hunting for (and
+      # warning about) a keychain identity that isn't there.
+      - name: Build macOS (universal)
+        run: npm run electron:build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            release/BeeHive-universal.dmg
+            release/BeeHive-universal.zip
+            release/latest-mac.yml
+
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Write .env
+        shell: bash
+        run: printf '%s\n' "$ENV_FILE" > .env
+        env:
+          ENV_FILE: ${{ secrets.BEEHIVE_ENV_FILE }}
+
+      # The electron:build:* scripts use `$(node scripts/appVersion.mjs)`
+      # command substitution, which cmd.exe (npm's default script shell on
+      # Windows) cannot parse. Pointing npm at bash keeps package.json as the
+      # single source of truth for build commands on both platforms.
+      - name: Use bash for npm scripts
+        shell: bash
+        run: npm config set script-shell bash
+
+      - run: npm ci
+        shell: bash
+
+      - name: Build Windows (x64 + arm64)
+        shell: bash
+        run: npm run electron:build:win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            release/BeeHive-Setup.exe
+            release/BeeHive-Setup-x64.exe
+            release/BeeHive-Setup-arm64.exe
+            release/latest.yml
+
+  release:
+    needs: [version, build-mac, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # publish-update.mjs reads release/latest-mac.yml and release/latest.yml
+      # from their conventional location, so reassemble that layout.
+      - name: Reassemble release/
+        run: |
+          mkdir -p release
+          mv artifacts/mac/* artifacts/windows/* release/
+          ls -la release/
+
+      # Upload assets BEFORE the release stops being a draft. A release with
+      # missing assets that is already visible would become `releases/latest`
+      # and break the public download links; creating it as a draft first means
+      # a failed upload can never be published in a half-finished state.
+      - name: Create draft release with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          # Clean up a leftover draft from a previously failed run, but never
+          # touch an already-published release — re-running against a shipped
+          # version should fail loudly, not silently replace what users have.
+          if gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null | grep -qx true; then
+            echo "Removing leftover draft for $TAG from a previous failed run."
+            gh release delete "$TAG" --yes --cleanup-tag
+          elif gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG is already published. Bump scripts/version-count.json and push before releasing again."
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --draft \
+            --title "BeeHive $TAG" \
+            --generate-notes \
+            release/BeeHive-universal.dmg \
+            release/BeeHive-universal.zip \
+            release/BeeHive-Setup.exe \
+            release/BeeHive-Setup-x64.exe \
+            release/BeeHive-Setup-arm64.exe
+
+      # Fail loudly if any expected asset is missing, rather than publishing a
+      # release that silently breaks downloads or the update feed.
+      - name: Verify assets uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          uploaded=$(gh release view "$TAG" --json assets -q '.assets[].name' | sort)
+          echo "Uploaded:"; echo "$uploaded"
+          for expected in \
+            BeeHive-universal.dmg \
+            BeeHive-universal.zip \
+            BeeHive-Setup.exe \
+            BeeHive-Setup-x64.exe \
+            BeeHive-Setup-arm64.exe
+          do
+            echo "$uploaded" | grep -qx "$expected" || { echo "MISSING: $expected"; exit 1; }
+          done
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false --latest
+
+      # Point the update feed at this run's own assets. --base-url matches the
+      # tag that was just published, so the generated URLs are guaranteed to
+      # resolve.
+      - name: Generate update-config.json
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          CRITICAL: ${{ inputs.critical }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          args=(--base-url "https://github.com/${{ github.repository }}/releases/download/$TAG")
+          [ "$CRITICAL" = "true" ] && args+=(--critical)
+          [ -n "$NOTES" ] && args+=(--notes "$NOTES")
+          node scripts/publish-update.mjs "${args[@]}"
+          cat update-config.json
+
+      # Verify the feed's own URLs resolve before committing it. A feed that
+      # 404s is exactly the failure this workflow exists to prevent.
+      - name: Verify update feed URLs resolve
+        run: |
+          for url in $(node -e "
+            const c = require('./update-config.json');
+            const urls = [c.mac.url, c.mac.dmgUrl, c.win.url, c.win.x64Url, c.win.arm64Url];
+            console.log(urls.filter(Boolean).join('\n'));
+          "); do
+            code=$(curl -sIL -o /dev/null -w '%{http_code}' "$url")
+            echo "$code  $url"
+            [ "$code" = "200" ] || { echo "Feed URL does not resolve: $url"; exit 1; }
+          done
+
+      - name: Commit update-config.json
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          if git diff --quiet -- update-config.json; then
+            echo "update-config.json unchanged — nothing to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update-config.json
+          git commit -m "chore(updates): publish $TAG feed for macOS + Windows"
+          git push origin HEAD:${{ github.ref_name }}

@@ -38,11 +38,14 @@ export function CameraOffAvatarOverlay({ avatarUrlFor }: { avatarUrlFor: (name: 
     <div
       style={{
         position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
         background: '#1a1a1a',
       }}
     >
       <Avatar name={name} avatarUrl={avatarUrlFor(name)} size={88} />
+      <span style={{ color: '#e2e2e2', fontSize: 13, fontWeight: 400, fontFamily: "'Roboto', sans-serif", textAlign: 'center', maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {name}
+      </span>
     </div>
   )
 }

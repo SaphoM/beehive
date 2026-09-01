@@ -351,6 +351,10 @@ export function Lobby({
                 {!inviteRoom?.ended_at && (
                   <>
                     <input
+                      type="text"
+                      name="name"
+                      id="lobby-display-name"
+                      autoComplete="name"
                       style={s.input}
                       placeholder="Your name"
                       value={displayName}

@@ -66,14 +66,31 @@ jobs:
           node-version: 20
           cache: npm
 
-      # .env is gitignored but IS shipped inside the app (package.json's
-      # build.extraResources maps it to app/.env), so the packaged build needs
-      # it present. It must exist before `npm ci`, because postinstall runs
-      # `vite build`, which reads the VITE_* values out of it.
-      - name: Write .env
-        run: printf '%s\n' "$ENV_FILE" > .env
+      # The packaged app no longer ships .env (electron/main.cjs proxies to the
+      # hosted backend instead), so this is needed only for `vite build`, which
+      # inlines the VITE_* values into the renderer bundle. Every one of those
+      # is public by design — they are already readable in the deployed web
+      # bundle — so this secret holds NO privileged credentials.
+      #
+      # Do NOT put SUPABASE_SERVICE_ROLE_KEY, LIVEKIT_API_SECRET or
+      # FATHOM_API_KEY here. The desktop build has no use for them, and putting
+      # them here would undo the fix that removed them from the app.
+      #
+      # Required contents, one KEY=value per line:
+      #   VITE_SUPABASE_URL
+      #   VITE_SUPABASE_ANON_KEY
+      #   VITE_LIVEKIT_URL
+      #   VITE_WEB_BASE_URL
+      - name: Write build-time .env (public VITE_* values only)
+        shell: bash
+        run: |
+          if [ -z "${BUILD_ENV:-}" ]; then
+            echo "::error::Repository secret BEEHIVE_BUILD_ENV is not set. It needs only the four public VITE_* values listed in the comment above this step — no admin credentials."
+            exit 1
+          fi
+          printf '%s\n' "$BUILD_ENV" > .env
         env:
-          ENV_FILE: ${{ secrets.BEEHIVE_ENV_FILE }}
+          BUILD_ENV: ${{ secrets.BEEHIVE_BUILD_ENV }}
 
       - run: npm ci
 
@@ -108,11 +125,31 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Write .env
+      # The packaged app no longer ships .env (electron/main.cjs proxies to the
+      # hosted backend instead), so this is needed only for `vite build`, which
+      # inlines the VITE_* values into the renderer bundle. Every one of those
+      # is public by design — they are already readable in the deployed web
+      # bundle — so this secret holds NO privileged credentials.
+      #
+      # Do NOT put SUPABASE_SERVICE_ROLE_KEY, LIVEKIT_API_SECRET or
+      # FATHOM_API_KEY here. The desktop build has no use for them, and putting
+      # them here would undo the fix that removed them from the app.
+      #
+      # Required contents, one KEY=value per line:
+      #   VITE_SUPABASE_URL
+      #   VITE_SUPABASE_ANON_KEY
+      #   VITE_LIVEKIT_URL
+      #   VITE_WEB_BASE_URL
+      - name: Write build-time .env (public VITE_* values only)
         shell: bash
-        run: printf '%s\n' "$ENV_FILE" > .env
+        run: |
+          if [ -z "${BUILD_ENV:-}" ]; then
+            echo "::error::Repository secret BEEHIVE_BUILD_ENV is not set. It needs only the four public VITE_* values listed in the comment above this step — no admin credentials."
+            exit 1
+          fi
+          printf '%s\n' "$BUILD_ENV" > .env
         env:
-          ENV_FILE: ${{ secrets.BEEHIVE_ENV_FILE }}
+          BUILD_ENV: ${{ secrets.BEEHIVE_BUILD_ENV }}
 
       # The electron:build:* scripts use `$(node scripts/appVersion.mjs)`
       # command substitution, which cmd.exe (npm's default script shell on

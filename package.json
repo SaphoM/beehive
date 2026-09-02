@@ -69,16 +69,7 @@
       "!node_modules/lightningcss/**",
       "!node_modules/lightningcss-*/**"
     ],
-    "extraResources": [
-      {
-        "from": ".env",
-        "to": "app/.env"
-      },
-      {
-        "from": "electron/backend.bundle.mjs",
-        "to": "app/backend.bundle.mjs"
-      }
-    ],
+    "extraResources": [],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",

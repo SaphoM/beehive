@@ -1,62 +1,79 @@
 const { app, BrowserWindow, ipcMain, shell, desktopCapturer, Menu, systemPreferences, screen } = require('electron')
 const path = require('path')
-const { existsSync, readFileSync, statSync, mkdirSync } = require('fs')
+const { existsSync, statSync, mkdirSync } = require('fs')
 const { spawn, execFile, execFileSync } = require('child_process')
+const http = require('http')
+const https = require('https')
 const updater = require('./updater.cjs')
 
 const isDev = !app.isPackaged
 
 let mainWindow
 let dockWindow
-let backendProcess
+let apiProxyServer
 
 // ---------------------------------------------------------------------------
-// Load .env and spawn the Express backend as a child process
+// Local API proxy → hosted BeeHive backend
 // ---------------------------------------------------------------------------
-function startBackend() {
-  // In dev mode, concurrently already starts the backend — don't double-spawn it
+// The desktop app used to spawn the full Express backend as a child process,
+// which meant shipping .env — including SUPABASE_SERVICE_ROLE_KEY and
+// LIVEKIT_API_SECRET — inside the packaged app, where anyone who downloaded
+// the installer could read it straight out of Contents/Resources/app/.env.
+// Those are admin credentials: the service-role key bypasses every RLS policy
+// in the database.
+//
+// The renderer still talks to http://localhost:3001 exactly as before (so no
+// frontend code changes, and no CORS surface has to be opened on the public
+// API — several endpoints are deliberately guest-accessible and allowing a
+// `null` Origin for them would be worse than this proxy). The difference is
+// that :3001 is now a credential-free pass-through to the hosted backend,
+// which holds the secrets server-side, the same way the web build has always
+// worked.
+//
+// Bound to 127.0.0.1 explicitly, never 0.0.0.0 — this listener must not be
+// reachable from other machines on the network.
+const REMOTE_API_ORIGIN = process.env.BEEHIVE_API_ORIGIN || 'https://beehive-fu8w.onrender.com'
+
+function startApiProxy() {
+  // Dev runs the real backend locally via `concurrently` (with a .env that
+  // never leaves the developer's machine), so leave that path alone.
   if (isDev) return
 
-  // Packaged: run the esbuild-bundled backend (all deps inlined into one .mjs)
-  // — the raw livekit_node_backend.js can't resolve express/livekit-server-sdk
-  // from a spawned node process, since those node_modules only exist inside
-  // app.asar which pure Node can't read. (Dev returns above; this path is
-  // packaged-only.)
-  const backendPath = path.join(process.resourcesPath, 'app', 'backend.bundle.mjs')
+  const remote = new URL(REMOTE_API_ORIGIN)
+  const client = remote.protocol === 'https:' ? https : http
 
-  if (!existsSync(backendPath)) {
-    console.warn('[electron] backend not found at', backendPath)
-    return
-  }
+  apiProxyServer = http.createServer((req, res) => {
+    // Forward the request verbatim apart from Host, which must name the
+    // upstream for TLS/SNI and virtual-host routing to resolve.
+    const headers = { ...req.headers, host: remote.host }
 
-  const envPath = isDev
-    ? path.join(__dirname, '..', '.env')
-    : path.join(process.resourcesPath, 'app', '.env')
-
-  // In a packaged app, process.execPath is the Electron/BeeHive binary, not
-  // node. ELECTRON_RUN_AS_NODE makes that binary run the backend script with
-  // Electron's bundled Node runtime instead of booting a second app window —
-  // without it the "backend" launches as Electron, exits immediately (code 0),
-  // never binds :3001, and every "Start Meeting" hangs on "Starting…".
-  const env = { ...process.env, PORT: '3001', ELECTRON_RUN_AS_NODE: '1' }
-
-  if (existsSync(envPath)) {
-    readFileSync(envPath, 'utf8').split('\n').forEach(line => {
-      const eq = line.indexOf('=')
-      if (eq < 1) return
-      const key = line.slice(0, eq).trim()
-      const val = line.slice(eq + 1).trim().replace(/^["']|["']$/g, '')
-      if (key && !key.startsWith('#')) env[key] = val
+    const upstream = client.request({
+      protocol: remote.protocol,
+      hostname: remote.hostname,
+      port: remote.port || (remote.protocol === 'https:' ? 443 : 80),
+      method: req.method,
+      path: req.url,
+      headers,
+    }, up => {
+      res.writeHead(up.statusCode, up.headers)
+      up.pipe(res)
     })
-  }
 
-  backendProcess = spawn(process.execPath, [backendPath], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    upstream.on('error', err => {
+      console.error('[api-proxy] upstream error:', err.message)
+      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'BeeHive backend unreachable' }))
+    })
+
+    // Piping (rather than buffering) keeps large bodies — shared-file uploads,
+    // avatar images — streaming instead of held in memory.
+    req.pipe(upstream)
   })
-  backendProcess.stdout.on('data', d => console.log('[backend]', d.toString().trim()))
-  backendProcess.stderr.on('data', d => console.error('[backend]', d.toString().trim()))
-  backendProcess.on('exit', code => console.log('[backend] exited with code', code))
+
+  apiProxyServer.on('error', err => console.error('[api-proxy] listen error:', err.message))
+  apiProxyServer.listen(3001, '127.0.0.1', () => {
+    console.log('[api-proxy] 127.0.0.1:3001 →', REMOTE_API_ORIGIN)
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -624,10 +641,14 @@ app.whenReady().then(async () => {
   // Register updater IPC handlers before the window opens so the renderer
   // can call them as soon as the page loads.
   updater.registerIPC()
+  // Previously supplied by the bundled .env. It is a public URL (not a
+  // secret), so it is defaulted here now that .env is no longer shipped —
+  // without this, updater.configure() finds no feed and silently disables
+  // auto-updates entirely.
+  process.env.UPDATE_FEED_URL = process.env.UPDATE_FEED_URL || `${REMOTE_API_ORIGIN}/updates`
   const updateConfigured = updater.configure()
 
-  startBackend()
-  await new Promise(r => setTimeout(r, 800)) // let backend bind to :3001
+  startApiProxy()
   await createWindow()
 
   // Start background update checks after the window is ready.
@@ -645,7 +666,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  backendProcess?.kill()
+  apiProxyServer?.close()
   if (dockWindow && !dockWindow.isDestroyed()) dockWindow.close()
   if (process.platform !== 'darwin') app.quit()
 })
@@ -656,7 +677,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   updater.cleanup()
-  backendProcess?.kill()
+  apiProxyServer?.close()
   stopDockClickWatcher()
   if (dockWindow && !dockWindow.isDestroyed()) dockWindow.close()
 })

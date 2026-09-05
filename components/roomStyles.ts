@@ -199,3 +199,34 @@ export const s: Record<string, React.CSSProperties> = {
   shareBarActions: { display: 'flex', gap: 6 },
   shareBarBtn: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 20, padding: '4px 12px', color: '#ccc', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
 }
+
+// Native <input type="date"> renders its calendar indicator as a near-black
+// glyph, effectively invisible on this app's dark inputs — while the TimePicker
+// beside it draws its clock at #888. invert(0.55) maps that black glyph to
+// ~#8c8c8c so the two read as a matched pair.
+//
+// Exported (rather than inlined in one component) because the same date field
+// appears in SchedulePanel and in MeetingCarousel's Edit Scheduled Meeting
+// sheet, and those two never mount at the same time — the Schedule tab and the
+// Start Now tab are mutually exclusive, so a <style> living in one would simply
+// be absent for the other.
+//
+// Scoped to this class and to the indicator only: no other input is affected,
+// and color-scheme is deliberately left alone so the native popup keeps
+// rendering light (forcing dark makes it an unstyled black box in Electron).
+export const DATE_INPUT_CLASS = 'beehive-date-input'
+export const DATE_INPUT_CSS = `
+  .${DATE_INPUT_CLASS}::-webkit-calendar-picker-indicator {
+    filter: invert(0.55);
+    cursor: pointer;
+  }
+  .${DATE_INPUT_CLASS} { cursor: pointer; }
+`
+
+// Opens the native date picker when the field itself is clicked, not only the
+// small indicator glyph — matching the TimePicker beside it, where the whole
+// control is clickable. showPicker() throws where it is unimplemented or the
+// click is not treated as a user gesture, so failure leaves normal typing intact.
+export function openDatePicker(e: React.MouseEvent<HTMLInputElement>) {
+  try { (e.currentTarget as HTMLInputElement).showPicker?.() } catch { /* fall back to typing */ }
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ChevronLeft, ChevronRight, PlayCircle, Trash2, Pencil, CalendarPlus } from 'lucide-react'
 import type { MyMeeting } from '../livekit_react_hooks'
-import { s } from './roomStyles'
+import { s, DATE_INPUT_CLASS, DATE_INPUT_CSS, openDatePicker } from './roomStyles'
 import { TimePicker } from './TimePicker'
 import { canAddToCalendar, downloadMeetingIcs } from './calendarInvite'
 
@@ -200,13 +200,20 @@ function EditMeetingSheet({ meeting, onSave, onCancel }: EditMeetingSheetProps) 
           autoFocus
         />
 
+        {/* Same treatment as SchedulePanel's date field: the native calendar
+            indicator is otherwise a near-black glyph on a dark input, and only
+            the glyph itself opened the picker. The CSS is shared because these
+            two components never mount together (Schedule tab vs Start Now). */}
+        <style>{DATE_INPUT_CSS}</style>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="date"
+            className={DATE_INPUT_CLASS}
             min={todayStr}
             style={{ ...s.input, flex: 2, margin: 0 }}
             value={date}
             onChange={e => setDate(e.target.value)}
+            onClick={openDatePicker}
           />
           <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} selectedDate={date || undefined} />
         </div>

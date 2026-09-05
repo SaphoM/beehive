@@ -247,9 +247,23 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
         onChange={e => setRoomName(e.target.value)}
       />
 
+      {/* The native calendar indicator is a near-black glyph, which is
+          effectively invisible on this dark input — the neighbouring
+          TimePicker's clock is #888, so the indicator is filtered to match.
+          invert(0.55) maps the black glyph to ~#8c8c8c. Scoped to this one
+          class rather than styling every date input in the app, and applied to
+          the indicator only, so the light native popup below is unaffected. */}
+      <style>{`
+        .beehive-date-input::-webkit-calendar-picker-indicator {
+          filter: invert(0.55);
+          cursor: pointer;
+        }
+        .beehive-date-input { cursor: pointer; }
+      `}</style>
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           type="date"
+          className="beehive-date-input"
           min={todayStr}
           // No forced colorScheme here — Electron's Chromium renders the
           // native date-picker calendar popup as an unstyled solid black
@@ -262,6 +276,12 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
           style={{ ...s.input, flex: 2, margin: 0 }}
           value={date}
           onChange={e => setDate(e.target.value)}
+          // Clicking anywhere in the field opens the picker, not just the small
+          // indicator glyph — matching the TimePicker beside it, where the whole
+          // control is clickable. showPicker() throws if the browser doesn't
+          // consider this a user gesture, or where it isn't implemented, so a
+          // failure just leaves the input's normal typing behaviour intact.
+          onClick={e => { try { (e.currentTarget as HTMLInputElement).showPicker?.() } catch { /* fall back to typing */ } }}
         />
         <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} selectedDate={date || undefined} />
       </div>

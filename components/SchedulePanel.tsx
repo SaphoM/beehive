@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { CalendarPlus } from 'lucide-react'
 import { useScheduleRoom } from '../livekit_react_hooks'
 import { WEB_BASE, STING_RED, saveMeetingPrep } from './roomUtils'
+import { canAddToCalendar, downloadMeetingIcs, type CalendarMeeting } from './calendarInvite'
 import { s } from './roomStyles'
 import { MeetingPrep, type MeetingPrepSummary } from './MeetingPrep'
 import { getTemplate } from './meetingTemplates'
@@ -200,6 +202,20 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   // are filled in, so the user can then choose to use them or ignore them.
   const formReady = displayName.trim() !== '' && date !== '' && time !== ''
 
+  // Calendar payload for the freshly-scheduled room, built from the same form
+  // state that created it so the invite cannot disagree with what was booked.
+  // Null until the room actually exists.
+  const calendarMeeting: CalendarMeeting | null = createdRoomId
+    ? {
+        roomId: createdRoomId,
+        roomName: roomName.trim() || 'BeeHive meeting',
+        scheduledDate: date || null,
+        scheduledTime: time || null,
+        durationMinutes: duration,
+        organizerName: displayName.trim() || null,
+      }
+    : null
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14 }}>
       <input
@@ -305,6 +321,18 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
             <button onClick={copyLink} style={{ background: copied ? '#1a3a1a' : '#2a2a2a', border: `1px solid ${copied ? '#2d6a2d' : '#333'}`, borderRadius: 6, color: copied ? '#4caf50' : '#aaa', padding: '4px 10px', cursor: 'pointer', fontSize: 11, flexShrink: 0, fontFamily: "'Roboto', sans-serif" }}>
               {copied ? 'Copied!' : 'Copy'}
             </button>
+            {/* Add to Calendar — same .ics the meetings carousel offers, built
+                from the form state that just created this room so the invite
+                cannot disagree with what was scheduled. */}
+            {calendarMeeting && canAddToCalendar(calendarMeeting) && (
+              <button
+                onClick={() => downloadMeetingIcs(calendarMeeting)}
+                title="Download a calendar invite (.ics)"
+                style={{ background: '#2a2a2a', border: '1px solid #333', borderRadius: 6, color: '#aaa', padding: '4px 10px', cursor: 'pointer', fontSize: 11, flexShrink: 0, fontFamily: "'Roboto', sans-serif", display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <CalendarPlus size={12} strokeWidth={1.5} /> Calendar
+              </button>
+            )}
           </div>
           {/* Enter the scheduled room now, as host — this is the room that
               holds the agenda just set up; without it the only way in was the

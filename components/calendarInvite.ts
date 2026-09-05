@@ -1,7 +1,7 @@
 // Generates an RFC 5545 iCalendar (.ics) file for a scheduled BeeHive meeting,
 // so an attendee can add it to Google Calendar / Outlook / Apple Calendar.
 //
-// Built entirely from data the carousel has already loaded (MyMeeting) — no new
+// Built entirely from data the caller already has — no new
 // endpoint, no second meeting record, no second scheduling source. DTEND is
 // derived from the meeting's own durationMinutes so BeeHive and the calendar
 // event cannot disagree.
@@ -18,8 +18,21 @@
 // The trade-off, stated plainly: for attendees in different timezones this is
 // wall-clock-correct but not instant-correct. Fixing that properly requires
 // storing the organiser's timezone on the room, which is a schema change.
-import type { MyMeeting } from '../livekit_react_hooks'
 import { WEB_BASE } from './roomUtils'
+
+// The minimum a meeting needs to become a calendar event. Deliberately
+// structural rather than importing MyMeeting: the carousel passes a MyMeeting
+// (which satisfies this shape), while SchedulePanel builds one from its own
+// form state right after scheduling — neither caller has to adopt the other's
+// type just to download an invite.
+export interface CalendarMeeting {
+  roomId: string
+  roomName: string
+  scheduledDate: string | null
+  scheduledTime: string | null
+  durationMinutes: number | null
+  organizerName?: string | null
+}
 
 // RFC 5545 §3.3.11: backslash, semicolon and comma are escaped; newlines become
 // a literal \n. Carriage returns are normalised away first so CRLF input can't
@@ -107,7 +120,7 @@ function addMinutes(stamp: string, minutes: number): string {
 }
 
 /** True when the meeting has enough data to produce a valid calendar event. */
-export function canAddToCalendar(meeting: MyMeeting): boolean {
+export function canAddToCalendar(meeting: CalendarMeeting): boolean {
   return !!meeting.scheduledDate && toFloatingStamp(meeting.scheduledDate, meeting.scheduledTime) !== null
 }
 
@@ -115,13 +128,13 @@ export function canAddToCalendar(meeting: MyMeeting): boolean {
  * Builds the .ics text for a meeting, or null when it has no usable schedule.
  *
  * ORGANIZER and ATTENDEE are deliberately omitted: both require a CAL-ADDRESS
- * (a mailto: URI), and MyMeeting carries only the organiser's display name —
+ * (a mailto: URI), and callers carry only the organiser's display name —
  * no email. Inventing an address would misattribute the meeting, so the
  * organiser's name goes in DESCRIPTION instead. METHOD:PUBLISH (not REQUEST)
  * for the same reason: REQUEST is an iTIP invitation, which is meaningless
  * without an organiser address and a mail transport.
  */
-export function buildMeetingIcs(meeting: MyMeeting): string | null {
+export function buildMeetingIcs(meeting: CalendarMeeting): string | null {
   if (!meeting.scheduledDate) return null
   const start = toFloatingStamp(meeting.scheduledDate, meeting.scheduledTime)
   if (!start) return null
@@ -167,7 +180,7 @@ export function buildMeetingIcs(meeting: MyMeeting): string | null {
 }
 
 /** Filesystem-safe .ics filename derived from the meeting title. */
-export function icsFilename(meeting: MyMeeting): string {
+export function icsFilename(meeting: CalendarMeeting): string {
   const base = (meeting.roomName || 'BeeHive-meeting')
     .replace(/[^a-zA-Z0-9-_ ]/g, '')
     .trim()
@@ -181,7 +194,7 @@ export function icsFilename(meeting: MyMeeting): string {
  * click — the same mechanism RoomPage already uses for shared-file downloads,
  * so it behaves identically on web and in the Electron renderer.
  */
-export function downloadMeetingIcs(meeting: MyMeeting): boolean {
+export function downloadMeetingIcs(meeting: CalendarMeeting): boolean {
   const ics = buildMeetingIcs(meeting)
   if (!ics) return false
 

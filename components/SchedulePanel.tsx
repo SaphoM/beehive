@@ -168,11 +168,22 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     const checklistLines = prep && prep.checklist.some(c => c.checked)
       ? `\nBring/prepare:\n${prep.checklist.filter(c => c.checked).map(c => `- ${c.label}`).join('\n')}\n`
       : ''
+    // A mailto: URI cannot carry an attachment — there is no attachment
+    // parameter in RFC 6068, and mail clients that once honoured a
+    // non-standard one dropped it (a web page attaching arbitrary local files
+    // is an exfiltration hole). So the calendar invite is linked rather than
+    // attached: the recipient clicks it and their calendar opens the event.
+    // Only offered once the room exists and has a date worth putting in a
+    // calendar.
+    const calendarLines = createdRoomId && date
+      ? `\nAdd to your calendar:\n${WEB_BASE}/api/rooms/${createdRoomId}/calendar.ics\n`
+      : ''
     const body = encodeURIComponent(
       `Hi,\n\nYou're invited to a BeeHive video meeting.\n\n` +
       (roomName ? `Meeting: ${roomName}\n` : '') +
       (when ? `When: ${when}\n` : '') +
       `\nJoin here:\n${link}\n` +
+      calendarLines +
       agendaLines +
       checklistLines +
       `\n— ${displayName || 'Your host'} via BeeHive`

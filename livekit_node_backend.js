@@ -588,14 +588,22 @@ app.get('/api/rooms/:roomId/calendar.ics', async (req, res) => {
 
   if (!room) return res.status(404).json({ error: 'Room not found' })
 
-  // WEB_BASE_URL is where the join link points. VITE_WEB_BASE_URL is the name
-  // the frontend build already uses and the value Render already holds, so it
-  // is reused rather than introducing a second setting that could disagree.
-  const baseUrl = process.env.VITE_WEB_BASE_URL || process.env.WEB_BASE_URL
-  if (!baseUrl) {
-    console.error('[calendar] VITE_WEB_BASE_URL is not set — cannot build a join link')
-    return res.status(500).json({ error: 'Calendar invites are not configured' })
-  }
+  // Where the join link points. Derived from the request rather than an env
+  // var: this service serves the frontend from the same origin, so whatever
+  // host the recipient reached to fetch this file is exactly the host their
+  // join link should use. Verified necessary — VITE_WEB_BASE_URL is NOT set on
+  // Render (the deployed bundle compiled WEB_BASE down to its
+  // window.location.origin fallback, which only proves the build-time value was
+  // absent), so requiring it here would have 500'd in production.
+  // An explicit env var still wins when set, for a custom domain whose
+  // canonical URL differs from the host actually serving the request.
+  // x-forwarded-proto is read because Render terminates TLS at its proxy, so
+  // req.protocol alone reports http.
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
+  const baseUrl =
+    process.env.VITE_WEB_BASE_URL?.replace(/\/$/, '') ||
+    process.env.WEB_BASE_URL?.replace(/\/$/, '') ||
+    `${forwardedProto || req.protocol}://${req.get('host')}`
 
   // The organiser's display name is not on the rooms row, and room_hosts holds
   // only (room_id, host_secret) — no name. The one place it is recorded is

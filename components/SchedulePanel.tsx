@@ -175,7 +175,10 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
     // attached: the recipient clicks it and their calendar opens the event.
     // Only offered once the room exists and has a date worth putting in a
     // calendar.
-    const calendarLines = createdRoomId && date
+    // WEB_BASE falls back to window.location.origin on the web and to '' under
+    // file:// — so require an absolute URL before putting one in an email,
+    // rather than emitting a relative path a recipient's client cannot resolve.
+    const calendarLines = createdRoomId && date && /^https?:\/\//.test(WEB_BASE || '')
       ? `\nAdd to your calendar:\n${WEB_BASE}/api/rooms/${createdRoomId}/calendar.ics\n`
       : ''
     const body = encodeURIComponent(

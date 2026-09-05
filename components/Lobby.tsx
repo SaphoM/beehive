@@ -6,7 +6,7 @@ import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
 import { MeetingNotesPanel } from './MeetingNotesPanel'
 import { useAuth, useProfile, useMyMeetings, supabase } from '../livekit_react_hooks'
-import { LogOut } from 'lucide-react'
+import { LogOut, ArrowLeft } from 'lucide-react'
 import { EditableAvatar } from './Avatar'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 import { BuiltByFooter } from './BuiltByFooter'
@@ -136,7 +136,21 @@ export function Lobby({
     setNextMeeting(meeting)
     try { localStorage.setItem(NEXT_MEETING_KEY, JSON.stringify(meeting)) } catch { /* storage unavailable — card just won't survive a refresh */ }
     setLobbyTab('now')
+    // The carousel is driven by the DB-backed meetings list, which does not
+    // include the room that was just scheduled until it is re-fetched — without
+    // this the user lands back on "Start Now" and their new meeting is missing
+    // until something else happens to refresh it.
+    refreshMeetings()
     setToast({ message: 'Meeting set up successfully' })
+  }
+
+  // Leaving the Schedule tab via the header's Back control. Refreshes for the
+  // same reason as handleScheduled: a meeting may have been created during this
+  // visit (the panel stays open after "Create Meeting & Get Link"), and the
+  // upcoming-meetings display should already show it on arrival.
+  function handleBackFromSchedule() {
+    setLobbyTab('now')
+    refreshMeetings()
   }
 
   function dismissNextMeeting() {
@@ -246,14 +260,28 @@ export function Lobby({
                     {displayNameForAvatar}
                   </span>
                 </div>
-                <button
-                  onClick={signOut}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
-                  title="Sign out"
-                >
-                  <LogOut size={11} />
-                  Sign out
-                </button>
+                {/* On the Schedule tab this slot is a way back to Start Now
+                    rather than Sign out — leaving mid-schedule is the far more
+                    likely intent there, and signing out is still one tab away. */}
+                {lobbyTab === 'schedule' ? (
+                  <button
+                    onClick={handleBackFromSchedule}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
+                    title="Back to Start Now"
+                  >
+                    <ArrowLeft size={11} />
+                    Back
+                  </button>
+                ) : (
+                  <button
+                    onClick={signOut}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
+                    title="Sign out"
+                  >
+                    <LogOut size={11} />
+                    Sign out
+                  </button>
+                )}
               </div>
             )}
 

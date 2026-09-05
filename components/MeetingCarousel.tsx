@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, PlayCircle, Trash2, Pencil } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PlayCircle, Trash2, Pencil, CalendarPlus } from 'lucide-react'
 import type { MyMeeting } from '../livekit_react_hooks'
 import { s } from './roomStyles'
 import { TimePicker } from './TimePicker'
+import { canAddToCalendar, downloadMeetingIcs } from './calendarInvite'
 
 const EDIT_DURATIONS = [15, 30, 45, 60, 90]
 
@@ -284,6 +285,7 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, 
   const [iconHovered, setIconHovered] = useState(false)
   const [editHovered, setEditHovered] = useState(false)
   const [trashHovered, setTrashHovered] = useState(false)
+  const [calHovered, setCalHovered] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [rsvpPending, setRsvpPending] = useState(false)
 
@@ -389,6 +391,27 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, 
             }}
           >
             <Pencil size={13} strokeWidth={1.5} />
+          </button>
+        )}
+
+        {/* Add to Calendar — available to organiser and invitee alike; hidden
+            when the meeting has no usable scheduled date. Downloads an .ics
+            built from this meeting's own data (see calendarInvite.ts). */}
+        {canAddToCalendar(meeting) && (
+          <button
+            onClick={e => { e.stopPropagation(); downloadMeetingIcs(meeting) }}
+            onMouseEnter={() => setCalHovered(true)}
+            onMouseLeave={() => setCalHovered(false)}
+            title="Add to calendar"
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              color: calHovered ? '#f5a623' : '#333',
+              display: 'flex', alignItems: 'center',
+              transition: 'color 0.15s, transform 0.15s',
+              transform: calHovered ? 'scale(1.15)' : 'scale(1)',
+            }}
+          >
+            <CalendarPlus size={13} strokeWidth={1.5} />
           </button>
         )}
 

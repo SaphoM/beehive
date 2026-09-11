@@ -1,10 +1,127 @@
-import { useEffect, useState, useCallback } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { createClient, Session, User } from '@supabase/supabase-js'
 
-const supabase = createClient(
+export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    auth: {
+      // Implicit flow puts self-contained tokens in the URL *hash*
+      // (#access_token&refresh_token) rather than a PKCE ?code that must be
+      // exchanged using a verifier stored in the *originating* app's storage.
+      // The desktop magic-link handoff opens a different app instance than the
+      // one that requested the link, so a PKCE code can't be exchanged there
+      // and the user lands back on the sign-in screen. Implicit tokens can be
+      // consumed by any instance via setSession — which is exactly what
+      // AuthGate and DesktopHandoff already do.
+      flowType: 'implicit',
+      detectSessionInUrl: true,
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  }
 )
+
+// In packaged Electron (file: origin) there is no Vite proxy — hit :3001 directly.
+// In dev Electron the renderer is served by Vite (http: origin), so use the proxy.
+const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+  ? 'http://localhost:3001'
+  : ''
+
+// ============================================================
+// AUTH TYPES
+// ============================================================
+
+export interface Profile {
+  id: string
+  full_name: string | null
+  avatar_url: string | null
+  created_at: string
+  updated_at: string
+}
+
+// ============================================================
+// useAuth — session listener, magic link, OTP
+// ============================================================
+export function useAuth() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setUser(s?.user ?? null)
+      setLoading(false)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const signInWithMagicLink = useCallback(async (email: string) => {
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: isElectron
+          ? 'beehive://auth/confirm'
+          : `${window.location.origin}/?auth=confirm`,
+        shouldCreateUser: true,
+      },
+    })
+    return { error: error?.message ?? null }
+  }, [])
+
+  const signInWithOtp = useCallback(async (email: string) => {
+    const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        // The email carries both a 6-digit code and a magic link. Point that
+        // link back to the desktop app (beehive://) when sent from Electron so
+        // clicking it signs the user in *in the desktop app* instead of
+        // bouncing to the web Site URL. On web, return to the web callback.
+        emailRedirectTo: isElectron
+          ? 'beehive://auth/confirm'
+          : `${window.location.origin}/?auth=confirm`,
+        shouldCreateUser: true,
+      },
+    })
+    return { error: error?.message ?? null }
+  }, [])
+
+  const verifyOtp = useCallback(async (email: string, token: string) => {
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' })
+    return { error: error?.message ?? null }
+  }, [])
+
+  const signOut = useCallback(async () => { await supabase.auth.signOut() }, [])
+
+  return { session, user, loading, signInWithMagicLink, signInWithOtp, verifyOtp, signOut }
+}
+
+// ============================================================
+// useProfile — read + update own profile
+// ============================================================
+export function useProfile(userId: string | null) {
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!userId) { setProfile(null); return }
+    setLoading(true)
+    supabase.from('profiles').select('*').eq('id', userId).single()
+      .then(({ data }) => { setProfile(data ?? null); setLoading(false) })
+  }, [userId])
+
+  const updateProfile = useCallback(async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url'>>) => {
+    if (!userId) return { error: 'Not authenticated' }
+    const { error } = await supabase.from('profiles').update(updates).eq('id', userId)
+    if (!error) setProfile(prev => prev ? { ...prev, ...updates } : null)
+    return { error: error?.message ?? null }
+  }, [userId])
+
+  return { profile, loading, updateProfile }
+}
 
 // ============================================================
 // TYPES
@@ -22,10 +139,16 @@ interface Participant {
   id: string
   room_id: string
   user_id: string
+  auth_user_id: string | null
   display_name: string
   joined_at: string
   is_active: boolean
   role: 'host' | 'co-host' | 'participant'
+  // Not a real room_participants column — merged in client-side from
+  // `profiles` (see useParticipants below) for signed-in participants only.
+  // Guests (auth_user_id null) simply never get one, which the shared
+  // Avatar component already treats identically to "no picture yet".
+  avatar_url?: string | null
 }
 
 interface ChatMessage {
@@ -70,80 +193,308 @@ export function useCreateRoom() {
 }
 
 // ============================================================
-// LIVEKIT TOKEN
+// SCHEDULED ROOM CREATION (waiting-room-gated — Schedule tab only)
 // ============================================================
-export function useJoinRoom() {
-  const [token, setToken] = useState<string | null>(null)
+// Deliberately separate from useCreateRoom() above, which Start Now still
+// calls directly — that path stays exactly as frictionless as it is today.
+// This one goes through the backend (not a direct client insert) because
+// the host_secret it mints has to land in a table with zero client grants
+// (room_hosts — see supabase/migrations/004_waiting_room.sql), which only
+// the backend's service-role key can write to.
+export function useScheduleRoom() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const joinRoom = useCallback(async (roomId: string, displayName: string) => {
+  const scheduleRoom = useCallback(async (
+    name: string,
+    organisation?: string,
+    scheduledDate?: string,
+    scheduledTime?: string,
+    durationMinutes?: number,
+  ) => {
     setLoading(true)
     setError(null)
 
-    // Get livekit_room_name from Supabase
-    const { data: room, error: roomError } = await supabase
-      .from('rooms')
-      .select('livekit_room_name')
-      .eq('id', roomId)
-      .single()
+    // Recorded as the room's created_by (if signed in) so the organizer can
+    // also be recognized as host via their account on a different browser/
+    // device than the one that scheduled it — see useJoinRoom's accessToken
+    // below. Anonymous scheduling is unaffected: no session, no accessToken,
+    // created_by just stays null exactly as before this existed.
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const resp = await fetch(`${API_BASE}/api/rooms/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        organisation,
+        accessToken: session?.access_token,
+        ...(scheduledDate ? { scheduledDate } : {}),
+        ...(scheduledTime ? { scheduledTime } : {}),
+        ...(durationMinutes ? { durationMinutes } : {}),
+      }),
+    })
+    setLoading(false)
+
+    if (!resp.ok) {
+      setError('Failed to schedule meeting')
+      return null
+    }
+
+    const { room, hostSecret } = await resp.json()
+    // Never sent anywhere else, never part of the shareable invite link —
+    // stored only in the creator's own browser, keyed by room id, and read
+    // back by RoomPage's join flow to prove host identity on that one device.
+    try { localStorage.setItem(`beehive:hostSecret:${room.id}`, hostSecret) } catch { /* storage unavailable — creator just won't auto-resume as host on this device */ }
+
+    // hostSecret is also returned directly (not just stashed in
+    // localStorage) so the caller can use it immediately in the same tick —
+    // SchedulePanel needs it right away to seed the BeeHive Assistant's
+    // shared agenda (POST /api/rooms/:roomId/agenda) without a redundant
+    // localStorage round-trip it just wrote.
+    return { room: room as Room, hostSecret: hostSecret as string }
+  }, [])
+
+  return { scheduleRoom, loading, error }
+}
+
+// ============================================================
+// ROOM INFO (for invite preview)
+// ============================================================
+export function useRoomInfo(roomId: string | null) {
+  const [room, setRoom] = useState<{
+    name: string
+    participantCount: number
+    ended_at: string | null
+    scheduled_date: string | null
+    scheduled_time: string | null
+  } | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(() => {
+    if (!roomId) return
+    setLoading(true)
+    // participantCount comes from LiveKit's own Room Service
+    // (GET /api/rooms/:roomId/participant-count), not the room_participants.
+    // is_active mirror — that mirror only updates via client-side leave
+    // events plus a participant_left/room_finished webhook, and a production
+    // audit found dozens of rows still marked active hours after everyone
+    // had actually left whenever that webhook didn't land. Every other
+    // participant count in this app already reads live LiveKit data for the
+    // same reason (see RoomPage.tsx's header/dock/alone-timer count).
+    Promise.all([
+      supabase.from('rooms').select('name, ended_at, scheduled_date, scheduled_time').eq('id', roomId).single(),
+      fetch(`${API_BASE}/api/rooms/${roomId}/participant-count`).then(r => r.ok ? r.json() : { count: 0 }).catch(() => ({ count: 0 })),
+    ]).then(([roomRes, countRes]) => {
+      if (roomRes.data) {
+        setRoom({
+          name: roomRes.data.name,
+          participantCount: countRes.count ?? 0,
+          ended_at: roomRes.data.ended_at ?? null,
+          scheduled_date: roomRes.data.scheduled_date ?? null,
+          scheduled_time: roomRes.data.scheduled_time ?? null,
+        })
+      }
+      setLoading(false)
+    })
+  }, [roomId])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  // Exposed so a join attempt that discovers the room ended *after* this
+  // component mounted (see useJoinRoom's ENDED_MEETING check) can flip the
+  // lobby straight to the "Meeting Ended" card instead of just an alert —
+  // this snapshot is otherwise only ever fetched once, on mount.
+  return { room, loading, refresh }
+}
+
+// ============================================================
+// LIVEKIT TOKEN
+// ============================================================
+// Distinct sentinel so callers (RoomPage's handleJoin) can tell "this
+// meeting ended" apart from other join failures and react accordingly
+// (flip the lobby to the "Meeting Ended" card) rather than a generic alert.
+export const ENDED_MEETING_ERROR = 'This meeting has ended'
+
+export function useJoinRoom() {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Returns the failure reason directly on the resolved value, rather than
+  // relying solely on the `error` state above. `handleJoin` needs to branch
+  // on *this specific call's* outcome the instant the promise resolves — but
+  // by then, `error` as read from the hook's own closure in the caller is
+  // whatever it was when that render happened, not what setError() below
+  // just set (React doesn't re-render synchronously mid-await), so checking
+  // the hook's `error` state right after awaiting this would silently see
+  // the previous call's stale value. Returning the reason inline sidesteps
+  // that race entirely.
+  // `identity` is optional so a waiting-room retry (after the host admits
+  // this attendee) can reuse the exact same identity from the original
+  // pending request — admission_requests is keyed by (room_id, identity),
+  // so a fresh random identity on retry would file as a brand new pending
+  // request instead of picking up the one that was just admitted.
+  const joinRoom = useCallback(async (roomId: string, displayName: string, identityOverride?: string) => {
+    setLoading(true)
+    setError(null)
+
+    // Fetch room info and local session in parallel — no dependency between them.
+    // ended_at/is_active are the authoritative, freshly-fetched check: the
+    // lobby's "Join Meeting" button is only *hidden* based on a snapshot taken
+    // whenever the invite page loaded (useRoomInfo), which goes stale if the
+    // meeting ends while that tab sits open. Without re-checking here, a
+    // click on an already-stale-but-still-visible button would insert a
+    // participant row and fetch a token for a meeting that's already over —
+    // this is the actual gate that prevents joining a dead meeting.
+    const [{ data: room, error: roomError }, { data: { session } }] = await Promise.all([
+      supabase.from('rooms').select('livekit_room_name, name, ended_at, is_active, requires_admission').eq('id', roomId).single(),
+      supabase.auth.getSession(), // local cache — no server roundtrip
+    ])
 
     if (roomError || !room) {
       setError('Room not found')
       setLoading(false)
-      return null
+      return { error: 'Room not found' }
     }
 
-    // Add participant record
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      await supabase.from('room_participants').upsert({
+    if (room.ended_at || room.is_active === false) {
+      setError(ENDED_MEETING_ERROR)
+      setLoading(false)
+      return { error: ENDED_MEETING_ERROR }
+    }
+
+    // Deactivate any stale active records for this display name in this room
+    await supabase.from('room_participants')
+      .update({ is_active: false })
+      .eq('room_id', roomId)
+      .eq('display_name', displayName)
+
+    // A LiveKit identity must be unique per connection — two participants
+    // (or two tabs sharing one logged-in profile's name) joining with the
+    // same identity causes LiveKit to disconnect the earlier one, which
+    // looked like "their mic doesn't work". Display names are freeform and
+    // collide easily, so identity is a random UUID instead; displayName is
+    // still sent separately and used as LiveKit's "name" field for display.
+    const identity = identityOverride ?? crypto.randomUUID()
+
+    if (room.requires_admission) {
+      // Waiting-room-gated (scheduled meeting created via /api/rooms/schedule):
+      // the backend, not this client, owns room_participants for the host
+      // row and for admitted attendees (see /api/livekit/token and /admit) —
+      // so this path never inserts one directly the way the ungated branch
+      // below does. Any host_secret this device holds for this room (set
+      // once, at scheduling time, in useScheduleRoom) rides along here.
+      let hostSecret: string | null = null
+      try { hostSecret = localStorage.getItem(`beehive:hostSecret:${roomId}`) } catch { /* storage unavailable — joins as a regular attendee */ }
+
+      // Fallback host recognition for the organizer opening their own invite
+      // link from a different browser/device than the one that scheduled it
+      // (hostSecret above is localStorage-only, so it's absent there). The
+      // backend verifies this token itself — sending it here doesn't grant
+      // anything on its own.
+      const tokenRes = await fetch(`${API_BASE}/api/livekit/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity, hostSecret, accessToken: session?.access_token }),
+      })
+
+      if (tokenRes.status === 202) {
+        const { requestId } = await tokenRes.json()
+        setLoading(false)
+        return { pending: true as const, requestId, identity }
+      }
+      if (tokenRes.status === 403) {
+        const body = await tokenRes.json().catch(() => ({}))
+        const reason = body.error || 'The host did not admit you to this meeting'
+        setError(reason)
+        setLoading(false)
+        return { error: reason }
+      }
+      if (!tokenRes.ok) {
+        setError('Failed to get access token')
+        setLoading(false)
+        return { error: 'Failed to get access token' }
+      }
+
+      const { token } = await tokenRes.json()
+      setLoading(false)
+      return { token, livekitRoomName: room.livekit_room_name, roomName: room.name }
+    }
+
+    // Ungated (Start Now, or any pre-existing scheduled room) — unchanged
+    // from before this feature existed. Insert fresh participant row and
+    // fetch LiveKit token in parallel — the token only needs roomName +
+    // displayName, not the participant row ID.
+    // auth_user_id, NOT user_id: user_id FKs to the legacy public.users table,
+    // but session.user.id is an auth.users id with no matching public.users
+    // row — writing it there violated the FK, so a SIGNED-IN user's
+    // participant row silently never got inserted (guests, with null, were
+    // fine). Downstream, anything reading room_participants (file-share
+    // recipient list, invite-preview count, participant_left bookkeeping)
+    // simply never saw authenticated participants. auth_user_id is the
+    // bridge column 001_auth_system.sql added for this, FK'd to auth.users.
+    const [{ error: participantError }, tokenRes] = await Promise.all([
+      supabase.from('room_participants').insert({
         room_id: roomId,
-        user_id: user.id,
+        auth_user_id: session?.user?.id ?? null,
         display_name: displayName,
         is_active: true,
         joined_at: new Date().toISOString(),
-      })
-    }
+      }),
+      fetch(`${API_BASE}/api/livekit/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity }),
+      }),
+    ])
+    if (participantError) console.error('[join] participant insert failed:', participantError.message)
 
-    // Get LiveKit token from Node.js backend
-    const res = await fetch('/api/livekit/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomName: room.livekit_room_name, displayName }),
-    })
-
-    if (!res.ok) {
+    if (!tokenRes.ok) {
       setError('Failed to get access token')
       setLoading(false)
-      return null
+      return { error: 'Failed to get access token' }
     }
 
-    const { token } = await res.json()
-    setToken(token)
+    const { token } = await tokenRes.json()
     setLoading(false)
-    return token
+    return { token, livekitRoomName: room.livekit_room_name, roomName: room.name }
   }, [])
 
-  return { joinRoom, token, loading, error }
+  return { joinRoom, loading, error }
 }
 
 // ============================================================
 // PARTICIPANT LIST (real-time)
 // ============================================================
+// `room_participants.auth_user_id` has no FK constraint to `profiles` (only
+// the legacy, unused `user_id` -> the old `users` table does), so PostgREST
+// can't embed `profiles(avatar_url)` in one query the normal way. A second,
+// small lookup keyed by the distinct auth_user_ids actually present in this
+// room's participant list — merged in client-side — avoids adding a new DB
+// constraint just for this.
+async function fetchParticipantsWithAvatars(roomId: string): Promise<Participant[]> {
+  const { data } = await supabase
+    .from('room_participants')
+    .select('*')
+    .eq('room_id', roomId)
+    .eq('is_active', true)
+  const rows = (data ?? []) as Participant[]
+
+  const authIds = [...new Set(rows.map(r => r.auth_user_id).filter((id): id is string => !!id))]
+  if (authIds.length === 0) return rows
+
+  const { data: profileRows } = await supabase.from('profiles').select('id, avatar_url').in('id', authIds)
+  const avatarById = new Map((profileRows ?? []).map(p => [p.id, p.avatar_url]))
+  return rows.map(r => ({ ...r, avatar_url: r.auth_user_id ? avatarById.get(r.auth_user_id) ?? null : null }))
+}
+
 export function useParticipants(roomId: string) {
   const [participants, setParticipants] = useState<Participant[]>([])
 
   useEffect(() => {
     if (!roomId) return
 
-    // Initial fetch
-    supabase
-      .from('room_participants')
-      .select('*')
-      .eq('room_id', roomId)
-      .eq('is_active', true)
-      .then(({ data }) => setParticipants(data ?? []))
+    fetchParticipantsWithAvatars(roomId).then(setParticipants)
 
     // Real-time subscription
     const channel = supabase
@@ -151,14 +502,7 @@ export function useParticipants(roomId: string) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'room_participants', filter: `room_id=eq.${roomId}` },
-        () => {
-          supabase
-            .from('room_participants')
-            .select('*')
-            .eq('room_id', roomId)
-            .eq('is_active', true)
-            .then(({ data }) => setParticipants(data ?? []))
-        }
+        () => { fetchParticipantsWithAvatars(roomId).then(setParticipants) }
       )
       .subscribe()
 
@@ -166,6 +510,109 @@ export function useParticipants(roomId: string) {
   }, [roomId])
 
   return participants
+}
+
+// ============================================================
+// ADMISSION REQUESTS / WAITING ROOM (real-time)
+// ============================================================
+export interface PendingAdmissionRequest { id: string; display_name: string; requested_at: string }
+
+// Single source of truth for "who's waiting at the door" for a given room —
+// lifted out of AdmissionRequestsWindow so the subscription stays live even
+// while that panel is closed. Without this, the host had zero signal that
+// anyone was waiting unless they happened to open the waiting-room panel:
+// AdmissionRequestsWindow only subscribed while mounted, which only happened
+// while its own panel was open, so a badge count / notification on the
+// still-closed toolbar button was structurally impossible. `enabled` should
+// be the caller's `canAdmit` check — only a host/co-host needs this
+// subscription at all, and a plain participant in a gated room has no RLS
+// visibility issue reading pending rows (SELECT is permissive), but there's
+// no reason to run a channel subscription for someone who can't act on it.
+export function useAdmissionRequests(roomId: string, enabled: boolean) {
+  const [pending, setPending] = useState<PendingAdmissionRequest[]>([])
+
+  useEffect(() => {
+    if (!roomId || !enabled) { setPending([]); return }
+
+    const fetchPending = () => {
+      supabase
+        .from('admission_requests')
+        .select('id, display_name, requested_at')
+        .eq('room_id', roomId)
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: true })
+        .then(({ data }) => setPending(data ?? []))
+    }
+
+    fetchPending()
+
+    const channel = supabase
+      .channel(`admission-requests:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'admission_requests', filter: `room_id=eq.${roomId}` },
+        fetchPending
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId, enabled])
+
+  return pending
+}
+
+// ============================================================
+// BEEHIVE BOT ASSISTANT — live, shared meeting agenda (real-time)
+// ============================================================
+export interface AgendaItem { id: string; text: string; completed: boolean; notes: string; order: number }
+export interface MeetingAgenda {
+  title: string
+  organizer_name: string | null
+  objectives: string[]
+  items: AgendaItem[]
+  updated_at: string
+}
+
+// Read is always live for everyone in the room (permissive SELECT policy —
+// see 006_meeting_agenda.sql), matching every other room-scoped realtime
+// hook in this file. There is deliberately no local optimistic-write path
+// here: `saveAgenda` posts to the backend (the only way this table is ever
+// written — no client UPDATE/INSERT policy exists), and every viewer,
+// including the editor's own other tabs, picks up the change through this
+// same subscription once it lands — one source of truth, no risk of two
+// tabs' local state silently diverging.
+export function useMeetingAgenda(roomId: string) {
+  const [agenda, setAgenda] = useState<MeetingAgenda | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!roomId) { setAgenda(null); return }
+    setLoading(true)
+
+    const fetchAgenda = () => {
+      supabase
+        .from('meeting_agendas')
+        .select('title, organizer_name, objectives, items, updated_at')
+        .eq('room_id', roomId)
+        .maybeSingle()
+        .then(({ data }) => { setAgenda(data ?? null); setLoading(false) })
+    }
+
+    fetchAgenda()
+
+    const channel = supabase
+      .channel(`meeting-agenda:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'meeting_agendas', filter: `room_id=eq.${roomId}` },
+        fetchAgenda
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [roomId])
+
+  return { agenda, loading }
 }
 
 // ============================================================
@@ -178,41 +625,168 @@ export function useChat(roomId: string) {
   useEffect(() => {
     if (!roomId) return
 
-    // Initial fetch
+    // Initial fetch — merged into existing state by id rather than a blind
+    // overwrite. React StrictMode (dev only) double-mounts this effect, so
+    // two of these fetches can be in flight at once; a plain `setMessages(data)`
+    // risks a slow/duplicate fetch resolving *after* a realtime insert has
+    // already appended a message, wiping it back out of view (looks exactly
+    // like "sent a message and it didn't stick"). Merging by id makes this
+    // safe regardless of fetch/realtime ordering.
     supabase
       .from('chat_messages')
       .select('*')
       .eq('room_id', roomId)
       .order('created_at', { ascending: true })
-      .then(({ data }) => setMessages(data ?? []))
+      .then(({ data, error }) => {
+        if (error) { console.error('[chat] initial fetch failed:', error.message); return }
+        setMessages((prev) => {
+          const byId = new Map(prev.map((m) => [m.id, m]))
+          for (const m of data ?? []) byId.set(m.id, m)
+          return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+        })
+      })
 
-    // Real-time subscription
+    // Real-time subscription — supabase.channel(topic) already reuses an
+    // existing channel for the same topic internally (RealtimeClient.channel()
+    // checks getChannels() itself), so React StrictMode's dev-only double
+    // mount/cleanup/mount doesn't create duplicate channels here. The
+    // subscribe callback below logs errors that were previously silent: a
+    // channel that never reaches SUBSCRIBED (e.g. CHANNEL_ERROR/TIMED_OUT)
+    // would mean inserts succeed (confirmed working via the REST API
+    // directly) but are never delivered to this listener — indistinguishable
+    // from "the message didn't send" without this log.
     const channel = supabase
       .channel(`chat:${roomId}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `room_id=eq.${roomId}` },
-        (payload) => setMessages((prev) => [...prev, payload.new as ChatMessage])
+        (payload) => setMessages((prev) => {
+          const incoming = payload.new as ChatMessage
+          return prev.some((m) => m.id === incoming.id) ? prev : [...prev, incoming]
+        })
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`[chat] realtime subscription ${status} for room ${roomId}:`, err)
+        }
+      })
 
     return () => { supabase.removeChannel(channel) }
   }, [roomId])
 
   const sendMessage = useCallback(async (message: string, displayName: string) => {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    // getSession() reads from local storage — no server roundtrip needed for a chat insert
+    const { data: { session } } = await supabase.auth.getSession()
 
-    await supabase.from('chat_messages').insert({
+    // auth_user_id, NOT user_id: user_id FKs to the legacy public.users table,
+    // but session.user.id is an auth.users id — no auth user has a row in
+    // public.users, so writing it to user_id violated the FK and the insert
+    // was rejected. Net effect: every SIGNED-IN user's messages silently
+    // failed to send, while guests (null user_id) worked fine — which made
+    // it look like "chat is broken" only for authenticated accounts.
+    // auth_user_id is the bridge column 001_auth_system.sql added for
+    // exactly this, with the correct FK to auth.users.
+    const { error } = await supabase.from('chat_messages').insert({
       room_id: roomId,
-      user_id: user?.id,
+      auth_user_id: session?.user?.id ?? null,
       display_name: displayName,
       message,
     })
+    if (error) console.error('[chat] sendMessage insert failed:', error.message)
     setLoading(false)
   }, [roomId])
 
   return { messages, sendMessage, loading }
+}
+
+// ============================================================
+// FATHOM — meeting intelligence
+// ============================================================
+export interface FathomAttendee {
+  name: string
+  email: string
+  is_external: boolean
+}
+
+export interface FathomActionItem {
+  description: string
+  completed: boolean
+  user_generated: boolean
+  recording_timestamp?: string
+  recording_playback_url?: string
+  assignee?: { name: string; email: string }
+}
+
+export interface FathomTranscriptLine {
+  speaker: { display_name: string; matched_calendar_invitee_email?: string }
+  text: string
+  timestamp: string
+}
+
+export interface FathomMeeting {
+  title: string
+  meeting_title?: string
+  url: string
+  share_url?: string
+  created_at: string
+  recording_start_time?: string
+  recording_end_time?: string
+  transcript_language?: string
+  calendar_invitees?: FathomAttendee[]
+  recorded_by?: { name: string; email: string; team?: string }
+  default_summary?: { template_name: string; markdown_formatted: string }
+  action_items?: FathomActionItem[]
+}
+
+export function useFathomMeetings(limit = 8) {
+  const [meetings, setMeetings] = useState<FathomMeeting[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+
+  const fetchPage = useCallback(async (cursor?: string) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: String(limit) })
+      if (cursor) params.set('cursor', cursor)
+      const resp = await fetch(`${API_BASE}/api/fathom/meetings?${params}`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      if (data.error) throw new Error(data.error)
+      setMeetings(prev => cursor ? [...prev, ...(data.items ?? [])] : (data.items ?? []))
+      setNextCursor(data.next_cursor ?? null)
+      setError(null)
+    } catch (e: any) {
+      setError(e.message ?? 'Could not load Fathom meetings')
+    } finally {
+      setLoading(false)
+    }
+  }, [limit])
+
+  useEffect(() => { fetchPage() }, [fetchPage])
+
+  return { meetings, loading, error, hasMore: !!nextCursor, loadMore: () => fetchPage(nextCursor ?? undefined) }
+}
+
+export function useFathomTranscript(recordingId: string | null) {
+  const [transcript, setTranscript] = useState<FathomTranscriptLine[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadTranscript = useCallback(async () => {
+    if (!recordingId) return
+    setLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/api/fathom/recordings/${recordingId}/transcript`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setTranscript(Array.isArray(data) ? data : (data.transcript ?? null))
+      }
+    } catch {}
+    setLoading(false)
+  }, [recordingId])
+
+  return { transcript, loading, loadTranscript }
 }
 
 // ============================================================
@@ -233,4 +807,337 @@ export function useRecordings(roomId: string) {
   }, [roomId])
 
   return recordings
+}
+
+// ============================================================
+// MY MEETINGS — carousel data for the lobby
+// ============================================================
+export interface MyMeeting {
+  id: string
+  roomId: string
+  roomName: string
+  scheduledDate: string | null
+  scheduledTime: string | null
+  durationMinutes: number | null
+  endedAt: string | null
+  role: 'organizer' | 'invitee'
+  status: 'pending' | 'accepted' | 'declined' | 'tentative' | null
+  invitationId: string | null
+  organizerName: string
+}
+
+// Fetches all upcoming meetings for the signed-in user (rooms they organized
+// plus invitations they received), subscribing to Realtime changes on the
+// meeting_invitations table so the carousel updates instantly across devices
+// when an invitation is sent, accepted, or declined.
+export function useMyMeetings(accessToken: string | null | undefined, userEmail: string | null | undefined) {
+  const [meetings, setMeetings] = useState<MyMeeting[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!accessToken) { setMeetings([]); return }
+    setLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/api/me/meetings`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (resp.ok) {
+        const { meetings: data } = await resp.json()
+        setMeetings(data ?? [])
+      }
+    } catch { /* network error — keep existing list */ }
+    setLoading(false)
+  }, [accessToken])
+
+  useEffect(() => { load() }, [load])
+
+  // Re-fetch whenever the window regains focus (Electron app switch, tab switch).
+  // This is the primary way the organizer's carousel stays fresh — the Realtime
+  // subscription below only covers meeting_invitations (invitee path), and there
+  // is no long-running Realtime channel for the organizer's own rooms rows.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', load)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', load)
+    }
+  }, [load])
+
+  // Realtime: any change to this user's invitations triggers a fresh fetch
+  useEffect(() => {
+    if (!userEmail) return
+    const channel = supabase
+      .channel(`my-invitations:${userEmail}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'meeting_invitations',
+        filter: `invitee_email=eq.${userEmail.toLowerCase()}`,
+      }, () => { load() })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [userEmail, load])
+
+  const updateStatus = useCallback(async (
+    invitationId: string,
+    status: 'accepted' | 'declined' | 'tentative',
+  ) => {
+    if (!accessToken) return { error: 'Not authenticated' as string }
+    // Optimistic local update
+    setMeetings(prev =>
+      status === 'declined'
+        ? prev.filter(m => m.invitationId !== invitationId)
+        : prev.map(m => m.invitationId === invitationId ? { ...m, status } : m)
+    )
+    try {
+      const resp = await fetch(`${API_BASE}/api/invitations/${invitationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, accessToken }),
+      })
+      if (!resp.ok) {
+        load() // roll back optimistic update on failure
+        return { error: 'Failed to update' as string }
+      }
+    } catch {
+      load()
+      return { error: 'Network error' as string }
+    }
+    return { error: null as string | null }
+  }, [accessToken, load])
+
+  // Organizer-only edit of a scheduled meeting's own details. Uses the same
+  // hostSecret + PATCH /api/rooms/:roomId pattern the Delete flow already
+  // established, rather than the Bearer-token identity check the RSVP path
+  // above uses — hostSecret is what actually proves "I'm the organizer" for
+  // rooms scheduled anonymously too, matching every other host-only action
+  // in this app (Delete, agenda edits, admit/deny).
+  const updateMeeting = useCallback(async (
+    roomId: string,
+    hostSecret: string,
+    updates: { name?: string; scheduledDate?: string; scheduledTime?: string; durationMinutes?: number },
+  ) => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostSecret, ...updates }),
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        return { error: (body.error as string) || 'Failed to update meeting' }
+      }
+      await load() // re-fetch so the carousel reflects the edit immediately
+      return { error: null as string | null }
+    } catch {
+      return { error: 'Network error' as string }
+    }
+  }, [load])
+
+  return { meetings, loading, refresh: load, updateStatus, updateMeeting }
+}
+
+// ============================================================
+// MEETING NOTES — Meeting Intelligence feature (opt-in recording + AI notes)
+// Same shape as useMyMeetings above: fetch on mount + accessToken change,
+// no Realtime subscription (job status only changes via backend-driven
+// pipeline stages, not a live multi-user editing surface like invitations).
+// ============================================================
+export interface MeetingNoteActionItem {
+  owner?: string
+  task: string
+  due_date?: string
+  priority?: string
+}
+
+export interface MeetingNote {
+  roomId: string
+  roomName: string
+  // Mirrors meeting_intelligence_jobs.status exactly — 'recording' |
+  // 'egress_done' | 'transcribing' | 'transcribed' | 'summarizing' |
+  // 'complete' | 'skipped_no_provider' | 'failed'. Rooms where the feature
+  // was never enabled are omitted entirely by the backend, not returned
+  // with a placeholder status.
+  status: string
+  summaryMarkdown: string | null
+  actionItems: MeetingNoteActionItem[] | null
+  createdAt: string
+}
+
+export function useMeetingNotes(accessToken: string | null | undefined) {
+  const [notes, setNotes] = useState<MeetingNote[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!accessToken) { setNotes([]); return }
+    setLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/api/me/meeting-notes`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (resp.ok) {
+        const { notes: data } = await resp.json()
+        setNotes(data ?? [])
+      }
+    } catch { /* network error — keep existing list */ }
+    setLoading(false)
+  }, [accessToken])
+
+  useEffect(() => { load() }, [load])
+
+  // Manual retry for a permanently-failed job (status 'failed', past the
+  // backend's bounded automatic retry count) — see POST .../meeting-notes/retry.
+  // Optimistically flips the row to a "Processing…" status locally so the
+  // button doesn't sit inert while the real update comes from a re-fetch.
+  const retry = useCallback(async (roomId: string) => {
+    if (!accessToken) return { error: 'Not authenticated' as string }
+    try {
+      const resp = await fetch(`${API_BASE}/api/rooms/${roomId}/meeting-notes/retry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        return { error: (body.error as string) || 'Failed to retry' }
+      }
+      const { status } = await resp.json()
+      setNotes(prev => prev.map(n => n.roomId === roomId ? { ...n, status } : n))
+      return { error: null as string | null }
+    } catch {
+      return { error: 'Network error' as string }
+    }
+  }, [accessToken])
+
+  return { notes, loading, refresh: load, retry }
+}
+
+// ============================================================
+// PERSONAL AI NOTE TAKER — one participant's own, isolated in-meeting
+// session. See 010_personal_meeting_notes.sql / the .../personal-notes/*
+// endpoints for the ownership model this mirrors client-side: `identity`
+// is LiveKit's own per-connection identity (already generated by
+// useJoinRoom, visible on localParticipant.identity once connected — never
+// generated separately here, so there is exactly one identity value for
+// both LiveKit presence and note-session ownership). `sessionSecret` is
+// cached in sessionStorage (not localStorage — a personal note session is
+// scoped to this one meeting *connection*, not something that should
+// silently resume across a browser restart into what may by then be a
+// different meeting) so a re-render or brief reconnect within the same tab
+// doesn't lose the ability to stop/view a session already started.
+// ============================================================
+export interface PersonalNoteState {
+  status: 'active' | 'stopped'
+  summaryMarkdown: string | null
+  actionItems: MeetingNoteActionItem[] | null
+  lastError: string | null
+}
+
+export function usePersonalNotes(roomId: string | null, identity: string | null, displayName: string) {
+  const storageKey = roomId && identity ? `beehive:noteSession:${roomId}:${identity}` : null
+  const [sessionSecret, setSessionSecret] = useState<string | null>(() => {
+    if (!storageKey) return null
+    try { return sessionStorage.getItem(storageKey) } catch { return null }
+  })
+  const [enabled, setEnabled] = useState(!!sessionSecret)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState<PersonalNoteState | null>(null)
+
+  const start = useCallback(async () => {
+    if (!roomId || !identity || pending) return
+    setPending(true)
+    setError(null)
+    try {
+      const resp = await fetch(`${API_BASE}/api/rooms/${roomId}/personal-notes/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ participantIdentity: identity, displayName }),
+      })
+      const body = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        // 409 = this exact identity already has an active session (e.g. a
+        // stale local sessionSecret was lost) — surface as already-on
+        // rather than an error, since that's what it functionally means.
+        if (resp.status === 409) { setEnabled(true); return }
+        setError(body.error || 'Failed to start AI Note Taker')
+        return
+      }
+      if (storageKey) { try { sessionStorage.setItem(storageKey, body.sessionSecret) } catch { /* storage unavailable */ } }
+      setSessionSecret(body.sessionSecret)
+      setEnabled(true)
+    } catch {
+      setError('Network error')
+    } finally {
+      setPending(false)
+    }
+  }, [roomId, identity, displayName, pending, storageKey])
+
+  // Default on: auto-start the moment this participant's identity is known,
+  // once per connection — the toggle itself doesn't move, this just means
+  // nobody has to click it first. Fires at most once per mount (autoStarted
+  // ref, not `enabled`) so an explicit manual Stop is never silently
+  // reversed by this effect re-running; a resumed session found in
+  // sessionStorage (sessionSecret already set) also skips the call
+  // entirely, both to avoid a redundant request and to avoid this effect
+  // ever fighting a Stop that already ran earlier in the same connection.
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (!roomId || !identity || autoStarted.current || sessionSecret) return
+    autoStarted.current = true
+    start()
+  }, [roomId, identity, sessionSecret, start])
+
+  const stop = useCallback(async () => {
+    if (!roomId || !identity || !sessionSecret || pending) return
+    setPending(true)
+    setError(null)
+    try {
+      const resp = await fetch(`${API_BASE}/api/rooms/${roomId}/personal-notes/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ participantIdentity: identity, sessionSecret }),
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        setError(body.error || 'Failed to stop AI Note Taker')
+        return
+      }
+      setEnabled(false)
+    } catch {
+      setError('Network error')
+    } finally {
+      setPending(false)
+    }
+  }, [roomId, identity, sessionSecret, pending])
+
+  // Poll this participant's own note while a session is active — the
+  // summary only actually lands once the whole meeting's transcript is
+  // ready (normally at meeting end), so this is a slow, low-cost poll, not
+  // a live-typing surface.
+  useEffect(() => {
+    if (!enabled || !roomId || !identity || !sessionSecret) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/api/rooms/${roomId}/personal-notes/me`, {
+          headers: { 'X-Participant-Identity': identity, 'X-Session-Secret': sessionSecret },
+        })
+        if (!resp.ok || cancelled) return
+        const data = await resp.json()
+        setNote({
+          status: data.status,
+          summaryMarkdown: data.summaryMarkdown,
+          actionItems: data.actionItems,
+          lastError: data.lastError,
+        })
+      } catch { /* transient — next poll will retry */ }
+    }
+    poll()
+    const id = setInterval(poll, 30000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [enabled, roomId, identity, sessionSecret])
+
+  return { enabled, pending, error, note, start, stop }
 }

@@ -1,0 +1,232 @@
+import type React from 'react'
+
+export const s: Record<string, React.CSSProperties> = {
+  lobby: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#0a0a0a', WebkitAppRegion: 'drag' as any },
+  // Fixed width (not just minWidth) — without it, content like the invite-link
+  // row (a long monospace URL) forces the card wider than the meeting-prep
+  // card grid's natural 2-column width, so the whole lobby visibly widens and
+  // re-flows to more columns the moment a link is generated. A fixed width
+  // keeps every lobby/schedule screen the same size regardless of content.
+  lobbyCard: { background: '#161616', borderRadius: 20, padding: '40px 44px', display: 'flex', flexDirection: 'column', gap: 14, width: 400, boxSizing: 'border-box' as const, boxShadow: '0 0 40px rgba(0,0,0,0.6)', fontFamily: "'Roboto', sans-serif", WebkitAppRegion: 'no-drag' as any },
+  title: { color: '#fff', margin: 0, fontSize: 32, fontWeight: 100, letterSpacing: 4, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif" },
+  input: { background: '#222', border: '1px solid #333', borderRadius: 10, padding: '11px 14px', color: '#fff', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' },
+  // Signature gold — the app's default primary-action color (matches the
+  // "Start Meet" / auth "Send code" buttons). Sting mode overrides this to
+  // STING_RED per-usage (see roomUtils.ts) rather than baking red in here,
+  // since most primaryBtn usages sit outside any Meet/Sting context.
+  primaryBtn: { background: '#f5a623', color: '#000', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
+  secondaryBtn: { background: '#222', color: '#aaa', border: '1px solid #333', borderRadius: 10, padding: '11px 20px', fontSize: 14, cursor: 'pointer', width: '100%' },
+  invitePreview: { background: '#1e1e1e', border: '1px solid #2a2a2a', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 },
+  inviteLabel: { color: '#666', fontSize: 11, fontWeight: 300, letterSpacing: 1, textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif" },
+  inviteRoomName: { color: '#fff', fontSize: 16, fontWeight: 300, letterSpacing: 2, fontFamily: "'Roboto', sans-serif" },
+  inviteMeta: { color: '#f5a623', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif" },
+  subtextRow: { display: 'flex', gap: 8 },
+  subtextBtn: { background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 20, padding: '5px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 500 },
+  subtextActive: { background: '#2a2a2a', color: '#f5a623', border: '1px solid #f5a623' },
+  roomWrapper: { display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '100vw', overflowX: 'hidden' as const, height: 'var(--vh, 100vh)', background: '#0a0a0a' },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '14px 18px', background: '#111', borderBottom: '1px solid #222', zIndex: 10, WebkitAppRegion: 'drag' as any, minHeight: 52 },
+  headerLeft: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexShrink: 1, overflow: 'hidden', WebkitAppRegion: 'no-drag' as any },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, WebkitAppRegion: 'no-drag' as any },
+  roomTitle: { color: '#fff', fontWeight: 300, fontSize: 16, letterSpacing: 3, textTransform: 'uppercase', fontFamily: "'Roboto', sans-serif", whiteSpace: 'nowrap' as const },
+  pill: { background: '#222', color: '#888', borderRadius: 20, padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
+  // minHeight raised ~50% over its previous natural (content-driven) size —
+  // width is untouched, per the "keep panel width unchanged" requirement.
+  pwWindow: { background: '#161616', border: '1px solid #2a2a2a', borderRadius: 16, width: 480, minHeight: 220, maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' as const, overflow: 'hidden' },
+  pwHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #222' },
+  pwTitle: { color: '#fff', fontSize: 11, fontWeight: 300, letterSpacing: 2, fontFamily: "'Roboto', sans-serif" },
+  pwCount: { color: '#f5a623', marginLeft: 6 },
+  pwClose: { background: 'none', border: 'none', color: '#666', cursor: 'pointer', display: 'flex', alignItems: 'center' },
+  pwGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, padding: 16, overflowY: 'auto' as const },
+  pwCard: { borderRadius: 10, overflow: 'hidden', background: '#1a1a1a', border: '1px solid #2a2a2a' },
+  pwVideo: { position: 'relative' as const, aspectRatio: '16/9', background: '#111' },
+  pwNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111' },
+  pwStatusBar: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))' },
+  pwName: { color: '#fff', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  pwIcons: { display: 'flex', gap: 4, alignItems: 'center' },
+  dockZone: { background: 'rgba(245,166,35,0.15)', border: '1px dashed #f5a623', borderRadius: 8, color: '#f5a623', fontSize: 11, fontWeight: 300, letterSpacing: 1, textAlign: 'center' as const, padding: '6px 0', marginBottom: 6, fontFamily: "'Roboto', sans-serif" },
+  dockHint: { color: '#444', fontSize: 10, fontWeight: 300, letterSpacing: 0.5, fontFamily: "'Roboto', sans-serif" },
+  dockedStrip: { display: 'flex', alignItems: 'center', background: '#111', borderBottom: '1px solid #1e1e1e', padding: '6px 12px', gap: 8, overflowX: 'auto' as const },
+  dockedInner: { display: 'flex', gap: 8, flex: 1, overflowX: 'auto' as const },
+  // A real grid, not a wrapping flex row — used only by the floating
+  // ParticipantsWindow (not DockedParticipantsStrip, which stays the slim
+  // single-row strip it always was; there's no spare height there to fill).
+  // `gridAutoRows: minmax(105px, 1fr)` is the key part: with only one
+  // participant, that single row is a `1fr` track and stretches to fill
+  // 100% of the panel's available height (grid's default `align-content:
+  // stretch` distributes all free space into `1fr` tracks) instead of
+  // sitting at its old fixed 105px with a large empty gap beneath it — the
+  // `105px` minimum only kicks in once there's enough participants that
+  // rows would otherwise be squeezed thinner than the tile was designed
+  // for. Columns auto-fill at a 140px minimum so the row count (and
+  // therefore how many rows share the available height) adapts to however
+  // many attendees are actually in the room.
+  // padding: 12 keeps every tile clear of the panel's own border — without
+  // it the grid sat flush against pwWindow's edges (no padding of its own),
+  // so a tile's border could touch the panel's border directly.
+  dockedInnerWrap: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gridAutoRows: 'minmax(105px, 1fr)', gap: 8, flex: 1, overflowY: 'auto' as const, padding: 12 },
+  // height +50% (70 -> 105) so the (now-larger) avatar reads clearly and the
+  // row scans more like Teams/Meet; width is untouched — only row height
+  // was asked for, and the panel's own width must stay the same.
+  dockedTile: { position: 'relative' as const, width: 110, height: 105, borderRadius: 6, overflow: 'hidden', background: '#1a1a1a', border: '1px solid #2a2a2a', flexShrink: 0 },
+  dockedNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111' },
+  dockedTileBar: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 6px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))' },
+  dockedName: { color: '#fff', fontSize: 10, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  dockedActions: { display: 'flex', gap: 4, flexShrink: 0 },
+  dockedBtn: { background: '#222', border: '1px solid #333', borderRadius: 6, color: '#888', width: 26, height: 26, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 },
+  iconBtn: { background: 'transparent', border: 'none', color: '#aaa', fontSize: 18, cursor: 'pointer', padding: '4px 6px', borderRadius: 6, display: 'flex', alignItems: 'center' },
+  leaveBtn: { background: '#c53030', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  roomBody: { display: 'flex', flex: 1, overflow: 'hidden' },
+  reactionFloat: { position: 'absolute', bottom: 100, right: 20, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', zIndex: 20 },
+  floatingEmoji: { fontSize: 36, animation: 'floatUp 2.5s ease-out forwards' },
+  controls: { position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 12, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', borderRadius: 40, padding: '10px 16px', zIndex: 10 },
+  controlBtn: { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 48, height: 48, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', gap: 2 },
+  hdBadge: { position: 'absolute', bottom: 6, right: 6, fontSize: 8, fontWeight: 700, color: '#f5a623', lineHeight: 1 },
+  reactionBar: { position: 'absolute', bottom: 120, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 6, background: '#1a1a1a', border: '1px solid #333', borderRadius: 30, padding: '8px 12px' },
+  emojiBtn: { background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', padding: '2px 4px', borderRadius: 6, filter: 'grayscale(1)', transition: 'filter 0.15s' },
+  qualityMenu: { position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 10, overflow: 'hidden', minWidth: 160 },
+  qualityOption: { display: 'block', width: '100%', background: 'none', border: 'none', color: '#ccc', padding: '10px 16px', cursor: 'pointer', fontSize: 13, textAlign: 'left' },
+  qualityActive: { background: '#2a2a2a', color: '#fff', fontWeight: 600 },
+  sidebar: { width: 300, background: '#111', borderLeft: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column' },
+  sidebarTitle: { color: '#888', fontWeight: 600, fontSize: 11, letterSpacing: 1, padding: '14px 16px', borderBottom: '1px solid #1e1e1e', textTransform: 'uppercase' },
+  messages: { flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 },
+  message: { display: 'flex', flexDirection: 'column', gap: 2 },
+  msgName: { color: '#5b5ef4', fontSize: 12, fontWeight: 600 },
+  msgText: { color: '#ddd', fontSize: 13, lineHeight: 1.4 },
+  msgTime: { color: '#444', fontSize: 11 },
+  chatInputRow: { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid #1e1e1e' },
+  sendBtn: { background: '#f5a623', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  fileCard: { display: 'flex', flexDirection: 'column' as const, gap: 4, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '10px 12px' },
+  fileCardLink: { display: 'flex', alignItems: 'center', gap: 8, color: '#ddd', textDecoration: 'none', fontSize: 13, background: '#111', border: '1px solid #222', borderRadius: 8, padding: '8px 10px', marginTop: 4 },
+  recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },
+  recLink: { display: 'block', color: '#5b5ef4', fontSize: 13, textDecoration: 'none', marginBottom: 4 },
+  lobbyTabRow: { display: 'flex', gap: 4, background: '#111', border: '1px solid #1e1e1e', borderRadius: 10, padding: 4 },
+  lobbyTab: { flex: 1, background: 'transparent', border: 'none', borderRadius: 7, color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', padding: '7px 0', letterSpacing: 0.5, transition: 'all 0.15s' },
+  lobbyTabActive: { background: '#1e1e1e', color: '#f5a623', border: '1px solid #2a2a2a' },
+  // Both sit directly inside `lobby`'s WebkitAppRegion: 'drag' region (unlike
+  // lobbyCard, which opts out at its own root) — without their own no-drag
+  // here, Electron's frameless-window drag handling swallows every click on
+  // these buttons and everything inside the expanded panel (rows, Retry,
+  // etc.) as a window-drag gesture before it ever reaches React's onClick.
+  fathomToggleBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: '1px solid #222', borderRadius: 10, padding: '8px 16px', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", cursor: 'pointer', width: 360, letterSpacing: 0.5, WebkitAppRegion: 'no-drag' as any },
+  fathomPanel: { width: 360, background: '#111', border: '1px solid #1e1e1e', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' as const, WebkitAppRegion: 'no-drag' as any },
+  fathomHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #1e1e1e' },
+  fathomHeaderTitle: { color: '#f5a623', fontSize: 10, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 2 },
+  fathomLink: { color: '#5b5ef4', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", textDecoration: 'none' },
+  fathomEmpty: { color: '#444', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '20px 16px', textAlign: 'center' as const },
+  fathomList: { display: 'flex', flexDirection: 'column' as const, maxHeight: 420, overflowY: 'auto' as const },
+  fathomLoadMore: { background: 'none', border: 'none', borderTop: '1px solid #1e1e1e', color: '#555', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '10px', cursor: 'pointer', width: '100%' },
+  fathomRetryBtn: { background: 'none', border: '1px solid #333', borderRadius: 8, color: '#666', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", padding: '5px 16px', cursor: 'pointer' },
+  fathomRow: { borderBottom: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column' as const },
+  fathomRowHeader: { background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px', textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 3 },
+  fathomRowMeta: { display: 'flex', alignItems: 'center', gap: 8 },
+  fathomRowDate: { color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+  fathomRowDuration: { color: '#3a3a3a', fontSize: 10, fontFamily: "'Roboto', sans-serif", fontWeight: 300, background: '#1e1e1e', borderRadius: 4, padding: '1px 5px' },
+  fathomRowTitle: { color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+  fathomRowRecordedBy: { color: '#3a3a3a', fontSize: 10, fontFamily: "'Roboto', sans-serif" },
+  fathomChip: { color: '#333', fontSize: 10 },
+  fathomDetail: { padding: '0 16px 14px', display: 'flex', flexDirection: 'column' as const, gap: 12 },
+  fathomSection: { display: 'flex', flexDirection: 'column' as const, gap: 6 },
+  fathomSectionTitle: { color: '#444', fontSize: 9, fontWeight: 400, fontFamily: "'Roboto', sans-serif", letterSpacing: 1.5, textTransform: 'uppercase' as const },
+  fathomSummaryText: { color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, lineHeight: 1.6, maxHeight: 220, overflowY: 'auto' as const },
+  fathomActionItem: { display: 'flex', alignItems: 'flex-start', gap: 8 },
+  fathomAssignee: { color: '#3a3a3a', fontSize: 11, fontFamily: "'Roboto', sans-serif", flexShrink: 0 },
+  fathomTranscriptToggle: { background: 'none', border: '1px solid #222', borderRadius: 6, color: '#444', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' as const },
+  fathomTranscript: { display: 'flex', flexDirection: 'column' as const, gap: 6, maxHeight: 240, overflowY: 'auto' as const, background: '#0d0d0d', borderRadius: 8, padding: '10px 12px' },
+  fathomTranscriptLine: { display: 'flex', gap: 8, alignItems: 'flex-start' },
+  fathomTranscriptTime: { color: '#333', fontSize: 10, fontFamily: 'monospace', flexShrink: 0, marginTop: 2 },
+  fathomTranscriptSpeaker: { color: '#5b5ef4', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 400, flexShrink: 0, minWidth: 80 },
+  fathomTranscriptText: { color: '#777', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, lineHeight: 1.5 },
+  bgMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', width: 280, display: 'flex', flexDirection: 'column' as const, gap: 8, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  bgTabs: { display: 'flex', gap: 4 },
+  bgTab: { flex: 1, background: 'none', border: '1px solid #2a2a2a', borderRadius: 8, padding: '5px 0', color: '#666', fontSize: 11, fontFamily: "'Roboto', sans-serif", cursor: 'pointer' },
+  bgTabActive: { background: '#2a2010', borderColor: '#f5a623', color: '#f5a623' },
+  bgSection: { display: 'flex', flexDirection: 'column' as const, gap: 10 },
+  bgRow: { display: 'flex', alignItems: 'center', gap: 8 },
+  bgLabel: { color: '#888', fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300, flex: 1 },
+  bgSlider: { flex: 1, accentColor: '#f5a623', cursor: 'pointer' },
+  bgToggle: { background: '#222', border: '1px solid #333', borderRadius: 20, padding: '3px 12px', color: '#666', fontSize: 11, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" },
+  bgToggleOn: { background: '#2a2010', borderColor: '#f5a623', color: '#f5a623' },
+  bgHint: { color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, margin: 0 },
+  bgPresetGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 },
+  bgPresetBtn: { height: 52, borderRadius: 8, border: '2px solid transparent', cursor: 'pointer', position: 'relative' as const, overflow: 'hidden', padding: 0 },
+  bgPresetActive: { border: '2px solid #f5a623', boxShadow: '0 0 0 1px rgba(245,166,35,0.4)' },
+  bgPresetLabel: { position: 'absolute' as const, bottom: 3, left: 0, right: 0, textAlign: 'center' as const, color: 'rgba(255,255,255,0.9)', fontSize: 9, fontFamily: "'Roboto', sans-serif", fontWeight: 400, textShadow: '0 1px 3px rgba(0,0,0,0.8)', letterSpacing: 0.3 },
+  bgUploadBtn: { display: 'flex', alignItems: 'center', gap: 8, background: '#222', border: '1px dashed #444', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', transition: 'border-color 0.15s' },
+  bgUploadedName: { color: '#48bb78', fontSize: 11, fontFamily: "'Roboto', sans-serif", fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  autoCamMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 200, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  autoCamWindow: { position: 'absolute' as const, bottom: 20, right: 20, background: '#141414', border: '1px solid #1e3a5a', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.7)', zIndex: 15 },
+  autoCamHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', background: '#1a1a1a', borderBottom: '1px solid #222' },
+  autoCamTabs: { display: 'flex', gap: 4 },
+  autoCamTab: { display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid #333', borderRadius: 20, padding: '3px 10px', color: '#666', fontSize: 11, fontFamily: "'Roboto', sans-serif", cursor: 'pointer' },
+  autoCamTabActive: { background: '#1a2e4a', borderColor: '#4299e1', color: '#4299e1' },
+  autoCamClose: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 },
+  autoCamVideoWrap: { position: 'relative' as const, width: '100%', aspectRatio: '4/3', background: '#0d0d0d', overflow: 'hidden' },
+  autoCamCropFrame: { width: '100%', height: '100%', overflow: 'hidden' },
+  autoCamNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0d0d0d' },
+  autoCamNameTag: { position: 'absolute' as const, bottom: 8, left: 10, display: 'flex', alignItems: 'center', gap: 5, color: '#d0d0d0', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", background: 'rgba(0,0,0,0.6)', borderRadius: 10, padding: '3px 8px' },
+  autoCamSplitRow: { display: 'flex', height: 135, background: '#0d0d0d' },
+  autoCamHalf: { flex: 1, position: 'relative' as const, overflow: 'hidden' },
+  autoCamDivider: { width: 1, background: '#222', flexShrink: 0 },
+  autoCamSplitLabel: { position: 'absolute' as const, bottom: 5, left: 6, color: '#bbb', fontSize: 10, fontWeight: 300, fontFamily: "'Roboto', sans-serif", background: 'rgba(0,0,0,0.6)', borderRadius: 8, padding: '2px 6px' },
+  speakerWindow: { width: 220, background: '#141414', border: '1px solid rgba(72,187,120,0.25)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  speakerWindowHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 8px 7px 12px', background: '#1a1a1a', borderBottom: '1px solid #222' },
+  speakerWindowName: { color: '#d0d0d0', fontSize: 11, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  speakerWindowBtn: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 4, fontSize: 13, lineHeight: 1 },
+  speakerVideoArea: { width: '100%', aspectRatio: '16/9', background: '#0d0d0d', position: 'relative' as const },
+  speakerNoVideo: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  speakingChip: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(10px)', borderRadius: 20, padding: '6px 14px 6px 10px', border: '1px solid rgba(72,187,120,0.2)', pointerEvents: 'auto' as const },
+  speakerRestoreBtn: { background: 'none', border: 'none', color: '#48bb78', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px' },
+  soundBars: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 18 },
+  soundBar: { width: 3, height: 18, borderRadius: 2, background: '#48bb78', transformOrigin: '50% 100%', transition: 'transform 0.08s ease' },
+  speakingName: { color: '#d0d0d0', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.3 },
+  // Restore control for a fully-closed (×'d) speaking monitor — a small,
+  // low-profile circular button in the same corner the monitor normally
+  // occupies, visible even while no one is currently speaking (its
+  // closed/open state is a persistent user choice, not tied to
+  // active-speaker detection).
+  speakerMonitorRestore: { position: 'absolute' as const, bottom: 100, width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(10px)', border: '1px solid rgba(72,187,120,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#48bb78', cursor: 'pointer', zIndex: 15 },
+  shareMenu: { position: 'absolute' as const, bottom: 62, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '10px', minWidth: 220, display: 'flex', flexDirection: 'column' as const, gap: 4, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.7)' },
+  shareMenuHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px 8px', borderBottom: '1px solid #2a2a2a', marginBottom: 2 },
+  shareMenuTitle: { color: '#888', fontSize: 10, fontWeight: 300, letterSpacing: 1.5, textTransform: 'uppercase' as const, fontFamily: "'Roboto', sans-serif" },
+  shareMenuClose: { background: 'none', border: 'none', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 },
+  shareMenuRow: { display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: '7px 8px', borderRadius: 8, width: '100%', textAlign: 'left' as const },
+  shareMenuText: { fontSize: 12, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+  shareMenuDivider: { height: 1, background: '#242424', margin: '4px 0' },
+  shareMenuOption: { display: 'flex', alignItems: 'center', gap: 9, background: 'none', border: 'none', color: '#ccc', cursor: 'pointer', padding: '10px 10px', borderRadius: 8, fontSize: 13, fontFamily: "'Roboto', sans-serif", fontWeight: 300, width: '100%', textAlign: 'left' as const },
+  shareBar: { position: 'absolute' as const, bottom: 88, left: '50%', transform: 'translateX(-50%)', background: 'rgba(10,20,10,0.9)', backdropFilter: 'blur(12px)', border: '1px solid #276127', borderRadius: 30, padding: '7px 16px', display: 'flex', alignItems: 'center', gap: 16, zIndex: 15, whiteSpace: 'nowrap' as const },
+  shareBarLabel: { color: '#48bb78', fontSize: 12, fontWeight: 300, fontFamily: "'Roboto', sans-serif", display: 'flex', alignItems: 'center', gap: 6 },
+  shareBarSlot: { background: '#1a3a1a', color: '#48bb78', fontSize: 10, fontWeight: 500, letterSpacing: 1, padding: '2px 7px', borderRadius: 10 },
+  shareBarActions: { display: 'flex', gap: 6 },
+  shareBarBtn: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 20, padding: '4px 12px', color: '#ccc', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: "'Roboto', sans-serif", fontWeight: 300 },
+}
+
+// Native <input type="date"> renders its calendar indicator as a near-black
+// glyph, effectively invisible on this app's dark inputs — while the TimePicker
+// beside it draws its clock at #888. invert(0.55) maps that black glyph to
+// ~#8c8c8c so the two read as a matched pair.
+//
+// Exported (rather than inlined in one component) because the same date field
+// appears in SchedulePanel and in MeetingCarousel's Edit Scheduled Meeting
+// sheet, and those two never mount at the same time — the Schedule tab and the
+// Start Now tab are mutually exclusive, so a <style> living in one would simply
+// be absent for the other.
+//
+// Scoped to this class and to the indicator only: no other input is affected,
+// and color-scheme is deliberately left alone so the native popup keeps
+// rendering light (forcing dark makes it an unstyled black box in Electron).
+export const DATE_INPUT_CLASS = 'beehive-date-input'
+export const DATE_INPUT_CSS = `
+  .${DATE_INPUT_CLASS}::-webkit-calendar-picker-indicator {
+    filter: invert(0.55);
+    cursor: pointer;
+  }
+  .${DATE_INPUT_CLASS} { cursor: pointer; }
+`
+
+// Opens the native date picker when the field itself is clicked, not only the
+// small indicator glyph — matching the TimePicker beside it, where the whole
+// control is clickable. showPicker() throws where it is unimplemented or the
+// click is not treated as a user gesture, so failure leaves normal typing intact.
+export function openDatePicker(e: React.MouseEvent<HTMLInputElement>) {
+  try { (e.currentTarget as HTMLInputElement).showPicker?.() } catch { /* fall back to typing */ }
+}

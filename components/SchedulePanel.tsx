@@ -1,0 +1,401 @@
+import { useState } from 'react'
+import { CalendarPlus } from 'lucide-react'
+import { useScheduleRoom } from '../livekit_react_hooks'
+import { WEB_BASE, STING_RED, saveMeetingPrep } from './roomUtils'
+import { canAddToCalendar, downloadMeetingIcs, type CalendarMeeting } from './calendarInvite'
+import { s, DATE_INPUT_CLASS, DATE_INPUT_CSS, openDatePicker } from './roomStyles'
+import { MeetingPrep, type MeetingPrepSummary } from './MeetingPrep'
+import { getTemplate } from './meetingTemplates'
+import { TimePicker } from './TimePicker'
+
+const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+  ? 'http://localhost:3001'
+  : ''
+
+// Seeds the BeeHive Bot Assistant's shared, live agenda (meeting_agendas —
+// see supabase/migrations/006_meeting_agenda.sql) with whatever prep
+// template/agenda was picked at scheduling time, so it's already there the
+// instant anyone opens the assistant in the room — not just on whichever
+// single device/browser origin happened to schedule the meeting (that's all
+// saveMeetingPrep's localStorage ever covered, and Electron's file:// origin
+// can never see a web tab's localStorage regardless, so a fix that only
+// touched local storage would still leave the desktop app with nothing).
+// `template.goals` (labelled "Objectives" in MeetingPrep's own UI) isn't
+// part of MeetingPrepSummary/StoredMeetingPrep at all — it's static,
+// deterministic from templateId, so it's looked up fresh here rather than
+// duplicating it into that existing, working type.
+async function seedSharedAgenda(roomId: string, hostSecret: string, organizerName: string, prep: MeetingPrepSummary) {
+  const template = getTemplate(prep.templateId)
+  try {
+    await fetch(`${API_BASE}/api/rooms/${roomId}/agenda`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: prep.title,
+        organizerName,
+        objectives: template?.goals ?? [],
+        items: prep.agenda.map((text, i) => ({ id: `seed-${i}`, text, completed: false, notes: '', order: i })),
+        hostSecret,
+      }),
+    })
+  } catch (e) {
+    console.error('[schedule] seeding shared agenda failed:', e)
+  }
+}
+
+const DURATIONS = [15, 30, 45, 60, 90]
+
+export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onScheduled, onStartMeeting }: {
+  displayName: string
+  onDisplayNameChange: (v: string) => void
+  isSting: boolean
+  onScheduled?: (meeting: { name: string; date: string; time: string; link: string }) => void
+  // Enter the just-created scheduled room as host (it holds the seeded
+  // agenda). Without this the host had no in-app way into their own
+  // scheduled room and fell back to Start Now — a fresh, agenda-less room.
+  onStartMeeting?: (roomId: string) => void
+}) {
+  const { scheduleRoom, loading } = useScheduleRoom()
+  const [roomName, setRoomName] = useState('')
+  const [date, setDate] = useState('')
+  const [time, setTime] = useState('')
+  const [duration, setDuration] = useState(30)
+  const [emailInput, setEmailInput] = useState('')
+  const [emails, setEmails] = useState<string[]>([])
+  const [link, setLink] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [prep, setPrep] = useState<MeetingPrepSummary | null>(null)
+  const [createdRoomId, setCreatedRoomId] = useState<string | null>(null)
+  const [createdHostSecret, setCreatedHostSecret] = useState<string | null>(null)
+  // Meeting Intelligence — on by default, user can opt out. This initial value
+  // is applied once on mount only; the sole writer is the checkbox's own
+  // onChange, so an explicit uncheck is never overridden by a re-render,
+  // meeting update, or reconnect. No settings row is written unless this is
+  // checked at create time (see handleCreate below). Start Now has no
+  // equivalent toggle — explicit scope boundary, see the Meeting
+  // Intelligence plan.
+  const [enableIntelligence, setEnableIntelligence] = useState(true)
+
+  const addEmail = () => {
+    const e = emailInput.trim().toLowerCase()
+    if (e && e.includes('@') && !emails.includes(e)) {
+      setEmails(prev => [...prev, e])
+      setEmailInput('')
+    }
+  }
+
+  const removeEmail = (e: string) => setEmails(prev => prev.filter(x => x !== e))
+
+  // Shared with sendEmails/onScheduled below so the "next meeting" summary
+  // matches whatever name the room was actually created under.
+  const meetingName = roomName.trim() || (date ? `Meeting – ${new Date(date + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'BeeHive Meeting')
+
+  const handleCreate = async () => {
+    if (!displayName.trim()) { alert('Enter your name first'); return }
+    // Scheduled meetings go through the backend (not a direct client insert)
+    // so they come out waiting-room-gated — only Start Now's own room
+    // creation (RoomPage.tsx) stays a direct, ungated client insert.
+    // Pass date/time/duration so the backend stores them on the rooms row,
+    // making the meeting show up correctly in the carousel for all invitees.
+    const result = await scheduleRoom(
+      meetingName,
+      undefined,
+      date || undefined,
+      time || undefined,
+      duration,
+    )
+    if (!result) return
+    const { room, hostSecret } = result
+    setLink(`${WEB_BASE}?room=${room.id}`)
+    setCreatedRoomId(room.id)
+    setCreatedHostSecret(hostSecret)
+    // Whatever prep template/checklist/agenda was picked (if any) follows the
+    // room in two ways: the existing per-device localStorage copy (read back
+    // by MeetingPrepWindow once inside the meeting, same as always), and now
+    // also the shared BeeHive Assistant agenda (meeting_agendas), so it's
+    // there for every participant regardless of which device/app opens the
+    // room, not just this one.
+    if (prep) {
+      saveMeetingPrep(room.id, prep)
+      seedSharedAgenda(room.id, hostSecret, displayName, prep)
+    }
+    // Meeting Intelligence settings — best-effort, non-fatal follow-up call
+    // matching the invitation-creation pattern just below. Only ever called
+    // when the toggle is on; leaving it off means no room_intelligence_
+    // settings row is written at all, so the room_started webhook branch
+    // simply finds nothing and never starts a recording — identical to
+    // today's behavior for every room that doesn't touch this toggle.
+    if (enableIntelligence) {
+      try {
+        await fetch(`${API_BASE}/api/rooms/${room.id}/intelligence-settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recordingEnabled: true, aiNotesEnabled: true, hostSecret }),
+        })
+      } catch (e) {
+        console.warn('[schedule] intelligence settings update failed (non-fatal):', e)
+      }
+    }
+    // Create DB-backed invitations so invitees see this room in their carousel
+    // immediately, across all their devices, without waiting for the email.
+    if (emails.length > 0) {
+      try {
+        await fetch(`${API_BASE}/api/rooms/${room.id}/invitations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails, inviterName: displayName, hostSecret }),
+        })
+      } catch (e) {
+        console.warn('[schedule] invitation creation failed (non-fatal):', e)
+      }
+    }
+  }
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(link)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const sendEmails = async () => {
+    const subject = encodeURIComponent(`BeeHive Meeting: ${roomName || "You're invited"}`)
+    let when = ''
+    if (date) {
+      const dt = new Date(`${date}T${time || '00:00'}`)
+      when = dt.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', ...(time ? { hour: '2-digit', minute: '2-digit' } : {}) })
+    }
+    const agendaLines = prep && prep.agenda.length > 0
+      ? `\nSuggested agenda:\n${prep.agenda.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n`
+      : ''
+    const checklistLines = prep && prep.checklist.some(c => c.checked)
+      ? `\nBring/prepare:\n${prep.checklist.filter(c => c.checked).map(c => `- ${c.label}`).join('\n')}\n`
+      : ''
+    // A mailto: URI cannot carry an attachment — there is no attachment
+    // parameter in RFC 6068, and mail clients that once honoured a
+    // non-standard one dropped it (a web page attaching arbitrary local files
+    // is an exfiltration hole). So the calendar invite is linked rather than
+    // attached: the recipient clicks it and their calendar opens the event.
+    // Only offered once the room exists and has a date worth putting in a
+    // calendar.
+    // WEB_BASE falls back to window.location.origin on the web and to '' under
+    // file:// — so require an absolute URL before putting one in an email,
+    // rather than emitting a relative path a recipient's client cannot resolve.
+    const calendarLines = createdRoomId && date && /^https?:\/\//.test(WEB_BASE || '')
+      ? `\nAdd to your calendar:\n${WEB_BASE}/api/rooms/${createdRoomId}/calendar.ics\n`
+      : ''
+    const body = encodeURIComponent(
+      `Hi,\n\nYou're invited to a BeeHive video meeting.\n\n` +
+      (roomName ? `Meeting: ${roomName}\n` : '') +
+      (when ? `When: ${when}\n` : '') +
+      `\nJoin here:\n${link}\n` +
+      calendarLines +
+      agendaLines +
+      checklistLines +
+      `\n— ${displayName || 'Your host'} via BeeHive`
+    )
+    window.open(`mailto:${emails.join(',')}?subject=${subject}&body=${body}`)
+    // Re-save in case the prep selection changed after the room was created
+    // but before the invite was sent (both remain editable in between).
+    if (prep && createdRoomId) {
+      saveMeetingPrep(createdRoomId, prep)
+      if (createdHostSecret) seedSharedAgenda(createdRoomId, createdHostSecret, displayName, prep)
+    }
+    // Upsert invitations — safe to re-call (idempotent on room_id+invitee_email)
+    if (createdRoomId && createdHostSecret && emails.length > 0) {
+      try {
+        await fetch(`${API_BASE}/api/rooms/${createdRoomId}/invitations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails, inviterName: displayName, hostSecret: createdHostSecret }),
+        })
+      } catch { /* non-fatal */ }
+    }
+    onScheduled?.({ name: meetingName, date, time, link })
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0]
+  // Prep cards are an aid, not a requirement — only appear once the essentials
+  // are filled in, so the user can then choose to use them or ignore them.
+  const formReady = displayName.trim() !== '' && date !== '' && time !== ''
+
+  // Calendar payload for the freshly-scheduled room, built from the same form
+  // state that created it so the invite cannot disagree with what was booked.
+  // Null until the room actually exists.
+  const calendarMeeting: CalendarMeeting | null = createdRoomId
+    ? {
+        roomId: createdRoomId,
+        roomName: roomName.trim() || 'BeeHive meeting',
+        scheduledDate: date || null,
+        scheduledTime: time || null,
+        durationMinutes: duration,
+        organizerName: displayName.trim() || null,
+      }
+    : null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14 }}>
+      <input
+        style={s.input}
+        placeholder="Your name"
+        value={displayName}
+        onChange={e => onDisplayNameChange(e.target.value)}
+        autoFocus
+      />
+
+      <input
+        style={s.input}
+        placeholder="Meeting name (optional)"
+        value={roomName}
+        onChange={e => setRoomName(e.target.value)}
+      />
+
+      <style>{DATE_INPUT_CSS}</style>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          type="date"
+          className={DATE_INPUT_CLASS}
+          min={todayStr}
+          // No forced colorScheme here — Electron's Chromium renders the
+          // native date-picker calendar popup as an unstyled solid black
+          // box under `colorScheme: 'dark'` (it doesn't ship the same
+          // fully-themed dark calendar assets stock desktop Chrome does),
+          // making the whole date field unusable in the desktop app.
+          // Leaving color-scheme unset falls back to the default (light)
+          // native popup, which renders correctly everywhere — the input
+          // box itself still picks up the app's dark styling via s.input.
+          style={{ ...s.input, flex: 2, margin: 0 }}
+          value={date}
+          onChange={e => setDate(e.target.value)}
+          onClick={openDatePicker}
+        />
+        <TimePicker value={time} onChange={setTime} style={{ flex: 1 }} selectedDate={date || undefined} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <span style={{ color: '#666', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase' as const, flexShrink: 0 }}>Duration</span>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+          {DURATIONS.map(d => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDuration(d)}
+              style={{
+                background: duration === d ? '#2a2010' : '#1a1a1a',
+                border: `1px solid ${duration === d ? '#f5a623' : '#2a2a2a'}`,
+                borderRadius: 16, color: duration === d ? '#f5a623' : '#888',
+                fontSize: 12, padding: '5px 12px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif",
+              }}
+            >
+              {d < 60 ? `${d}m` : `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}m` : ''}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={enableIntelligence}
+          onChange={e => setEnableIntelligence(e.target.checked)}
+          style={{ width: 14, height: 14, accentColor: '#f5a623', cursor: 'pointer' }}
+        />
+        <span style={{ color: '#aaa', fontSize: 12 }}>Enable recording &amp; AI notes</span>
+        <span style={{ color: '#555', fontSize: 11 }}>— on by default</span>
+      </label>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          style={{ ...s.input, flex: 1, margin: 0 }}
+          placeholder="Add email address"
+          type="email"
+          value={emailInput}
+          onChange={e => setEmailInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addEmail() } }}
+        />
+        <button
+          style={{ background: '#2a2a2a', border: '1px solid #333', borderRadius: 8, color: '#aaa', padding: '0 14px', cursor: 'pointer', fontSize: 18, flexShrink: 0 }}
+          onClick={addEmail}
+        >+</button>
+      </div>
+
+      {emails.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6 }}>
+          {emails.map(e => (
+            <span key={e} style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#1e1e1e', border: '1px solid #2a2a2a', borderRadius: 20, padding: '4px 10px', fontSize: 12, color: '#ccc', fontFamily: "'Roboto', sans-serif" }}>
+              {e}
+              <button onClick={() => removeEmail(e)} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: 14 }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Smart Meeting Preparation — meeting-type cards + AI-style prep assistant.
+          Only shown once name/date/time are filled in; entirely optional from there. */}
+      {formReady && <MeetingPrep durationMinutes={duration} attendeeCount={emails.length} onChange={setPrep} />}
+
+      {link ? (
+        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, padding: '8px 12px' }}>
+            <span style={{ flex: 1, color: '#aaa', fontSize: 12, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{link}</span>
+            <button onClick={copyLink} style={{ background: copied ? '#1a3a1a' : '#2a2a2a', border: `1px solid ${copied ? '#2d6a2d' : '#333'}`, borderRadius: 6, color: copied ? '#4caf50' : '#aaa', padding: '4px 10px', cursor: 'pointer', fontSize: 11, flexShrink: 0, fontFamily: "'Roboto', sans-serif" }}>
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            {/* Add to Calendar — same .ics the meetings carousel offers, built
+                from the form state that just created this room so the invite
+                cannot disagree with what was scheduled. */}
+            {calendarMeeting && canAddToCalendar(calendarMeeting) && (
+              <button
+                onClick={() => downloadMeetingIcs(calendarMeeting)}
+                title="Download a calendar invite (.ics)"
+                style={{ background: '#2a2a2a', border: '1px solid #333', borderRadius: 6, color: '#aaa', padding: '4px 10px', cursor: 'pointer', fontSize: 11, flexShrink: 0, fontFamily: "'Roboto', sans-serif", display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <CalendarPlus size={12} strokeWidth={1.5} /> Calendar
+              </button>
+            )}
+          </div>
+          {/* Enter the scheduled room now, as host — this is the room that
+              holds the agenda just set up; without it the only way in was the
+              link, and the obvious Start Now button makes a different, empty
+              room. Only rendered once the room actually exists (createdRoomId). */}
+          {createdRoomId && onStartMeeting && (
+            <button
+              style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}
+              onClick={() => onStartMeeting(createdRoomId)}
+            >
+              Start meeting now
+            </button>
+          )}
+          {emails.length > 0 && (
+            <button
+              style={{ ...s.primaryBtn, margin: 0, ...(isSting ? { background: STING_RED } : {}) }}
+              onClick={sendEmails}
+            >
+              Send Email Invite{emails.length > 1 ? 's' : ''} ({emails.length})
+            </button>
+          )}
+          {emails.length === 0 && (
+            <p style={{ color: '#555', fontSize: 11, fontFamily: "'Roboto', sans-serif", margin: 0, textAlign: 'center' as const }}>
+              Add email addresses above to send invites
+            </p>
+          )}
+        </div>
+      ) : (
+        <button
+          style={{
+            ...s.primaryBtn, margin: 0,
+            ...(isSting ? { background: STING_RED } : {}),
+            // Greyed out until the essentials (name/date/time) are filled in —
+            // matches the same formReady gate that shows the prep assistant,
+            // so the button and the prep cards agree on "ready to schedule".
+            ...(!formReady ? { background: '#2a2a2a', color: '#666', cursor: 'not-allowed' } : {}),
+          }}
+          onClick={handleCreate}
+          disabled={loading || !formReady}
+          title={!formReady ? 'Enter your name, date, and time first' : undefined}
+        >
+          {loading ? 'Creating…' : 'Create Meeting & Get Link'}
+        </button>
+      )}
+    </div>
+  )
+}

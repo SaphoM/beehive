@@ -67,12 +67,14 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   const [prep, setPrep] = useState<MeetingPrepSummary | null>(null)
   const [createdRoomId, setCreatedRoomId] = useState<string | null>(null)
   const [createdHostSecret, setCreatedHostSecret] = useState<string | null>(null)
-  // Meeting Intelligence — opt-in, off by default. No settings row is ever
-  // written unless this is checked (see handleCreate below), which is what
-  // keeps every room that doesn't touch this toggle behaving exactly as it
-  // does today. Start Now has no equivalent toggle — explicit scope
-  // boundary, see the Meeting Intelligence plan.
-  const [enableIntelligence, setEnableIntelligence] = useState(false)
+  // Meeting Intelligence — on by default, user can opt out. This initial value
+  // is applied once on mount only; the sole writer is the checkbox's own
+  // onChange, so an explicit uncheck is never overridden by a re-render,
+  // meeting update, or reconnect. No settings row is written unless this is
+  // checked at create time (see handleCreate below). Start Now has no
+  // equivalent toggle — explicit scope boundary, see the Meeting
+  // Intelligence plan.
+  const [enableIntelligence, setEnableIntelligence] = useState(true)
 
   const addEmail = () => {
     const e = emailInput.trim().toLowerCase()
@@ -298,7 +300,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
           style={{ width: 14, height: 14, accentColor: '#f5a623', cursor: 'pointer' }}
         />
         <span style={{ color: '#aaa', fontSize: 12 }}>Enable recording &amp; AI notes</span>
-        <span style={{ color: '#555', fontSize: 11 }}>— off by default</span>
+        <span style={{ color: '#555', fontSize: 11 }}>— on by default</span>
       </label>
 
       <div style={{ display: 'flex', gap: 8 }}>

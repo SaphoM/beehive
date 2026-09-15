@@ -27,6 +27,7 @@ import { useTracks } from '@livekit/components-react'
 import { supabase } from '../livekit_react_hooks'
 import { RoomCoordinationProcessor, isRoomCoordinationSupported } from './RoomCoordinationProcessor'
 import { useSameRoomDetection } from './useSameRoomDetection'
+import { createKrisp } from './micProcessing'
 
 // How often the ducking decision is re-evaluated. Short enough to feel
 // instantaneous (mission: "nearly instantaneous", "no noticeable delays")
@@ -125,8 +126,10 @@ export function RoomAudioCoordination({
         } catch { /* best-effort — never block the mic on a processor failure */ }
       } else if (processorRef.current) {
         try {
-          const { KrispNoiseFilter } = await import('@livekit/krisp-noise-filter')
-          if (!cancelled) await track.setProcessor(KrispNoiseFilter())
+          // Same factory as the app's primary attach, so the model quality
+          // matches what the participant had before coordination was on.
+          const krisp = await createKrisp()
+          if (!cancelled) await track.setProcessor(krisp)
         } catch { /* best-effort */ }
         processorRef.current = null
       }

@@ -63,7 +63,7 @@ import {
   TrackToggle,
   useParticipants as useLiveKitParticipants,
 } from '@livekit/components-react'
-import { Track, LocalVideoTrack, ParticipantEvent, ConnectionState, type Room, type LocalTrackPublication } from 'livekit-client'
+import { Track, LocalVideoTrack, ParticipantEvent, ConnectionState, type Room, type LocalTrackPublication, type LocalAudioTrack } from 'livekit-client'
 // Krisp ships a multi-MB WASM/ML payload — loaded lazily (see the noise-filter
 // effect below) so it never bloats the initial page load for users who haven't
 // published a mic track yet.
@@ -88,6 +88,7 @@ import { ParticipantsWindow, DockedParticipantsStrip } from './components/Partic
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { useBackgrounds } from './components/useBackgrounds'
 import { OpsDashboard } from './components/OpsDashboard'
+import { attachMicProcessing } from './components/micProcessing'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
 import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
@@ -621,23 +622,13 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
       const track = pub.track
       if (!track || track.kind !== Track.Kind.Audio) return
       setRawMicTrack(track.mediaStreamTrack)
-      try {
-        const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import('@livekit/krisp-noise-filter')
-        if (cancelled) return
-        if (!isKrispNoiseFilterSupported()) {
-          console.warn('[audio] noise suppression unsupported on this platform — mic is transmitting unprocessed audio')
-          return
-        }
-        await track.setProcessor(KrispNoiseFilter())
-        console.info('[audio] noise suppression active')
-      } catch (err) {
-        // Never block the mic on a filter failure — but don't swallow it
-        // silently either. A failed attach means this participant keeps
-        // transmitting *unprocessed* audio (background/keyboard noise
-        // included) with nothing in the UI to say so, which previously made
-        // the failure impossible to diagnose from a user report alone.
-        console.warn('[audio] noise suppression failed to attach — mic is transmitting unprocessed audio', err)
-      }
+      if (cancelled) return
+      // One authoritative attach path — see components/micProcessing.ts for
+      // the audited pipeline and why a plain Krisp attach was leaving raw
+      // audio on the sender (sample-rate OverconstrainedError on Bluetooth
+      // / 44.1 kHz mics, and native NS left switched off after a failed
+      // init). Never throws; never blocks the mic.
+      await attachMicProcessing(track as LocalAudioTrack)
     }
     const existing = localParticipant.getTrackPublication(Track.Source.Microphone)
     if (existing) applyFilter(existing as LocalTrackPublication)

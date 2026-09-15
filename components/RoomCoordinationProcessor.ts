@@ -54,8 +54,9 @@ export class RoomCoordinationProcessor implements TrackProcessor<Track.Kind.Audi
   private ducked = false
 
   init = async (opts: AudioProcessorOptions) => {
-    const { KrispNoiseFilter } = await import('@livekit/krisp-noise-filter')
-    this.krisp = KrispNoiseFilter()
+    // Shared factory: same model quality as the app's primary attach.
+    const { createKrisp } = await import('./micProcessing')
+    this.krisp = await createKrisp()
     // Krisp does its own noise-suppression work first, completely
     // unmodified — this class never touches its internals, only reads the
     // `processedTrack` it produces.

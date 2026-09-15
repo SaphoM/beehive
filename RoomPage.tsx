@@ -206,6 +206,24 @@ if (typeof document !== 'undefined' && !document.getElementById('bhv-self-view-m
   document.head.appendChild(style)
 }
 
+// Audience-mode gating for LiveKit's own TrackToggle buttons (mic / camera).
+// The SFU already refuses an attendee's publish (no canPublish grant); this
+// makes the controls SAY so instead of letting a click fail. Keyed on the
+// room wrapper like the mirror attribute above, so every control bar
+// variant (desktop, mobile, presenter) is covered by one rule.
+if (typeof document !== 'undefined' && !document.getElementById('bhv-audience-gate')) {
+  const style = document.createElement('style')
+  style.id = 'bhv-audience-gate'
+  style.textContent = `
+    [data-bhv-audience="true"] .lk-button[data-lk-source="microphone"],
+    [data-bhv-audience="true"] .lk-button[data-lk-source="camera"] {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+  `
+  document.head.appendChild(style)
+}
+
 // Captured HERE, synchronously, at module-evaluation time — not inside a
 // useEffect. This is what makes the desktop deep-link handoff's ?room=
 // actually survive: the handoff URL is
@@ -681,6 +699,25 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   // connection UUID; the name is what's stable and human-meaningful).
   const avatarUrlFor = (name: string) => liveKitParticipants.find(p => p.name === name)?.attributes?.avatar_url ?? null
   const canAdmit = myRole === 'host' || myRole === 'co-host'
+
+  // Audience mode: whether I may publish at all. LiveKit enforces this at
+  // the SFU from the token grant (see /api/livekit/token); this mirrors it
+  // for the UI so an attendee's mic / camera / share controls read as
+  // "audience" instead of failing on click. Flips live when a host promotes
+  // me to speaker (ParticipantPermissionsChanged), with a prompt so I know
+  // the floor is mine.
+  const [canPublish, setCanPublish] = useState<boolean>(() => localParticipant.permissions?.canPublish !== false)
+  const [floorGranted, setFloorGranted] = useState(false)
+  useEffect(() => {
+    const sync = () => {
+      const next = localParticipant.permissions?.canPublish !== false
+      setCanPublish(prev => { if (!prev && next) setFloorGranted(true); return next })
+    }
+    sync()
+    localParticipant.on(ParticipantEvent.ParticipantPermissionsChanged, sync)
+    return () => { localParticipant.off(ParticipantEvent.ParticipantPermissionsChanged, sync) }
+  }, [localParticipant])
+  const isAudience = !canPublish
   // Kept subscribed for the whole session whenever canAdmit — not just while
   // the waiting-room panel happens to be open. Before this, the host had no
   // way to learn anyone was waiting short of manually opening that panel
@@ -2043,6 +2080,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   useEffect(() => { stopShareRef.current = stopShare }, [stopShare])
 
   const startShare = useCallback(async (forceHide = false) => {
+    if (isAudience) { setDeviceErrorToast('You\'re in the audience — raise your hand and the host can give you the floor.'); return }
     const shouldHide = clearBeforeShare || forceHide
     if (shouldHide) {
       setRoomHidden(true)
@@ -2072,7 +2110,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     } catch {
       if (shouldHide) setRoomHidden(false)
     }
-  }, [clearBeforeShare, localParticipant])
+  }, [clearBeforeShare, localParticipant, isAudience])
 
   const addWindow = useCallback(async () => {
     try {
@@ -2763,8 +2801,8 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     if (!window.electronAPI?.onDockAction) return
     return window.electronAPI.onDockAction((action) => {
       switch (action.type) {
-        case 'toggle-mic': localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled); break
-        case 'toggle-cam': localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled); break
+        case 'toggle-mic': if (!isAudience) localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled); break
+        case 'toggle-cam': if (!isAudience) localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled); break
         case 'toggle-hand': toggleRaiseHand(); break
         case 'stop-share': stopShare(); break
         case 'open-chat': setShowChat(true); break
@@ -2781,6 +2819,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
       // Default is mirrored, like looking in a mirror; Flip shows you as
       // others see you. Neither affects the published stream.
       data-bhv-mirror={bgFlip ? 'off' : 'on'}
+      // Audience members: every mic / camera TrackToggle inside the room is
+      // rendered inert — see the bhv-audience style block.
+      data-bhv-audience={isAudience ? 'true' : 'false'}
       style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}
     >
       {/* Header */}
@@ -3132,9 +3173,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
               myHandRaised={myHandRaised}
               onToggleHand={toggleRaiseHand}
               isMicOn={localParticipant.isMicrophoneEnabled}
-              onToggleMic={() => localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled)}
+              onToggleMic={() => { if (!isAudience) localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled) }}
               isCamOn={localParticipant.isCameraEnabled}
-              onToggleCam={() => localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled)}
+              onToggleCam={() => { if (!isAudience) localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled) }}
               onSendReaction={sendReaction}
               onLeave={leaveWithNotification}
               onClose={() => setShowFullscreenHud(false)}
@@ -4138,6 +4179,47 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
 
       {admissionToast && (
         <Toast message={admissionToast} onDone={() => setAdmissionToast(null)} durationMs={5000} />
+      )}
+
+      {/* Audience member: a quiet, persistent explanation of why the mic and
+          camera are inert, with the one action that leads somewhere. */}
+      {isAudience && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 92, transform: 'translateX(-50%)', background: 'rgba(10,10,10,0.88)', backdropFilter: 'blur(12px)', border: '1px solid #333', borderRadius: 24, padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, zIndex: 900, fontFamily: "'Roboto', sans-serif", fontSize: 12, color: '#ccc', pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+          <Users size={13} color="#f5a623" />
+          <span>You're in the audience — <span style={{ color: '#f5a623' }}>raise your hand</span> to ask to speak</span>
+        </div>
+      )}
+      {/* Promoted to speaker: the floor is theirs. Reuses the unmute prompt's
+          exact shape so "Unmute" is one click away the moment rights arrive. */}
+      {floorGranted && !isAudience && (
+        <div
+          role="alertdialog"
+          aria-label="The host has given you the floor"
+          style={{
+            position: 'fixed', left: '50%', top: 72, transform: 'translateX(-50%)',
+            background: '#1a1a1a', border: '1px solid #f5a623', borderRadius: 10,
+            padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
+            boxShadow: '0 8px 30px rgba(0,0,0,0.5)', zIndex: 1000, fontFamily: "'Roboto', sans-serif", maxWidth: 440,
+          }}
+        >
+          <Mic size={16} color="#f5a623" />
+          <span style={{ color: '#eee', fontSize: 13, fontWeight: 300, flex: 1 }}>The host has given you the floor — you can speak now</span>
+          <button
+            onClick={async () => {
+              setFloorGranted(false)
+              try { await localParticipant.setMicrophoneEnabled(true) } catch (e) { handleMicDeviceError(e as Error) }
+            }}
+            style={{ background: '#f5a623', color: '#111', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+          >
+            Unmute
+          </button>
+          <button
+            onClick={() => setFloorGranted(false)}
+            style={{ background: 'none', color: '#888', border: '1px solid #333', borderRadius: 6, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+          >
+            Later
+          </button>
+        </div>
       )}
 
       {/* Host asked this participant to unmute. Rendered as an actionable

@@ -75,6 +75,11 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   // equivalent toggle — explicit scope boundary, see the Meeting
   // Intelligence plan.
   const [enableIntelligence, setEnableIntelligence] = useState(true)
+  // Large session: attendees join as audience (no mic / camera / share
+  // rights) and raise a hand to be given the floor one at a time. Off by
+  // default — an ordinary scheduled meeting is a conversation, not a
+  // broadcast, and this changes what every attendee can do.
+  const [audienceMode, setAudienceMode] = useState(false)
 
   const addEmail = () => {
     const e = emailInput.trim().toLowerCase()
@@ -103,6 +108,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
       date || undefined,
       time || undefined,
       duration,
+      audienceMode,
     )
     if (!result) return
     const { room, hostSecret } = result
@@ -301,6 +307,17 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
         />
         <span style={{ color: '#aaa', fontSize: 12 }}>Enable recording &amp; AI notes</span>
         <span style={{ color: '#555', fontSize: 11 }}>— on by default</span>
+      </label>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={audienceMode}
+          onChange={e => setAudienceMode(e.target.checked)}
+          style={{ width: 14, height: 14, accentColor: '#f5a623', cursor: 'pointer' }}
+        />
+        <span style={{ color: '#aaa', fontSize: 12 }}>Large session</span>
+        <span style={{ color: '#555', fontSize: 11 }}>— attendees join as audience, raise a hand to speak</span>
       </label>
 
       <div style={{ display: 'flex', gap: 8 }}>

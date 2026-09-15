@@ -195,6 +195,8 @@ export function useScheduleRoom() {
     scheduledDate?: string,
     scheduledTime?: string,
     durationMinutes?: number,
+    // Large session — attendees join as audience; see 012_audience_mode.sql.
+    audienceMode?: boolean,
   ) => {
     setLoading(true)
     setError(null)
@@ -216,6 +218,7 @@ export function useScheduleRoom() {
         ...(scheduledDate ? { scheduledDate } : {}),
         ...(scheduledTime ? { scheduledTime } : {}),
         ...(durationMinutes ? { durationMinutes } : {}),
+        ...(audienceMode ? { audienceMode: true } : {}),
       }),
     })
     setLoading(false)

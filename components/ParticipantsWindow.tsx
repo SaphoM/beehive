@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Mic, MicOff, VideoOff, MessageSquare, Crown, BellRing } from 'lucide-react'
+import { X, Mic, MicOff, VideoOff, MessageSquare, Crown, BellRing, Megaphone, Users } from 'lucide-react'
 import { ParticipantTile, useTracks, useLocalParticipant, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
@@ -67,6 +67,26 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
       console.error('[participants] grant-co-host failed:', e)
     } finally {
       setBusyName(null)
+    }
+  }
+
+  // Audience-mode floor control — host OR co-host, one person per click.
+  // Grants (or withdraws) publish rights live; the promoted speaker gets a
+  // prompt with a one-click Unmute on their side (RoomPage's floorGranted).
+  const [speakerBusy, setSpeakerBusy] = useState<string | null>(null)
+  const setSpeaker = async (name: string, grant: boolean) => {
+    if (!roomId) return
+    setSpeakerBusy(name)
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/speaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: name, grant, actingDisplayName, hostSecret: hostSecret ?? undefined }),
+      })
+    } catch (e) {
+      console.error('[participants] speaker change failed:', e)
+    } finally {
+      setSpeakerBusy(null)
     }
   }
 
@@ -204,7 +224,31 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
                     action, never routed through this force-mute path). Mute
                     while on; "request unmute" while off, since there's no
                     server-side force-unmute to offer instead. */}
-                {canModerate && !isSelf && roomId && (
+                {/* Audience-mode floor: an attendee has no publish rights,
+                    so mic moderation is meaningless for them — offer "Let
+                    speak" instead. A promoted speaker gets the normal mic
+                    controls plus a way back to the audience. */}
+                {canModerate && !isSelf && roomId && role === 'attendee' && (
+                  <button
+                    onClick={() => setSpeaker(name, true)}
+                    disabled={speakerBusy === name || micCapReached}
+                    title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : `Let ${name} speak`}
+                    style={{ background: 'none', border: 'none', cursor: micCapReached ? 'not-allowed' : 'pointer', color: micCapReached ? '#555' : '#f5a623', display: 'flex', alignItems: 'center', padding: 0 }}
+                  >
+                    <Megaphone size={10} />
+                  </button>
+                )}
+                {canModerate && !isSelf && roomId && role === 'speaker' && (
+                  <button
+                    onClick={() => setSpeaker(name, false)}
+                    disabled={speakerBusy === name}
+                    title={`Move ${name} back to the audience`}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+                  >
+                    <Users size={10} />
+                  </button>
+                )}
+                {canModerate && !isSelf && roomId && role !== 'attendee' && (
                   isMuted ? (
                     onRequestUnmute && (
                       <button

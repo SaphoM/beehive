@@ -30,7 +30,7 @@ type Overview = {
     livekit:  { url: string | null; planKey: string | null; plan: Plan | null; reachable: boolean; latencyMs: number | null; activeRooms: number }
   }
   totals: { participants: number; mics: number; cameras: number }
-  sessions: Array<{ livekitRoomName: string; roomId: string | null; name: string; requiresAdmission: boolean; pendingAdmissions: number; participants: number; publishers: { mics: number; cameras: number; screens: number }; startedAt: string | null; hosts: string[] }>
+  sessions: Array<{ livekitRoomName: string; roomId: string | null; name: string; requiresAdmission: boolean; audienceMode: boolean; pendingAdmissions: number; participants: number; publishers: { mics: number; cameras: number; screens: number }; startedAt: string | null; hosts: string[] }>
   readiness: Array<{ id: string; status: 'done' | 'warn' | 'todo'; label: string; detail: string }>
   readinessScore: { done: number; total: number }
 }
@@ -192,7 +192,8 @@ export function OpsDashboard({ onBack }: { onBack: () => void }) {
                       {s.startedAt && <span>since {new Date(s.startedAt).toLocaleTimeString()}</span>}
                       {s.hosts.length > 0 && <span>host {s.hosts.join(', ')}</span>}
                       {s.requiresAdmission && <span style={c.chip('#FFF4DF', '#8A5A06')}>waiting room{s.pendingAdmissions ? ` · ${s.pendingAdmissions} waiting` : ''}</span>}
-                      {big && <span style={c.chip('#141414', AMBER)}>large session</span>}
+                      {s.audienceMode && <span style={c.chip('#141414', AMBER)}>audience mode</span>}
+                      {big && !s.audienceMode && <span style={c.chip('#141414', AMBER)}>large session</span>}
                     </div>
                   </div>
                   <Stat n={s.participants} label="attendees" />

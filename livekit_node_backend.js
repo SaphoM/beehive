@@ -147,7 +147,7 @@ const meetingIntelligence = createMeetingIntelligence({ supabase, egressClient }
 // in localStorage, and it rides back to this backend on every subsequent
 // token request for this room to prove host identity.
 app.post('/api/rooms/schedule', async (req, res) => {
-  const { name, organisation, accessToken, scheduledDate, scheduledTime, durationMinutes } = req.body
+  const { name, organisation, accessToken, scheduledDate, scheduledTime, durationMinutes, audienceMode } = req.body
   if (!name) return res.status(400).json({ error: 'name is required' })
 
   const livekitRoomName = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -181,6 +181,11 @@ app.post('/api/rooms/schedule', async (req, res) => {
       organisation,
       requires_admission: true,
       scheduler_auth_user_id: schedulerAuthUserId,
+      // Large session: attendees join as audience (no publish rights) and
+      // hosts promote speakers one at a time — see /api/livekit/token and
+      // /api/rooms/:roomId/speaker. Opt-in; false leaves the room exactly
+      // as scheduled rooms have always behaved.
+      audience_mode: !!audienceMode,
       ...(scheduledDate ? { scheduled_date: scheduledDate } : {}),
       ...(scheduledTime ? { scheduled_time: scheduledTime } : {}),
       ...(durationMinutes ? { duration_minutes: durationMinutes } : {}),
@@ -241,7 +246,7 @@ app.post('/api/livekit/token', async (req, res) => {
   // fall through untouched, exactly as before this feature existed.
   const { data: room } = await supabase
     .from('rooms')
-    .select('id, requires_admission, scheduler_auth_user_id')
+    .select('id, requires_admission, scheduler_auth_user_id, audience_mode')
     .eq('livekit_room_name', roomName)
     .single()
 
@@ -315,13 +320,6 @@ app.post('/api/livekit/token', async (req, res) => {
     { identity: participantIdentity, name: displayName }
   )
 
-  token.addGrant({
-    room: roomName,
-    roomJoin: true,
-    canPublish: true,
-    canSubscribe: true,
-  })
-
   // Presence attributes ride on the LiveKit participant itself, so every
   // client learns each participant's role and avatar from the roster it
   // already holds — no per-client Supabase subscription or refetch needed.
@@ -346,7 +344,26 @@ app.post('/api/livekit/token', async (req, res) => {
       .limit(1)
       .maybeSingle()
     if (existingRow?.role === 'co-host') role = 'co-host'
+    else if (existingRow?.role === 'speaker') role = 'speaker'
   }
+  // Audience mode: anyone who isn't host / co-host / a promoted speaker is
+  // 'attendee' — that word, not 'participant', is what the client keys on.
+  if (room?.audience_mode && role === 'participant') role = 'attendee'
+
+  // Publish rights follow the role. An attendee in an audience-mode room
+  // cannot open a mic, camera or screen share — LiveKit enforces this at
+  // the SFU, not just in the UI — but keeps data rights so chat, reactions
+  // and raised hands (the way an attendee asks to speak) still work.
+  // Everyone else keeps the full grant every room has always issued.
+  const canPublish = role !== 'attendee'
+  token.addGrant({
+    room: roomName,
+    roomJoin: true,
+    canPublish,
+    canPublishData: true,
+    canSubscribe: true,
+  })
+
   let avatarUrl = null
   if (authUser) {
     const { data: profile } = await supabase.from('profiles').select('avatar_url').eq('id', authUser.id).maybeSingle()
@@ -610,6 +627,65 @@ app.post('/api/rooms/:roomId/grant-co-host', async (req, res) => {
   }
 
   return res.json({ ok: true })
+})
+
+// ============================================================
+// PROMOTE / DEMOTE A SPEAKER (audience-mode rooms)
+// POST /api/rooms/:roomId/speaker
+// Body: { displayName, grant: boolean, actingDisplayName, hostSecret? }
+// ============================================================
+// Host OR co-host (isRoomModerator — the same "may moderate this room"
+// test /admit and /mute use), unlike co-host delegation which stays
+// host-only. One person per call, by design: a large session is run by
+// giving the floor to one attendee at a time, and there is deliberately no
+// "let everyone speak" — that is what audience mode exists to prevent.
+//
+// Grant: record 'speaker' on the participant row, then push BOTH the
+// publish permission and the role attribute to LiveKit live, so the
+// person's mic / camera controls unlock without a rejoin and every client
+// sees their new standing in the roster. Revoke: back to 'attendee' with
+// canPublish false — LiveKit unpublishes any live tracks the moment the
+// permission is withdrawn, so a demoted speaker's mic drops immediately.
+app.post('/api/rooms/:roomId/speaker', async (req, res) => {
+  const { roomId } = req.params
+  const { displayName, grant, actingDisplayName, hostSecret } = req.body
+  if (!displayName || typeof grant !== 'boolean') {
+    return res.status(400).json({ error: 'displayName and grant are required' })
+  }
+  if (!(await isRoomModerator(roomId, hostSecret, actingDisplayName))) {
+    return res.status(403).json({ error: 'Not authorized to manage speakers in this room' })
+  }
+  const { data: roomRow } = await supabase.from('rooms').select('livekit_room_name, audience_mode').eq('id', roomId).single()
+  if (!roomRow) return res.status(404).json({ error: 'Room not found' })
+  if (!roomRow.audience_mode) return res.status(400).json({ error: 'This room is not in audience mode' })
+
+  const newRole = grant ? 'speaker' : 'attendee'
+  // Upsert-ish: an attendee admitted via the waiting room has a row (role
+  // 'participant' from /admit); one who joined an ungated audience room
+  // may not. Update if present, insert otherwise, so the token endpoint
+  // finds the right role on reconnect either way.
+  const { data: existing } = await supabase.from('room_participants').select('id')
+    .eq('room_id', roomId).eq('display_name', displayName).eq('is_active', true).limit(1).maybeSingle()
+  if (existing) {
+    await supabase.from('room_participants').update({ role: newRole }).eq('id', existing.id)
+  } else {
+    await supabase.from('room_participants').insert({ room_id: roomId, display_name: displayName, is_active: true, joined_at: new Date().toISOString(), role: newRole })
+  }
+
+  let updated = 0
+  try {
+    const live = await roomService.listParticipants(roomRow.livekit_room_name)
+    await Promise.all(live.filter(p => p.name === displayName).map(async p => {
+      await roomService.updateParticipant(roomRow.livekit_room_name, p.identity, {
+        permission: { canPublish: grant, canPublishData: true, canSubscribe: true },
+        attributes: { role: newRole },
+      })
+      updated++
+    }))
+  } catch (e) {
+    console.warn('[speaker] live update failed (non-fatal, applies on reconnect):', e?.message)
+  }
+  return res.json({ ok: true, role: newRole, updated })
 })
 
 // ============================================================
@@ -1712,7 +1788,7 @@ app.get('/api/admin/overview', async (req, res) => {
     const cameras = count(t => t.source === 1 && !t.muted)               // TrackSource.CAMERA
     const screens = count(t => (t.source === 3 || t.source === 4) && !t.muted) // SCREEN_SHARE(+AUDIO)
     const { data: roomRow } = await supabase
-      .from('rooms').select('id, name, requires_admission, scheduled_date, scheduled_time').eq('livekit_room_name', r.name).maybeSingle()
+      .from('rooms').select('id, name, requires_admission, audience_mode, scheduled_date, scheduled_time').eq('livekit_room_name', r.name).maybeSingle()
     let pendingAdmissions = 0
     if (roomRow?.requires_admission) {
       const { count: c } = await supabase.from('admission_requests').select('id', { head: true, count: 'exact' }).eq('room_id', roomRow.id).eq('status', 'pending')
@@ -1723,6 +1799,7 @@ app.get('/api/admin/overview', async (req, res) => {
       roomId: roomRow?.id ?? null,
       name: roomRow?.name ?? r.name,
       requiresAdmission: !!roomRow?.requires_admission,
+      audienceMode: !!roomRow?.audience_mode,
       pendingAdmissions,
       participants: participants.length,
       publishers: { mics, cameras, screens },
@@ -1755,7 +1832,7 @@ app.get('/api/admin/overview', async (req, res) => {
     { id: 'lkplan',     status: livekitPlan ? (livekitPlanKey === 'build' ? 'warn' : 'done') : 'todo',
       label: 'LiveKit Cloud plan confirmed',
       detail: livekitPlan ? `${livekitPlan.label} — ${livekitPlan.note}` : 'LIVEKIT_CLOUD_PLAN is not set — declare build | ship | scale | enterprise' },
-    { id: 'audience',   status: 'todo', label: 'Audience role (attendees join without publish rights)', detail: 'Attendees currently hold canPublish; the mic cap is advisory until this ships' },
+    { id: 'audience',   status: 'done', label: 'Audience role (attendees join without publish rights)', detail: 'Large-session rooms issue attendees no publish rights; hosts promote speakers one at a time' },
     { id: 'virtualize', status: 'todo', label: 'Virtualized participants panel',       detail: 'All rows render today; noticeable past ~150 attendees' },
   ]
   const done = readiness.filter(r => r.status === 'done').length

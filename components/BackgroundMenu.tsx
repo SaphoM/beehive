@@ -63,16 +63,6 @@ export function BackgroundMenu({
             />
             <span style={{ ...s.bgLabel, minWidth: 20, textAlign: 'right' as const }}>{blurLevel}</span>
           </div>
-          {/* Whole row toggles — the tiny On/Off pill alone was a hard
-              target and read as "not clickable". The pill stops propagation
-              so a direct pill click doesn't double-toggle back. */}
-          <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
-            <FlipHorizontal size={13} color="#888" />
-            <span style={s.bgLabel}>Flip</span>
-            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
-              {flip ? 'On' : 'Off'}
-            </button>
-          </div>
         </div>
       )}
 
@@ -132,16 +122,6 @@ export function BackgroundMenu({
           {!backgroundsError && backgrounds.length > 0 && !selectedBackgroundId && (
             <p style={s.bgHint}>Pick a background to apply it.</p>
           )}
-          {/* Whole row toggles — the tiny On/Off pill alone was a hard
-              target and read as "not clickable". The pill stops propagation
-              so a direct pill click doesn't double-toggle back. */}
-          <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
-            <FlipHorizontal size={13} color="#888" />
-            <span style={s.bgLabel}>Flip</span>
-            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
-              {flip ? 'On' : 'Off'}
-            </button>
-          </div>
         </div>
       )}
 
@@ -163,18 +143,25 @@ export function BackgroundMenu({
               </button>
             ))}
           </div>
-          {/* Whole row toggles — the tiny On/Off pill alone was a hard
-              target and read as "not clickable". The pill stops propagation
-              so a direct pill click doesn't double-toggle back. */}
-          <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
-            <FlipHorizontal size={13} color="#888" />
-            <span style={s.bgLabel}>Flip</span>
-            <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
-              {flip ? 'On' : 'Off'}
-            </button>
-          </div>
         </div>
       )}
+      {/* Flip — one row, present in every tab. It changes only how YOU see
+          yourself: the self-view is mirrored by default (like a mirror),
+          and Flip shows you as others see you. It never touches the
+          published stream, so attendees always see you un-mirrored.
+          Whole row toggles — the tiny On/Off pill alone was a hard target
+          and read as "not clickable". The pill stops propagation so a direct
+          pill click doesn't double-toggle back. */}
+      <div style={s.bgSection}>
+        <div style={{ ...s.bgRow, cursor: 'pointer' }} onClick={onFlip}>
+          <FlipHorizontal size={13} color="#888" />
+          <span style={s.bgLabel}>Flip my view</span>
+          <button style={{ ...s.bgToggle, ...(flip ? s.bgToggleOn : {}) }} onClick={e => { e.stopPropagation(); onFlip() }}>
+            {flip ? 'On' : 'Off'}
+          </button>
+        </div>
+        <p style={s.bgHint}>Only changes how you see yourself. Others always see you the normal way round.</p>
+      </div>
     </div>
   )
 }

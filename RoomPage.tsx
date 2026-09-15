@@ -158,6 +158,34 @@ if (typeof document !== 'undefined' && !document.getElementById('bhv-equal-grid-
   document.head.appendChild(style)
 }
 
+// Self-view mirroring, owned by BeeHive rather than left to LiveKit's
+// heuristic. LiveKit's stylesheet mirrors the local camera only when the
+// <video> carries data-lk-facing-mode="user", which it derives from the
+// track's facingMode setting — present on a raw camera track, ABSENT on the
+// canvas.captureStream() track the background pipeline publishes. So the
+// self-view flipped between mirrored and un-mirrored depending on whether
+// an effect happened to be on. These rules key on the room wrapper's
+// data-bhv-mirror instead, so the local camera preview reads the same way
+// in every state, and Flip is the one control that changes it. Scoped to
+// source=camera: a shared screen must never be mirrored. Only the LOCAL
+// participant's element is ever matched — remote tiles are untouched, and
+// the published stream (what remote viewers receive) is never mirrored
+// anywhere. !important because LiveKit's own facing-mode rule would
+// otherwise re-mirror the un-flipped state on a raw camera track.
+if (typeof document !== 'undefined' && !document.getElementById('bhv-self-view-mirror')) {
+  const style = document.createElement('style')
+  style.id = 'bhv-self-view-mirror'
+  style.textContent = `
+    [data-bhv-mirror="on"] .lk-participant-media-video[data-lk-local-participant="true"][data-lk-source="camera"] {
+      transform: rotateY(180deg) !important;
+    }
+    [data-bhv-mirror="off"] .lk-participant-media-video[data-lk-local-participant="true"][data-lk-source="camera"] {
+      transform: none !important;
+    }
+  `
+  document.head.appendChild(style)
+}
+
 // Captured HERE, synchronously, at module-evaluation time — not inside a
 // useEffect. This is what makes the desktop deep-link handoff's ?room=
 // actually survive: the handoff URL is
@@ -1214,10 +1242,23 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   const [bgPresetId, setBgPresetId] = useState('studio')
   const bgOrigTrackRef = useRef<MediaStreamTrack | null>(null)
   const bgUploadedImageRef = useRef<HTMLImageElement | null>(null)
-  const bgStateRef = useRef({ effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId })
-  bgStateRef.current = { effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId }
+  const bgStateRef = useRef({ effect: bgEffect, blurLevel, presetId: bgPresetId })
+  bgStateRef.current = { effect: bgEffect, blurLevel, presetId: bgPresetId }
 
-  const bgActive = bgEffect !== 'none' || bgFlip
+  // Flip no longer participates here. It used to be applied *inside* the
+  // compositing canvas (ctx.scale(-1,1)), which mirrored the PUBLISHED
+  // stream: it made the user look right to themselves but showed everyone
+  // else a reversed image (text on a shirt backwards). The reason it ever
+  // felt necessary: LiveKit mirrors your own preview via CSS only when the
+  // track reports facingMode=user, and a canvas track has no facingMode —
+  // so the moment any effect was on, the self-view silently stopped
+  // mirroring and looked "backwards". Flip was compensating for that.
+  //
+  // Correct model, now implemented: the self-view is mirrored by CSS in
+  // every state (effect or not), the published stream is never mirrored,
+  // and Flip toggles only how you see yourself. See data-bhv-mirror on the
+  // room wrapper. Flip therefore never needs the pipeline running.
+  const bgActive = bgEffect !== 'none'
 
   // "My Backgrounds" library — a list the user picks from, not a single
   // slot. Signed in → Supabase `backgrounds` bucket (synced across devices);
@@ -1579,7 +1620,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     }
 
     const onResultsInner = (maskInput: CanvasImageSource) => {
-      const { effect, flip, blurLevel: bl, presetId } = bgStateRef.current
+      const { effect, blurLevel: bl, presetId } = bgStateRef.current
 
       // Hoisted so the depth-of-field blur background pass (below) can read
       // haloCanvas, which processMask() populates as a side effect — must run
@@ -1588,7 +1629,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
 
       ctx.save()
       ctx.clearRect(0, 0, W, H)
-      if (flip) { ctx.translate(W, 0); ctx.scale(-1, 1) }
+      // No mirroring here, ever: this canvas IS the published stream, and
+      // attendees must see the user the way a camera sees them. Self-view
+      // mirroring is a CSS concern on the local <video> only (data-bhv-mirror).
 
       // ---- Background layer (drawn at the camera's true aspect ratio) ----
       if (effect === 'blur') {
@@ -2624,7 +2667,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   }, [localParticipant, toggleRaiseHand, stopShare, leaveWithNotification, setShowChat, setShowParticipants])
 
   return (
-    <div style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}>
+    <div
+      // Self-view mirror state for every local camera <video> inside the room
+      // (grid tile, dock, AutoCam) — see the bhv-self-view-mirror style block.
+      // Default is mirrored, like looking in a mirror; Flip shows you as
+      // others see you. Neither affects the published stream.
+      data-bhv-mirror={bgFlip ? 'off' : 'on'}
+      style={{ ...s.roomWrapper, opacity: roomHidden ? 0 : 1, transition: 'opacity 0.3s', pointerEvents: roomHidden ? 'none' : 'auto' }}
+    >
       {/* Header */}
       <div style={{
         ...s.header,
@@ -3115,7 +3165,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                   {bgMenuOpen && (
                     <BackgroundMenu
                       effect={bgEffect} presetId={bgPresetId} flip={bgFlip} blurLevel={blurLevel}
-                      onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
+                      onEffect={setBgEffect}
                       onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
                       onClose={() => setBgMenuOpen(false)}
                       backgrounds={bgLibrary.backgrounds} selectedBackgroundId={bgLibrary.selectedId}
@@ -3350,7 +3400,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                 {bgMenuOpen && (
                   <BackgroundMenu
                     effect={bgEffect} presetId={bgPresetId} flip={bgFlip} blurLevel={blurLevel}
-                    onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
+                    onEffect={setBgEffect}
                     onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
                     onClose={() => setBgMenuOpen(false)}
                     backgrounds={bgLibrary.backgrounds} selectedBackgroundId={bgLibrary.selectedId}

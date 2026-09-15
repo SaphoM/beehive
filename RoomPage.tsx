@@ -86,6 +86,7 @@ import { WaitingRoom } from './components/WaitingRoom'
 import { InviteModal } from './components/InviteModal'
 import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
+import { useBackgrounds } from './components/useBackgrounds'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
 import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
@@ -407,6 +408,7 @@ export default function RoomPage() {
           displayName={displayName}
           onLeave={handleLeave}
           subtext={subtext}
+          userId={user?.id ?? null}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
@@ -436,8 +438,11 @@ export default function RoomPage() {
 // ============================================================
 // MEETING ROOM
 // ============================================================
-function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
+function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   roomId: string; displayName: string; onLeave: () => void; subtext: Subtext
+  // Signed-in auth id, or null for a guest — selects the background library's
+  // storage backend (Supabase bucket vs. localStorage), nothing else.
+  userId: string | null
 }) {
   // Sting meetings carry the red accent through to in-room controls
   const accent = subtext === 'Sting' ? STING_RED : '#f5a623'
@@ -1209,64 +1214,55 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
   const [bgPresetId, setBgPresetId] = useState('studio')
   const bgOrigTrackRef = useRef<MediaStreamTrack | null>(null)
   const bgUploadedImageRef = useRef<HTMLImageElement | null>(null)
-  const [bgUploadedImageName, setBgUploadedImageName] = useState('')
   const bgStateRef = useRef({ effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId })
   bgStateRef.current = { effect: bgEffect, flip: bgFlip, blurLevel, presetId: bgPresetId }
 
   const bgActive = bgEffect !== 'none' || bgFlip
 
-  // Uploaded background image persists across meetings and app restarts —
-  // stored in localStorage as a downscaled JPEG data-URL (≤1600px wide keeps
-  // it comfortably inside the ~5 MB quota; the compositing canvas is capped
-  // at 1280 wide anyway, so nothing visible is lost). It stays until the
-  // user explicitly removes it via the ✕ next to the filename.
-  const BG_IMAGE_KEY = 'beehive:bgImage'
-  const BG_IMAGE_NAME_KEY = 'beehive:bgImageName'
+  // "My Backgrounds" library — a list the user picks from, not a single
+  // slot. Signed in → Supabase `backgrounds` bucket (synced across devices);
+  // guest → localStorage. See components/useBackgrounds.ts. The compositing
+  // pipeline below is unchanged: it still reads one HTMLImageElement from
+  // bgUploadedImageRef; this block just keeps that ref pointed at whichever
+  // library entry is currently selected.
+  const bgLibrary = useBackgrounds(userId)
+  const selectedBgUrl = bgLibrary.selected?.url ?? null
 
   useEffect(() => {
-    try {
-      const dataUrl = localStorage.getItem(BG_IMAGE_KEY)
-      const name = localStorage.getItem(BG_IMAGE_NAME_KEY)
-      if (dataUrl && name) {
-        const img = new Image()
-        img.onload = () => { bgUploadedImageRef.current = img }
-        img.src = dataUrl
-        setBgUploadedImageName(name)
-      }
-    } catch { /* storage unavailable — image upload still works per-session */ }
-  }, [])
-
-  const handleImageUpload = useCallback((file: File) => {
-    const url = URL.createObjectURL(file)
+    if (!selectedBgUrl) { bgUploadedImageRef.current = null; return }
+    let cancelled = false
     const img = new Image()
-    img.onload = () => {
-      bgUploadedImageRef.current = img
-      URL.revokeObjectURL(url)
-      try {
-        const maxW = 1600
-        const scale = Math.min(1, maxW / img.width)
-        const c = document.createElement('canvas')
-        c.width = Math.round(img.width * scale)
-        c.height = Math.round(img.height * scale)
-        c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height)
-        localStorage.setItem(BG_IMAGE_KEY, c.toDataURL('image/jpeg', 0.85))
-        localStorage.setItem(BG_IMAGE_NAME_KEY, file.name)
-      } catch { /* quota exceeded / storage unavailable — session-only, don't block the effect */ }
-    }
-    img.src = url
-    setBgUploadedImageName(file.name)
-    setBgEffect('image')
-  }, [])
+    // Bucket URLs are cross-origin; without this the canvas would be
+    // tainted and captureStream() would silently stop producing frames.
+    // Supabase public storage serves permissive CORS headers. Data URLs
+    // (guest library) are same-origin and unaffected by the attribute.
+    img.crossOrigin = 'anonymous'
+    img.onload = () => { if (!cancelled) bgUploadedImageRef.current = img }
+    img.onerror = () => { if (!cancelled) bgUploadedImageRef.current = null }
+    img.src = selectedBgUrl
+    return () => { cancelled = true }
+  }, [selectedBgUrl])
 
-  const handleImageRemove = useCallback(() => {
-    bgUploadedImageRef.current = null
-    setBgUploadedImageName('')
-    try {
-      localStorage.removeItem(BG_IMAGE_KEY)
-      localStorage.removeItem(BG_IMAGE_NAME_KEY)
-    } catch { /* ignore */ }
-    setBgEffect(prev => (prev === 'image' ? 'none' : prev))
-  }, [])
+  // Choosing a saved background (or adding a new one, which auto-selects it)
+  // is the user's way of saying "use a photo" — switch the effect to Image
+  // so the pick takes effect immediately, matching the old upload behaviour.
+  const handleSelectBackground = useCallback((id: string) => {
+    bgLibrary.setSelectedId(id)
+    setBgEffect('image')
+  }, [bgLibrary])
+
+  const handleAddBackground = useCallback(async (file: File) => {
+    const added = await bgLibrary.addBackground(file)
+    if (added) setBgEffect('image')
+  }, [bgLibrary])
+
+  const handleRemoveBackground = useCallback(async (id: string) => {
+    const wasSelected = bgLibrary.selectedId === id
+    await bgLibrary.removeBackground(id)
+    // Removing the background that's currently applied leaves nothing to
+    // composite, so drop back to no effect rather than a blank backdrop.
+    if (wasSelected) setBgEffect(prev => (prev === 'image' ? 'none' : prev))
+  }, [bgLibrary])
 
   // The camera track's presence must be a dependency of the pipeline effect:
   // if a background effect (or Flip) is toggled while the camera is OFF, the
@@ -1369,8 +1365,8 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
 
     // Subtle, capped exposure/tint nudge toward the background's average tone —
     // recomputed only when the background itself changes (not per frame).
-    // Keyed on the *object identity* of the uploaded image (bgUploadedImageRef
-    // is a ref, always live) rather than the bgUploadedImageName state, which
+    // Keyed on the *object identity* of the selected image (bgUploadedImageRef
+    // is a ref, always live) rather than the library's selectedId state, which
     // this closure would otherwise capture stale — image/preset can change
     // while bgActive stays true, so this effect never re-runs to pick up a
     // fresh value of a plain state variable.
@@ -3119,10 +3115,12 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                   {bgMenuOpen && (
                     <BackgroundMenu
                       effect={bgEffect} presetId={bgPresetId} flip={bgFlip} blurLevel={blurLevel}
-                      uploadedImageName={bgUploadedImageName}
                       onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
                       onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
-                      onImageUpload={handleImageUpload} onImageRemove={handleImageRemove} onClose={() => setBgMenuOpen(false)}
+                      onClose={() => setBgMenuOpen(false)}
+                      backgrounds={bgLibrary.backgrounds} selectedBackgroundId={bgLibrary.selectedId}
+                      backgroundsLoading={bgLibrary.loading} backgroundsError={bgLibrary.error}
+                      onSelectBackground={handleSelectBackground} onAddBackground={handleAddBackground} onRemoveBackground={handleRemoveBackground}
                     />
                   )}
                   {showAutoCamMenu && !autoCamMode && (
@@ -3352,10 +3350,12 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext }: {
                 {bgMenuOpen && (
                   <BackgroundMenu
                     effect={bgEffect} presetId={bgPresetId} flip={bgFlip} blurLevel={blurLevel}
-                    uploadedImageName={bgUploadedImageName}
                     onEffect={e => { setBgEffect(e); if (e === 'none') setBgFlip(false) }}
                     onPreset={setBgPresetId} onFlip={() => setBgFlip(v => !v)} onBlur={setBlurLevel}
-                    onImageUpload={handleImageUpload} onImageRemove={handleImageRemove} onClose={() => setBgMenuOpen(false)}
+                    onClose={() => setBgMenuOpen(false)}
+                    backgrounds={bgLibrary.backgrounds} selectedBackgroundId={bgLibrary.selectedId}
+                    backgroundsLoading={bgLibrary.loading} backgroundsError={bgLibrary.error}
+                    onSelectBackground={handleSelectBackground} onAddBackground={handleAddBackground} onRemoveBackground={handleRemoveBackground}
                   />
                 )}
               </div>

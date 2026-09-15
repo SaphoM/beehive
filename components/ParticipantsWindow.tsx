@@ -3,6 +3,7 @@ import { X, Mic, MicOff, VideoOff, MessageSquare, Crown, BellRing } from 'lucide
 import { ParticipantTile, useTracks, useLocalParticipant, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { s } from './roomStyles'
+import { MAX_LIVE_MICS } from './roomUtils'
 import { Avatar } from './Avatar'
 
 // Same API_BASE resolution used elsewhere for backend calls from the client.
@@ -107,11 +108,43 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
   }
 
   const unmutedOthersCount = lkParticipants.filter(p => p.identity !== localParticipant.identity && p.isMicrophoneEnabled).length
+  // Every live mic counts against the cap — the moderator's own included,
+  // since each attendee decodes it like any other.
+  const liveMicCount = lkParticipants.filter(p => p.isMicrophoneEnabled).length
+  const micCapReached = liveMicCount >= MAX_LIVE_MICS
+
+  // "Ask to unmute" is strictly one target per click, with a short per-target
+  // cooldown so a host can't machine-gun the same person with nudges; it is
+  // never offered as a bulk action (the opposite of Mute all, on purpose —
+  // there is no server-side force-unmute, so each request is a prompt the
+  // attendee answers, and the cap above is what keeps the answered count sane).
+  const [recentlyAsked, setRecentlyAsked] = useState<Set<string>>(new Set())
+  const askToUnmute = (identity: string) => {
+    if (!onRequestUnmute || micCapReached || recentlyAsked.has(identity)) return
+    onRequestUnmute(identity)
+    setRecentlyAsked(prev => new Set(prev).add(identity))
+    setTimeout(() => setRecentlyAsked(prev => { const n = new Set(prev); n.delete(identity); return n }), 8000)
+  }
 
   return (
     <div style={wrap ? s.dockedInnerWrap : s.dockedInner}>
       {/* Mute all — host/co-host only, and only meaningful once someone
           other than the moderator actually has their mic on. */}
+      {canModerate && roomId && liveMicCount > 0 && (
+        <div
+          title={micCapReached ? `Mic limit reached — mute someone before asking another to unmute` : `${liveMicCount} of ${MAX_LIVE_MICS} microphones live`}
+          style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+            border: `1px solid ${micCapReached ? '#c53030' : '#333'}`, borderRadius: 6, color: micCapReached ? '#e57373' : '#888',
+            fontSize: 9, fontFamily: "'Roboto', sans-serif", flexShrink: 0, width: 56, height: 56,
+            alignSelf: 'center', justifySelf: 'center',
+          }}
+        >
+          <Mic size={14} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: micCapReached ? '#e57373' : '#ccc' }}>{liveMicCount}/{MAX_LIVE_MICS}</span>
+          mics live
+        </div>
+      )}
       {canModerate && roomId && unmutedOthersCount > 0 && (
         <button
           onClick={muteAll}
@@ -175,9 +208,10 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
                   isMuted ? (
                     onRequestUnmute && (
                       <button
-                        onClick={() => onRequestUnmute(participant.identity)}
-                        title={`Ask ${name} to unmute`}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+                        onClick={() => askToUnmute(participant.identity)}
+                        disabled={micCapReached || recentlyAsked.has(participant.identity)}
+                        title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : recentlyAsked.has(participant.identity) ? `Asked ${name} — waiting for them` : `Ask ${name} to unmute`}
+                        style={{ background: 'none', border: 'none', cursor: micCapReached || recentlyAsked.has(participant.identity) ? 'not-allowed' : 'pointer', color: recentlyAsked.has(participant.identity) ? '#f5a623' : micCapReached ? '#555' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
                       >
                         <BellRing size={10} />
                       </button>

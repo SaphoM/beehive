@@ -50,7 +50,7 @@ type DockAction =
   | { type: 'toggle-mic' | 'toggle-cam' | 'toggle-hand' | 'stop-share' | 'leave' | 'open-chat' | 'open-participants' }
 declare global { interface File { path?: string } }
 
-import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2, ClipboardList, DoorOpen } from 'lucide-react'
+import { PhoneOff, Link, Film, Hand, MessageSquare, X, Monitor, MonitorOff, Aperture, Crosshair, Users, Layers, Paperclip, Download, EyeOff, Minus, Maximize2, Minimize2, ExternalLink, ChevronLeft, ChevronRight, Smile, Volume2, VolumeX, MousePointer2, ClipboardList, DoorOpen, Mic } from 'lucide-react'
 import {
   LiveKitRoom,
   GridLayout,
@@ -446,7 +446,16 @@ export default function RoomPage() {
         // source, and this is a standard, narrow addition — not a pipeline
         // replacement. Applies to every future setMicrophoneEnabled() call
         // (mergeDefaultOptions in livekit-client), not just this initial join.
-        options={{ audioCaptureDefaults: { channelCount: 1 } }}
+        // adaptiveStream: each viewer receives only the resolution its tiles
+        // actually render at, and nothing at all for tiles that are off-page
+        // or out of view. Without it (livekit-client's default) every client
+        // pulled full-resolution video from every camera that was on — the
+        // capacity audit put ~25 cameras at ~35 Mbps per viewer, which is
+        // what capped a large room at a handful of publishers.
+        // dynacast: a publisher stops encoding simulcast layers nobody is
+        // subscribed to, so the sender's CPU/upload follow real demand.
+        // Neither changes anything visible in a small meeting.
+        options={{ audioCaptureDefaults: { channelCount: 1 }, adaptiveStream: true, dynacast: true }}
         onDisconnected={handleLeave}
         style={{ height: 'var(--vh, 100vh)' }}
       >
@@ -4121,8 +4130,45 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
         <Toast message={admissionToast} onDone={() => setAdmissionToast(null)} durationMs={5000} />
       )}
 
+      {/* Host asked this participant to unmute. Rendered as an actionable
+          prompt, not a passive notice: LiveKit refuses a remote unmute
+          (LiveKit Cloud has no enable_remote_unmute) and browsers won't
+          open a mic without the user's own gesture, so the ONE thing that
+          can turn this mic on is the attendee clicking here. That single
+          click is what gives the host's request its teeth. Stays until
+          answered — a 5 s toast was easy to miss mid-meeting. */}
       {unmuteRequested && (
-        <Toast message="The host is asking you to unmute" onDone={() => setUnmuteRequested(false)} durationMs={5000} />
+        <div
+          role="alertdialog"
+          aria-label="The host is asking you to unmute"
+          style={{
+            position: 'fixed', left: '50%', top: 72, transform: 'translateX(-50%)',
+            background: '#1a1a1a', border: '1px solid #f5a623', borderRadius: 10,
+            padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
+            boxShadow: '0 8px 30px rgba(0,0,0,0.5)', zIndex: 1000, fontFamily: "'Roboto', sans-serif", maxWidth: 420,
+            animation: 'bhv-toast-in 0.25s cubic-bezier(0.4,0,0.2,1)',
+          }}
+        >
+          <style>{`@keyframes bhv-toast-in { from { opacity: 0; transform: translate(-50%, -8px) } to { opacity: 1; transform: translate(-50%, 0) } }`}</style>
+          <Mic size={16} color="#f5a623" />
+          <span style={{ color: '#eee', fontSize: 13, fontWeight: 300, flex: 1 }}>The host is asking you to unmute</span>
+          <button
+            onClick={async () => {
+              setUnmuteRequested(false)
+              try { await localParticipant.setMicrophoneEnabled(true) } catch (e) { handleMicDeviceError(e as Error) }
+            }}
+            style={{ background: '#f5a623', color: '#111', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+          >
+            Unmute
+          </button>
+          <button
+            onClick={() => setUnmuteRequested(false)}
+            title="Stay muted"
+            style={{ background: 'none', color: '#888', border: '1px solid #333', borderRadius: 6, padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
+          >
+            Not now
+          </button>
+        </div>
       )}
     </div>
   )

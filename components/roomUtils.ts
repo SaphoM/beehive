@@ -14,6 +14,16 @@ export function getReactionTemplate(emoji: string, name: string): string {
 }
 export const QUALITY_OPTIONS = ['Low (360p)', 'Medium (720p)', 'High (1080p)']
 export const APP_NAME = 'BeeHive'
+
+// Maximum number of microphones live at once that a host should let a room
+// reach. LiveKit does no server-side audio mixing: every client decodes
+// every unmuted mic separately, so N live mics = N decoders and N audio
+// elements on each attendee's machine. The capacity audit put the practical
+// ceiling for a large room around 20. The host's "ask to unmute" control
+// refuses past this and shows a live count against it; it does not (and
+// cannot) stop an attendee unmuting themselves — that needs an audience
+// role (P1 #2), not a cap.
+export const MAX_LIVE_MICS = 20
 export const SUBTEXTS = ['Meet', 'Sting'] as const
 export type Subtext = typeof SUBTEXTS[number]
 

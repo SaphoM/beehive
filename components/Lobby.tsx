@@ -6,7 +6,7 @@ import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
 import { MeetingNotesPanel } from './MeetingNotesPanel'
 import { useAuth, useProfile, useMyMeetings, supabase } from '../livekit_react_hooks'
-import { LogOut, ArrowLeft } from 'lucide-react'
+import { LogOut, ArrowLeft, Activity } from 'lucide-react'
 import { EditableAvatar } from './Avatar'
 import { OpenDesktopAppButton } from './DesktopHandoff'
 import { BuiltByFooter } from './BuiltByFooter'
@@ -66,11 +66,14 @@ function RegisterPanel({ onDismiss }: { onDismiss: () => void }) {
 // Lobby
 // -----------------------------------------------------------------------
 export function Lobby({
-  displayName, onDisplayNameChange, onCreateRoom, onJoinRoom, onStartScheduled, onJoinMeeting, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
+  displayName, onDisplayNameChange, onOpenOps, onCreateRoom, onJoinRoom, onStartScheduled, onJoinMeeting, creating, hasInvite, inviteRoom, subtext, onSubtextChange,
   user, showRegister, onDismissRegister,
 }: {
   displayName: string
   onDisplayNameChange: (v: string) => void
+  // Opens the Operations dashboard — shown only when the backend confirms
+  // the signed-in user holds the admin role.
+  onOpenOps?: () => void
   onCreateRoom: () => void
   onJoinRoom?: () => void
   // Enter the just-scheduled room (as host) directly — routes into the room
@@ -122,6 +125,18 @@ export function Lobby({
   }, [user])
 
   const { meetings, loading: meetingsLoading, updateStatus, updateMeeting, refresh: refreshMeetings } = useMyMeetings(accessToken, user?.email)
+
+  // Admin-only Operations entry point. The backend decides (roles.name =
+  // 'admin'); this just asks so the link isn't shown to everyone.
+  const [isAdmin, setIsAdmin] = useState(false)
+  useEffect(() => {
+    if (!accessToken) { setIsAdmin(false); return }
+    const apiBase = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:' ? 'http://localhost:3001' : ''
+    fetch(`${apiBase}/api/admin/me`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then(r => r.ok ? r.json() : { admin: false })
+      .then(d => setIsAdmin(!!d.admin))
+      .catch(() => setIsAdmin(false))
+  }, [accessToken])
   const deviceReadiness = useDeviceReadiness()
   const criticalAudio = isCriticalAudioIssue(deviceReadiness)
 
@@ -273,14 +288,26 @@ export function Lobby({
                     Back
                   </button>
                 ) : (
-                  <button
-                    onClick={signOut}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
-                    title="Sign out"
-                  >
-                    <LogOut size={11} />
-                    Sign out
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {isAdmin && onOpenOps && (
+                      <button
+                        onClick={onOpenOps}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f5a623', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
+                        title="Operations dashboard"
+                      >
+                        <Activity size={11} />
+                        Ops
+                      </button>
+                    )}
+                    <button
+                      onClick={signOut}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
+                      title="Sign out"
+                    >
+                      <LogOut size={11} />
+                      Sign out
+                    </button>
+                  </div>
                 )}
               </div>
             )}

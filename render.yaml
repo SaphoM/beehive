@@ -27,6 +27,15 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # Ops Dashboard — declared plan tiers (neither provider exposes its
+      # plan to a plain API key). free | pro | team | enterprise and
+      # build | ship | scale | enterprise. See /api/admin/overview.
+      - key: SUPABASE_PLAN
+        sync: false
+      - key: LIVEKIT_CLOUD_PLAN
+        sync: false
+      - key: LARGE_SESSION_TARGET
+        value: "300"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY

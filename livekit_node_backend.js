@@ -1610,6 +1610,207 @@ app.delete('/api/rooms/:roomId', async (req, res) => {
 })
 
 // ============================================================
+// OPERATIONS — integration readiness + large-session control
+// ============================================================
+// Admin-only (roles.name = 'admin' via user_roles — the RBAC tables that
+// already exist). Backs the Ops Dashboard (components/OpsDashboard.tsx).
+//
+// Plan tiers are configuration, not something either provider exposes to a
+// plain API key: Supabase's plan lives behind its Management API (needs a
+// personal access token, not the service-role key) and LiveKit Cloud's
+// behind its console. So the deploy declares them — SUPABASE_PLAN and
+// LIVEKIT_CLOUD_PLAN — and this maps each to the published limits that
+// decide whether a large session is safe. What IS live-checked: that both
+// services answer, how fast, and what LiveKit is hosting right now.
+//
+// Supabase Realtime quotas per plan (peak concurrent connections / messages
+// per second). These are the two numbers the 300-attendee audit found to be
+// hard walls: on Free, attendee #201 cannot open a realtime socket at all.
+const SUPABASE_PLANS = {
+  free:       { label: 'Free',       realtimePeakConnections: 200,   realtimeMessagesPerSec: 100  },
+  pro:        { label: 'Pro',        realtimePeakConnections: 500,   realtimeMessagesPerSec: 500  },
+  team:       { label: 'Team',       realtimePeakConnections: 500,   realtimeMessagesPerSec: 2500 },
+  enterprise: { label: 'Enterprise', realtimePeakConnections: 10000, realtimeMessagesPerSec: 10000 },
+}
+// LiveKit Cloud: no per-room participant cap on any tier (global mesh SFU);
+// tiers differ by included connection-minutes and bandwidth, which is a
+// billing question, not a capacity wall. Declared so the dashboard can say
+// which tier is live and whether one has been chosen at all.
+const LIVEKIT_PLANS = {
+  build: { label: 'Build (free)', maxParticipantsPerRoom: null, note: 'Free tier — included minutes are limited; fine for testing, confirm quota before an event' },
+  ship:  { label: 'Ship',         maxParticipantsPerRoom: null, note: 'Paid — per-minute billing past included quota' },
+  scale: { label: 'Scale',        maxParticipantsPerRoom: null, note: 'Paid — volume pricing, suitable for recurring large events' },
+  enterprise: { label: 'Enterprise', maxParticipantsPerRoom: null, note: 'Custom contract' },
+}
+const LARGE_SESSION_TARGET = Number(process.env.LARGE_SESSION_TARGET || 300)
+const MAX_LIVE_MICS_SERVER = 20      // mirrors components/roomUtils.ts MAX_LIVE_MICS
+const RECOMMENDED_MAX_CAMERAS = 25   // one GridLayout page, with adaptiveStream on
+
+async function requireAdmin(req, res) {
+  const raw = req.headers.authorization || ''
+  const accessToken = raw.startsWith('Bearer ') ? raw.slice(7) : raw
+  if (!accessToken) { res.status(401).json({ error: 'Authentication required' }); return null }
+  const { data: { user } } = await supabase.auth.getUser(accessToken)
+  if (!user) { res.status(401).json({ error: 'Invalid or expired token' }); return null }
+  const { data: rows } = await supabase
+    .from('user_roles')
+    .select('roles(name)')
+    .eq('user_id', user.id)
+  const isAdmin = (rows ?? []).some(r => r.roles?.name === 'admin')
+  if (!isAdmin) { res.status(403).json({ error: 'Admin role required' }); return null }
+  return user
+}
+
+// GET /api/admin/me — is the caller an admin? (cheap gate for showing the Ops entry point)
+app.get('/api/admin/me', async (req, res) => {
+  const raw = req.headers.authorization || ''
+  const accessToken = raw.startsWith('Bearer ') ? raw.slice(7) : raw
+  if (!accessToken) return res.json({ admin: false })
+  const { data: { user } } = await supabase.auth.getUser(accessToken)
+  if (!user) return res.json({ admin: false })
+  const { data: rows } = await supabase.from('user_roles').select('roles(name)').eq('user_id', user.id)
+  return res.json({ admin: (rows ?? []).some(r => r.roles?.name === 'admin') })
+})
+
+// GET /api/admin/overview — everything the Ops Dashboard shows, in one call.
+app.get('/api/admin/overview', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return
+
+  // --- Supabase: declared plan + live reachability ---
+  const supabasePlanKey = String(process.env.SUPABASE_PLAN || '').toLowerCase()
+  const supabasePlan = SUPABASE_PLANS[supabasePlanKey] || null
+  let supabaseReachable = false, supabaseLatencyMs = null
+  {
+    const t0 = Date.now()
+    const { error } = await supabase.from('rooms').select('id', { head: true, count: 'exact' }).limit(1)
+    supabaseLatencyMs = Date.now() - t0
+    supabaseReachable = !error
+  }
+  const supabaseRef = (process.env.SUPABASE_URL || '').match(/https:\/\/([a-z0-9]+)\.supabase\.co/)?.[1] ?? null
+
+  // --- LiveKit: declared plan + live rooms ---
+  const livekitPlanKey = String(process.env.LIVEKIT_CLOUD_PLAN || '').toLowerCase()
+  const livekitPlan = LIVEKIT_PLANS[livekitPlanKey] || null
+  let livekitReachable = false, livekitLatencyMs = null, liveRooms = []
+  try {
+    const t0 = Date.now()
+    liveRooms = await roomService.listRooms()
+    livekitLatencyMs = Date.now() - t0
+    livekitReachable = true
+  } catch (e) {
+    console.warn('[admin] listRooms failed:', e?.message)
+  }
+
+  // Per-room detail: participants and what they're publishing. One
+  // listParticipants per live room — an admin view, not a hot path.
+  const sessions = []
+  for (const r of liveRooms) {
+    let participants = []
+    try { participants = await roomService.listParticipants(r.name) } catch { /* room may have just closed */ }
+    const count = (pred) => participants.reduce((n, p) => n + (p.tracks || []).filter(pred).length, 0)
+    const mics    = count(t => t.source === 2 && !t.muted)               // TrackSource.MICROPHONE
+    const cameras = count(t => t.source === 1 && !t.muted)               // TrackSource.CAMERA
+    const screens = count(t => (t.source === 3 || t.source === 4) && !t.muted) // SCREEN_SHARE(+AUDIO)
+    const { data: roomRow } = await supabase
+      .from('rooms').select('id, name, requires_admission, scheduled_date, scheduled_time').eq('livekit_room_name', r.name).maybeSingle()
+    let pendingAdmissions = 0
+    if (roomRow?.requires_admission) {
+      const { count: c } = await supabase.from('admission_requests').select('id', { head: true, count: 'exact' }).eq('room_id', roomRow.id).eq('status', 'pending')
+      pendingAdmissions = c ?? 0
+    }
+    sessions.push({
+      livekitRoomName: r.name,
+      roomId: roomRow?.id ?? null,
+      name: roomRow?.name ?? r.name,
+      requiresAdmission: !!roomRow?.requires_admission,
+      pendingAdmissions,
+      participants: participants.length,
+      publishers: { mics, cameras, screens },
+      startedAt: r.creationTime ? new Date(Number(r.creationTime) * 1000).toISOString() : null,
+      hosts: participants.filter(p => p.attributes?.role === 'host' || p.attributes?.role === 'co-host').map(p => p.name),
+    })
+  }
+  const totals = sessions.reduce((a, s) => ({
+    participants: a.participants + s.participants,
+    mics: a.mics + s.publishers.mics,
+    cameras: a.cameras + s.publishers.cameras,
+  }), { participants: 0, mics: 0, cameras: 0 })
+
+  // --- Readiness for a LARGE_SESSION_TARGET-attendee session ---
+  // Code-side items are facts about this build; plan items are computed
+  // from the declared tiers above. status: done | warn | todo
+  const target = LARGE_SESSION_TARGET
+  const supabaseOk = supabasePlan && supabasePlan.realtimePeakConnections >= target
+  const readiness = [
+    { id: 'presence',   status: 'done', label: 'Presence via LiveKit roster',           detail: 'Role and avatar ride as participant attributes — no per-client roster refetch' },
+    { id: 'signals',    status: 'done', label: 'Signals on LiveKit data channels',      detail: 'Cursors, hands, reactions and nudges bypass Supabase message quotas' },
+    { id: 'bulkadmit',  status: 'done', label: 'Bulk admit for scheduled sessions',     detail: 'Waiting room admits everyone in one action' },
+    { id: 'adaptive',   status: 'done', label: 'Adaptive streaming + dynacast',         detail: 'Viewers receive only the resolution their tiles need' },
+    { id: 'miccap',     status: 'done', label: `Live-mic cap (${MAX_LIVE_MICS_SERVER})`, detail: 'Host ask-to-unmute is one at a time and refuses past the cap' },
+    { id: 'supaplan',   status: !supabasePlan ? 'todo' : supabaseOk ? 'done' : 'warn',
+      label: 'Supabase plan supports the target',
+      detail: !supabasePlan
+        ? 'SUPABASE_PLAN is not set — declare free | pro | team | enterprise'
+        : `${supabasePlan.label}: ${supabasePlan.realtimePeakConnections} peak realtime connections vs ${target} target` },
+    { id: 'lkplan',     status: livekitPlan ? (livekitPlanKey === 'build' ? 'warn' : 'done') : 'todo',
+      label: 'LiveKit Cloud plan confirmed',
+      detail: livekitPlan ? `${livekitPlan.label} — ${livekitPlan.note}` : 'LIVEKIT_CLOUD_PLAN is not set — declare build | ship | scale | enterprise' },
+    { id: 'audience',   status: 'todo', label: 'Audience role (attendees join without publish rights)', detail: 'Attendees currently hold canPublish; the mic cap is advisory until this ships' },
+    { id: 'virtualize', status: 'todo', label: 'Virtualized participants panel',       detail: 'All rows render today; noticeable past ~150 attendees' },
+  ]
+  const done = readiness.filter(r => r.status === 'done').length
+
+  return res.json({
+    generatedAt: new Date().toISOString(),
+    target,
+    limits: { maxLiveMics: MAX_LIVE_MICS_SERVER, recommendedMaxCameras: RECOMMENDED_MAX_CAMERAS },
+    integrations: {
+      supabase: { projectRef: supabaseRef, planKey: supabasePlanKey || null, plan: supabasePlan, reachable: supabaseReachable, latencyMs: supabaseLatencyMs,
+                  region: 'eu-west-1' },
+      livekit:  { url: process.env.LIVEKIT_URL || null, planKey: livekitPlanKey || null, plan: livekitPlan, reachable: livekitReachable, latencyMs: livekitLatencyMs,
+                  activeRooms: liveRooms.length },
+    },
+    totals,
+    sessions,
+    readiness,
+    readinessScore: { done, total: readiness.length },
+  })
+})
+
+// POST /api/admin/sessions/:livekitRoomName/mute-all — silence every mic in a live room.
+app.post('/api/admin/sessions/:livekitRoomName/mute-all', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return
+  const { livekitRoomName } = req.params
+  try {
+    const participants = await roomService.listParticipants(livekitRoomName)
+    let muted = 0
+    for (const p of participants) {
+      for (const t of (p.tracks || [])) {
+        if (t.source === 2 && !t.muted) { await roomService.mutePublishedTrack(livekitRoomName, p.identity, t.sid, true); muted++ }
+      }
+    }
+    return res.json({ ok: true, muted })
+  } catch (e) {
+    console.error('[admin] mute-all failed:', e?.message)
+    return res.status(500).json({ error: 'Failed to mute room' })
+  }
+})
+
+// POST /api/admin/sessions/:livekitRoomName/end — close the room for everyone.
+app.post('/api/admin/sessions/:livekitRoomName/end', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return
+  const { livekitRoomName } = req.params
+  try {
+    await roomService.deleteRoom(livekitRoomName)
+    // room_finished webhook does the DB bookkeeping (is_active, egress stop).
+    return res.json({ ok: true })
+  } catch (e) {
+    console.error('[admin] end session failed:', e?.message)
+    return res.status(500).json({ error: 'Failed to end session' })
+  }
+})
+
+// ============================================================
 // AUTO-UPDATE FEED
 // Serves YAML manifests consumed by electron-updater (generic provider)
 // and a metadata endpoint with critical/notes/minimumVersion details.

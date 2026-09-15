@@ -87,6 +87,7 @@ import { InviteModal } from './components/InviteModal'
 import { ParticipantsWindow, DockedParticipantsStrip } from './components/ParticipantsWindow'
 import { BackgroundMenu } from './components/BackgroundMenu'
 import { useBackgrounds } from './components/useBackgrounds'
+import { OpsDashboard } from './components/OpsDashboard'
 import { AutoCamWindow } from './components/AutoCamWindow'
 import { MeetingPrepWindow } from './components/MeetingPrepWindow'
 import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
@@ -224,6 +225,9 @@ if (typeof document !== 'undefined' && !document.getElementById('bhv-self-view-m
 // const here is captured before that race can even begin, regardless of
 // import order.
 const INITIAL_ROOM_ID_FROM_URL = new URLSearchParams(window.location.search).get('room')
+// ?ops=1 opens the Operations dashboard (admin role required — the backend
+// enforces it; this only picks the view).
+const OPS_FROM_URL = new URLSearchParams(window.location.search).get('ops') === '1'
 
 // Waiting-room pending-count badge, shown on the toolbar's "Waiting Room"
 // button even while its panel is closed — see useAdmissionRequests.
@@ -239,6 +243,7 @@ export default function RoomPage() {
   const { profile } = useProfile(user?.id ?? null)
 
   const [view, setView] = useState<'lobby' | 'room' | 'waiting'>('lobby')
+  const [opsOpen, setOpsOpen] = useState(OPS_FROM_URL)
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
   const [livekitRoomName, setLivekitRoomName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -413,6 +418,10 @@ export default function RoomPage() {
     if (!user) setShowProfileSetup(true)
   }
 
+  if (opsOpen) {
+    return <OpsDashboard onBack={() => { setOpsOpen(false); try { const u = new URL(window.location.href); u.searchParams.delete('ops'); window.history.replaceState({}, '', u.toString()) } catch { /* fine */ } }} />
+  }
+
   if (view === 'waiting' && waitingInfo) {
     return (
       <WaitingRoom
@@ -475,6 +484,7 @@ export default function RoomPage() {
     <Lobby
       displayName={displayName}
       onDisplayNameChange={setDisplayName}
+      onOpenOps={() => setOpsOpen(true)}
       onCreateRoom={handleCreate}
       onJoinRoom={joinRoomId ? handleJoin : undefined}
       onStartScheduled={handleStartScheduled}

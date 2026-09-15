@@ -59,10 +59,11 @@ import {
   useTracks,
   useLocalParticipant,
   useRoomContext,
+  useDataChannel,
   TrackToggle,
   useParticipants as useLiveKitParticipants,
 } from '@livekit/components-react'
-import { Track, LocalVideoTrack, ParticipantEvent, type LocalTrackPublication } from 'livekit-client'
+import { Track, LocalVideoTrack, ParticipantEvent, ConnectionState, type Room, type LocalTrackPublication } from 'livekit-client'
 // Krisp ships a multi-MB WASM/ML payload — loaded lazily (see the noise-filter
 // effect below) so it never bloats the initial page load for users who haven't
 // published a mic track yet.
@@ -71,7 +72,6 @@ import {
   useCreateRoom,
   useJoinRoom,
   ENDED_MEETING_ERROR,
-  useParticipants,
   useAdmissionRequests,
   useChat,
   useRecordings,
@@ -485,6 +485,58 @@ export default function RoomPage() {
 // ============================================================
 // MEETING ROOM
 // ============================================================
+// In-meeting signals — cursors, raised hands, reactions, moderation nudges —
+// travel over LiveKit's data channel, not Supabase Realtime. LiveKit fans a
+// message out across the SFU mesh with no per-message quota; Supabase
+// broadcast counts every recipient as a message against a per-second cap,
+// so one presenter's 30 fps laser pointer × 300 attendees was 9,000 msg/s —
+// beyond any tier's limit, and it starved every other channel (presence,
+// chat) sharing that quota. Each signal keeps the {event, payload} envelope
+// it always had; only the transport changed, so the call sites below are
+// untouched. Receiving uses `useDataChannel(topic, handler)`; sending goes
+// straight through room.localParticipant.publishData — NOT the hook's own
+// send(). That send() wraps publishData in an "isSending" observable whose
+// subscriber is only wired by an effect after each render, and because the
+// hook rebuilds its handler every render (the message callback is in its
+// memo deps) the send() captured at render time can hit an unwired
+// subscriber and reject with "Cannot read properties of undefined (reading
+// 'next')" before publishData is ever reached. Seen live. publishData
+// itself has no such dependency. This adapter puts the old
+// channel.send({ event, payload }) shape on top of it.
+const signalEncoder = new TextEncoder()
+const signalDecoder = new TextDecoder()
+type SignalMsg = { event: string; payload: any }
+function decodeSignal(bytes: Uint8Array): SignalMsg | null {
+  try { return JSON.parse(signalDecoder.decode(bytes)) } catch { return null }
+}
+function signalSender(
+  topic: string,
+  room: Room,
+  reliable: boolean,
+  canSend: () => boolean,
+) {
+  return {
+    send: ({ event, payload }: { type?: string; event: string; payload: any }) => {
+      // Never publish before the room is connected. This is not just
+      // politeness: livekit-client caches the promise from its first
+      // publisher-connection attempt (RTCEngine.ensurePublisherConnected),
+      // so a publishData() issued before the peer connection exists caches
+      // a REJECTION that every later send then awaits — the data channel
+      // stays dead for the whole session with "PC manager is closed" even
+      // once the engine is healthy. Seen live during the migration off
+      // Supabase: a mount-time cursor-off signal poisoned it. A signal
+      // dropped while not yet connected is harmless; a poisoned channel
+      // is not.
+      if (!canSend()) return
+      // A failed send is dropped, but never silently: an in-meeting signal
+      // that quietly stops working is undiagnosable from a user report.
+      room.localParticipant
+        .publishData(signalEncoder.encode(JSON.stringify({ event, payload })), { reliable, topic })
+        .catch(err => console.warn(`[signals] ${topic}/${event} send failed:`, err?.message ?? err))
+    },
+  }
+}
+
 function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   roomId: string; displayName: string; onLeave: () => void; subtext: Subtext
   // Signed-in auth id, or null for a guest — selects the background library's
@@ -584,18 +636,31 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     return [...byKey.values()]
   })()
 
-  const participants = useParticipants(roomId)
-  // "My" role in this room, per the waiting-room feature — derived from the
-  // same live participants list already fetched above rather than a new
-  // subscription. Only ever non-'participant' in a waiting-room-gated
-  // (scheduled) meeting: the host's row gets role 'host' at token-issuance
-  // time, a co-host's gets 'co-host' via the grant endpoint; Start Now
-  // meetings never touch this column, so it's always 'participant' there.
-  const myRole = participants.find(p => p.is_active && p.display_name === displayName)?.role ?? 'participant'
-  // Same display_name-keyed lookup pattern as myRole above — room_participants
-  // has no LiveKit identity column, so this is the existing limitation every
-  // per-participant Supabase lookup in this file already lives with.
-  const avatarUrlFor = (name: string) => participants.find(p => p.is_active && p.display_name === name)?.avatar_url ?? null
+  // Presence — role and avatar — now come from LiveKit participant
+  // attributes, stamped by the backend at token time (role: host/co-host/
+  // participant; avatar_url for signed-in users) and pushed live by
+  // /grant-co-host. The previous source was a Supabase room_participants
+  // subscription that refetched the whole roster (plus a profiles join) on
+  // EVERY join/leave in EVERY client — N²/2 refetches, ~90,000 queries at
+  // 300 attendees, all during the join burst. liveKitParticipants is the
+  // roster this component already trusts everywhere else, and its hook
+  // re-renders on ParticipantAttributesChanged, so a live role change is
+  // reflected without any extra subscription.
+  //
+  // My own role is read off localParticipant, with an explicit listener:
+  // useLocalParticipant() doesn't re-render on attribute changes by itself,
+  // and a co-host grant arriving mid-meeting must flip canAdmit at once.
+  const [myRole, setMyRole] = useState<string>(() => localParticipant.attributes?.role ?? 'participant')
+  useEffect(() => {
+    const sync = () => setMyRole(localParticipant.attributes?.role ?? 'participant')
+    sync()
+    localParticipant.on(ParticipantEvent.AttributesChanged, sync)
+    return () => { localParticipant.off(ParticipantEvent.AttributesChanged, sync) }
+  }, [localParticipant])
+  // Keyed by display name, matching how every other per-participant lookup
+  // in this file already works (the LiveKit identity is a random per-
+  // connection UUID; the name is what's stable and human-meaningful).
+  const avatarUrlFor = (name: string) => liveKitParticipants.find(p => p.name === name)?.attributes?.avatar_url ?? null
   const canAdmit = myRole === 'host' || myRole === 'co-host'
   // Kept subscribed for the whole session whenever canAdmit — not just while
   // the waiting-room panel happens to be open. Before this, the host had no
@@ -1086,22 +1151,24 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   const cursorChannelRef = useRef<any>(null)
   const lastCursorSend = useRef(0)
 
-  useEffect(() => {
-    const channel = supabase.channel(`cursors:${roomId}`, { config: { broadcast: { self: false } } })
-    channel.on('broadcast', { event: 'cursor' }, ({ payload }: any) => {
+  // Gate for every data-channel send below — see signalSender.
+  const signalsReady = useCallback(() => room.state === ConnectionState.Connected, [room])
+
+  // Lossy (reliable: false): a dropped cursor frame is replaced 33 ms later
+  // by the next one; retransmitting stale pointer positions only adds lag.
+  useDataChannel('cursors', msg => {
+    const m = decodeSignal(msg.payload); if (!m) return
+    if (m.event === 'cursor') {
       setRemoteCursors(prev => {
         const next = new Map(prev)
-        next.set(payload.name, { x: payload.x, y: payload.y, color: payload.color })
+        next.set(m.payload.name, { x: m.payload.x, y: m.payload.y, color: m.payload.color })
         return next
       })
-    })
-    channel.on('broadcast', { event: 'cursor-off' }, ({ payload }: any) => {
-      setRemoteCursors(prev => { const next = new Map(prev); next.delete(payload.name); return next })
-    })
-    channel.subscribe()
-    cursorChannelRef.current = channel
-    return () => { supabase.removeChannel(channel) }
-  }, [roomId])
+    } else if (m.event === 'cursor-off') {
+      setRemoteCursors(prev => { const next = new Map(prev); next.delete(m.payload.name); return next })
+    }
+  })
+  cursorChannelRef.current = signalSender('cursors', room, false, signalsReady)
 
   const handleMainAreaMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!laserActive || !cursorChannelRef.current) return
@@ -1119,10 +1186,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     cursorChannelRef.current.send({ type: 'broadcast', event: 'cursor-off', payload: { name: displayName } })
   }, [laserActive, displayName])
 
+  // Tell others to drop my cursor when the laser is switched OFF — on the
+  // transition only. This used to fire on mount too (laserActive starts
+  // false), which was a no-op over Supabase but, over the data channel,
+  // was the very first publish of the session, issued before the room had
+  // connected — see signalSender for why that must never happen.
+  const laserWasActive = useRef(false)
   useEffect(() => {
-    if (!laserActive && cursorChannelRef.current) {
+    if (laserWasActive.current && !laserActive && cursorChannelRef.current) {
       cursorChannelRef.current.send({ type: 'broadcast', event: 'cursor-off', payload: { name: displayName } })
     }
+    laserWasActive.current = laserActive
   }, [laserActive, displayName])
 
   // Raise hand — broadcast to all participants via Supabase realtime
@@ -1130,23 +1204,18 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   const [myHandRaised, setMyHandRaised] = useState(false)
   const handsChannelRef = useRef<any>(null)
 
-  useEffect(() => {
-    const channel = supabase.channel(`hands:${roomId}`, { config: { broadcast: { self: false } } })
-    channel
-      .on('broadcast', { event: 'hand_raised' }, ({ payload }: any) => {
-        setRaisedHands(prev => prev.find(h => h.identity === payload.identity) ? prev : [...prev, { identity: payload.identity, name: payload.name, raisedAt: payload.raisedAt }])
-      })
-      .on('broadcast', { event: 'hand_lowered' }, ({ payload }: any) => {
-        setRaisedHands(prev => prev.filter(h => h.identity !== payload.identity))
-      })
-      .on('broadcast', { event: 'all_hands_lowered' }, () => {
-        setRaisedHands([])
-        setMyHandRaised(false)
-      })
-      .subscribe()
-    handsChannelRef.current = channel
-    return () => { supabase.removeChannel(channel) }
-  }, [roomId])
+  useDataChannel('hands', msg => {
+    const m = decodeSignal(msg.payload); if (!m) return
+    if (m.event === 'hand_raised') {
+      setRaisedHands(prev => prev.find(h => h.identity === m.payload.identity) ? prev : [...prev, { identity: m.payload.identity, name: m.payload.name, raisedAt: m.payload.raisedAt }])
+    } else if (m.event === 'hand_lowered') {
+      setRaisedHands(prev => prev.filter(h => h.identity !== m.payload.identity))
+    } else if (m.event === 'all_hands_lowered') {
+      setRaisedHands([])
+      setMyHandRaised(false)
+    }
+  })
+  handsChannelRef.current = signalSender('hands', room, true, signalsReady)
 
   // Stale-hand cleanup — raisedHands above is a plain ephemeral broadcast
   // with no awareness of its own of whether the participant it names is
@@ -1183,39 +1252,40 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   // canAdmit, matching the actual mute action's own client-side gating).
   const [unmuteRequested, setUnmuteRequested] = useState(false)
   const moderationChannelRef = useRef<any>(null)
-  useEffect(() => {
-    const channel = supabase.channel(`moderation:${roomId}`, { config: { broadcast: { self: false } } })
-    channel
-      .on('broadcast', { event: 'request_unmute' }, ({ payload }: any) => {
-        if (payload.identity === localParticipant.identity) setUnmuteRequested(true)
-      })
-      .subscribe()
-    moderationChannelRef.current = channel
-    return () => { supabase.removeChannel(channel) }
-  }, [roomId, localParticipant.identity])
+  useDataChannel('moderation', msg => {
+    const m = decodeSignal(msg.payload); if (!m) return
+    if (m.event === 'request_unmute' && m.payload.identity === localParticipant.identity) setUnmuteRequested(true)
+  })
+  moderationChannelRef.current = signalSender('moderation', room, true, signalsReady)
 
   const requestUnmute = (identity: string) => {
     if (!canAdmit) return
     moderationChannelRef.current?.send({ type: 'broadcast', event: 'request_unmute', payload: { identity } })
   }
 
-  // Reactions channel — self:true so the sender sees their own reaction
-  useEffect(() => {
-    const channel = supabase.channel(`reactions:${roomId}`, { config: { broadcast: { self: true } } })
-    channel.on('broadcast', { event: 'reaction' }, ({ payload }: any) => {
-      const id = reactionId.current++
-      const x = Math.round((Math.random() - 0.5) * 280) // random horizontal drift -140…+140 px
-      const ttl = payload.message ? 3500 : 2500
-      setFloatingReactions(prev => [...prev, {
-        id, emoji: payload.emoji, message: payload.message || undefined,
-        senderName: payload.senderName, x,
-      }])
-      setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), ttl)
-    })
-    channel.subscribe()
-    reactionChannelRef.current = channel
-    return () => { supabase.removeChannel(channel) }
-  }, [roomId])
+  // Reactions. The old Supabase channel used self:true so the sender saw
+  // their own reaction; LiveKit data messages never loop back to the sender,
+  // so the sender's copy is drawn locally at send time (see the adapter).
+  const showReaction = useCallback((payload: { emoji: string; message?: string; senderName?: string }) => {
+    const id = reactionId.current++
+    const x = Math.round((Math.random() - 0.5) * 280) // random horizontal drift -140…+140 px
+    const ttl = payload.message ? 3500 : 2500
+    setFloatingReactions(prev => [...prev, {
+      id, emoji: payload.emoji, message: payload.message || undefined,
+      senderName: payload.senderName, x,
+    }])
+    setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), ttl)
+  }, [])
+  useDataChannel('reactions', msg => {
+    const m = decodeSignal(msg.payload); if (!m) return
+    if (m.event === 'reaction') showReaction(m.payload)
+  })
+  reactionChannelRef.current = {
+    send: ({ payload }: { type?: string; event: string; payload: any }) => {
+      showReaction(payload)
+      signalSender('reactions', room, true, signalsReady).send({ event: 'reaction', payload })
+    },
+  }
 
   const toggleRaiseHand = () => {
     if (myHandRaised) {
@@ -2772,7 +2842,6 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
           roomId={roomId}
           isHost={!!myHostSecret}
           hostSecret={myHostSecret}
-          supabaseParticipants={participants}
           canModerate={canAdmit}
           actingDisplayName={displayName}
           onRequestUnmute={requestUnmute}
@@ -2791,8 +2860,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
             roomId={roomId}
             isHost={!!myHostSecret}
             hostSecret={myHostSecret}
-            supabaseParticipants={participants}
-            canModerate={canAdmit}
+              canModerate={canAdmit}
             actingDisplayName={displayName}
             onRequestUnmute={requestUnmute}
           />
@@ -3964,26 +4032,28 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                   </label>
                   {fileRecipients !== 'all' && (
                     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6, marginLeft: 26, maxHeight: 160, overflowY: 'auto' as const }}>
-                      {participants.filter(p => p.is_active && p.display_name !== displayName).map(p => {
-                        const selected = (fileRecipients as string[]).includes(p.display_name)
+                      {/* Live roster (LiveKit), not the old Supabase list — see myRole above. */}
+                      {liveKitParticipants.filter(p => p.name !== displayName).map(p => {
+                        const name = p.name ?? p.identity
+                        const selected = (fileRecipients as string[]).includes(name)
                         return (
-                          <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <label key={p.identity} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                             <input
                               type="checkbox"
                               checked={selected}
                               style={{ accentColor: '#5b5ef4' }}
                               onChange={() => {
                                 setFileRecipients(prev => {
-                                  if (prev === 'all') return [p.display_name]
-                                  return selected ? (prev as string[]).filter(n => n !== p.display_name) : [...(prev as string[]), p.display_name]
+                                  if (prev === 'all') return [name]
+                                  return selected ? (prev as string[]).filter(n => n !== name) : [...(prev as string[]), name]
                                 })
                               }}
                             />
-                            <span style={{ color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>{p.display_name}</span>
+                            <span style={{ color: '#ccc', fontSize: 13, fontFamily: "'Roboto', sans-serif" }}>{name}</span>
                           </label>
                         )
                       })}
-                      {participants.filter(p => p.is_active && p.display_name !== displayName).length === 0 && (
+                      {liveKitParticipants.filter(p => p.name !== displayName).length === 0 && (
                         <span style={{ color: '#555', fontSize: 12 }}>No other participants</span>
                       )}
                     </div>

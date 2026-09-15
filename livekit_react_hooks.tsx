@@ -135,22 +135,6 @@ interface Room {
   created_at: string
 }
 
-interface Participant {
-  id: string
-  room_id: string
-  user_id: string
-  auth_user_id: string | null
-  display_name: string
-  joined_at: string
-  is_active: boolean
-  role: 'host' | 'co-host' | 'participant'
-  // Not a real room_participants column — merged in client-side from
-  // `profiles` (see useParticipants below) for signed-in participants only.
-  // Guests (auth_user_id null) simply never get one, which the shared
-  // Avatar component already treats identically to "no picture yet".
-  avatar_url?: string | null
-}
-
 interface ChatMessage {
   id: string
   room_id: string
@@ -444,7 +428,11 @@ export function useJoinRoom() {
       fetch(`${API_BASE}/api/livekit/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity }),
+        // accessToken lets the backend stamp this participant's avatar onto
+        // their LiveKit attributes (the token endpoint resolves it server-
+        // side). Previously only the gated path sent it, so signed-in users
+        // in Start Now rooms would have had no avatar in the roster.
+        body: JSON.stringify({ roomName: room.livekit_room_name, displayName, identity, accessToken: session?.access_token }),
       }),
     ])
     if (participantError) console.error('[join] participant insert failed:', participantError.message)
@@ -464,53 +452,22 @@ export function useJoinRoom() {
 }
 
 // ============================================================
-// PARTICIPANT LIST (real-time)
+// PARTICIPANT LIST — intentionally no client-side hook here
 // ============================================================
-// `room_participants.auth_user_id` has no FK constraint to `profiles` (only
-// the legacy, unused `user_id` -> the old `users` table does), so PostgREST
-// can't embed `profiles(avatar_url)` in one query the normal way. A second,
-// small lookup keyed by the distinct auth_user_ids actually present in this
-// room's participant list — merged in client-side — avoids adding a new DB
-// constraint just for this.
-async function fetchParticipantsWithAvatars(roomId: string): Promise<Participant[]> {
-  const { data } = await supabase
-    .from('room_participants')
-    .select('*')
-    .eq('room_id', roomId)
-    .eq('is_active', true)
-  const rows = (data ?? []) as Participant[]
-
-  const authIds = [...new Set(rows.map(r => r.auth_user_id).filter((id): id is string => !!id))]
-  if (authIds.length === 0) return rows
-
-  const { data: profileRows } = await supabase.from('profiles').select('id, avatar_url').in('id', authIds)
-  const avatarById = new Map((profileRows ?? []).map(p => [p.id, p.avatar_url]))
-  return rows.map(r => ({ ...r, avatar_url: r.auth_user_id ? avatarById.get(r.auth_user_id) ?? null : null }))
-}
-
-export function useParticipants(roomId: string) {
-  const [participants, setParticipants] = useState<Participant[]>([])
-
-  useEffect(() => {
-    if (!roomId) return
-
-    fetchParticipantsWithAvatars(roomId).then(setParticipants)
-
-    // Real-time subscription
-    const channel = supabase
-      .channel(`participants:${roomId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'room_participants', filter: `room_id=eq.${roomId}` },
-        () => { fetchParticipantsWithAvatars(roomId).then(setParticipants) }
-      )
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [roomId])
-
-  return participants
-}
+// In-meeting presence (who's here, their role, their avatar) is read from
+// the LiveKit roster: `useParticipants()` from @livekit/components-react,
+// with `role` / `avatar_url` carried as participant attributes that the
+// backend stamps at token time (/api/livekit/token) and updates live
+// (/grant-co-host). room_participants remains the server-side record for
+// moderation checks and history, but no client subscribes to it.
+//
+// The hook that used to live here subscribed every client to postgres
+// changes on room_participants and refetched the ENTIRE roster (plus a
+// profiles join) on every join/leave. That is N²/2 refetches — ~90,000
+// queries at 300 attendees, all during the join burst — and was the single
+// largest blocker to running a large meeting. Don't bring it back: if a
+// future feature needs per-participant server state in the room, add it as
+// a LiveKit attribute at token time instead.
 
 // ============================================================
 // ADMISSION REQUESTS / WAITING ROOM (real-time)

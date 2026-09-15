@@ -225,6 +225,17 @@ app.post('/api/livekit/token', async (req, res) => {
   // only for older clients that don't send one.
   const participantIdentity = identity || displayName
 
+  // Resolve the signed-in user once (if any). Used below for the organiser
+  // host-fallback check AND for the avatar attribute — one Supabase auth
+  // round-trip per join, not two. Anonymous joins simply have no user.
+  let authUser = null
+  if (accessToken) {
+    const { data } = await supabase.auth.getUser(accessToken)
+    authUser = data?.user ?? null
+  }
+  // Presence attributes — see the token.attributes block at the bottom.
+  let role = 'participant'
+
   // Waiting-room gate — only applies to rooms scheduled via /api/rooms/schedule
   // (requires_admission: true). Start Now and pre-existing scheduled rooms
   // fall through untouched, exactly as before this feature existed.
@@ -249,12 +260,12 @@ app.post('/api/livekit/token', async (req, res) => {
     // host_secret above only ever exists in that one browser's localStorage.
     // Verified via Supabase's own token check, so a client can't just claim
     // to be any user id here.
-    if (!isHost && accessToken && room.scheduler_auth_user_id) {
-      const { data: { user } } = await supabase.auth.getUser(accessToken)
-      isHost = user?.id === room.scheduler_auth_user_id
+    if (!isHost && authUser && room.scheduler_auth_user_id) {
+      isHost = authUser.id === room.scheduler_auth_user_id
     }
 
     if (isHost) {
+      role = 'host'
       await supabase.from('room_participants').insert({
         room_id: room.id,
         display_name: displayName,
@@ -310,6 +321,38 @@ app.post('/api/livekit/token', async (req, res) => {
     canPublish: true,
     canSubscribe: true,
   })
+
+  // Presence attributes ride on the LiveKit participant itself, so every
+  // client learns each participant's role and avatar from the roster it
+  // already holds — no per-client Supabase subscription or refetch needed.
+  // Before this, every client subscribed to room_participants and refetched
+  // the ENTIRE roster (plus a profiles join) on every join/leave: with N
+  // attendees that is ~N²/2 refetches, ~90,000 queries at N=300, all
+  // landing during the join burst. Now it is one lookup per join, here.
+  //
+  // role: 'host' was decided above for a gated room's organiser. Anyone
+  // else re-joining (reconnect, refresh) may already hold 'co-host' on
+  // their active room_participants row — carry it over so a co-host who
+  // drops and comes back keeps their controls. /grant-co-host also pushes
+  // live role changes into the attribute via RoomServiceClient.
+  if (role !== 'host' && room) {
+    const { data: existingRow } = await supabase
+      .from('room_participants')
+      .select('role')
+      .eq('room_id', room.id)
+      .eq('display_name', displayName)
+      .eq('is_active', true)
+      .order('joined_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (existingRow?.role === 'co-host') role = 'co-host'
+  }
+  let avatarUrl = null
+  if (authUser) {
+    const { data: profile } = await supabase.from('profiles').select('avatar_url').eq('id', authUser.id).maybeSingle()
+    avatarUrl = profile?.avatar_url ?? null
+  }
+  token.attributes = { role, ...(avatarUrl ? { avatar_url: avatarUrl } : {}) }
 
   return res.json({ token: await token.toJwt() })
 })
@@ -405,9 +448,9 @@ app.post('/api/rooms/:roomId/agenda', async (req, res) => {
 // ============================================================
 app.post('/api/rooms/:roomId/admit', async (req, res) => {
   const { roomId } = req.params
-  const { requestId, decision, actingDisplayName, hostSecret } = req.body
-  if (!requestId || (decision !== 'admit' && decision !== 'deny')) {
-    return res.status(400).json({ error: 'requestId and a valid decision are required' })
+  const { requestId, decision, actingDisplayName, hostSecret, all } = req.body
+  if ((!requestId && !all) || (decision !== 'admit' && decision !== 'deny')) {
+    return res.status(400).json({ error: 'requestId (or all: true) and a valid decision are required' })
   }
 
   if (!(await isRoomModerator(roomId, hostSecret, actingDisplayName))) {
@@ -415,6 +458,32 @@ app.post('/api/rooms/:roomId/admit', async (req, res) => {
   }
 
   const status = decision === 'admit' ? 'admitted' : 'denied'
+
+  // Bulk path — `all: true` decides every currently-pending request in one
+  // call. Mirrors the `all` option on /mute below. Without this a scheduled
+  // conference with N attendees needed N individual clicks before it could
+  // start; at conference scale that is the difference between a usable
+  // waiting room and an unusable one. Same authorisation as a single
+  // decision, and the same participant-row side effect per admitted person.
+  if (all) {
+    const { data: decided, error: bulkError } = await supabase
+      .from('admission_requests')
+      .update({ status, decided_at: new Date().toISOString() })
+      .eq('room_id', roomId)
+      .eq('status', 'pending')
+      .select('display_name')
+    if (bulkError) {
+      console.error('[admit] bulk update failed:', bulkError.message)
+      return res.status(500).json({ error: 'Failed to record decisions' })
+    }
+    if (decision === 'admit' && decided && decided.length > 0) {
+      const now = new Date().toISOString()
+      await supabase.from('room_participants').insert(decided.map(d => ({
+        room_id: roomId, display_name: d.display_name, is_active: true, joined_at: now, role: 'participant',
+      })))
+    }
+    return res.json({ ok: true, count: decided?.length ?? 0 })
+  }
   const { data: updated, error: updateError } = await supabase
     .from('admission_requests')
     .update({ status, decided_at: new Date().toISOString() })
@@ -519,6 +588,25 @@ app.post('/api/rooms/:roomId/grant-co-host', async (req, res) => {
   if (updateError) {
     console.error('[grant-co-host] update failed:', updateError.message)
     return res.status(500).json({ error: 'Failed to update role' })
+  }
+
+  // Push the new role into the participant's LiveKit attributes so every
+  // client (including the promoted person) sees it immediately through the
+  // roster — presence no longer flows through Supabase (see the token
+  // endpoint). room_participants has no LiveKit identity column, so match
+  // on name, the same way /mute and the participant_left webhook already
+  // do. Best-effort: a failure here leaves the DB row correct and the
+  // attribute catches up on that participant's next token (reconnect).
+  try {
+    const { data: roomRow } = await supabase.from('rooms').select('livekit_room_name').eq('id', roomId).single()
+    if (roomRow?.livekit_room_name) {
+      const live = await roomService.listParticipants(roomRow.livekit_room_name)
+      const newRole = grant ? 'co-host' : 'participant'
+      await Promise.all(live.filter(p => p.name === displayName).map(p =>
+        roomService.updateParticipant(roomRow.livekit_room_name, p.identity, { attributes: { role: newRole } })))
+    }
+  } catch (e) {
+    console.warn('[grant-co-host] attribute push failed (non-fatal):', e?.message)
   }
 
   return res.json({ ok: true })

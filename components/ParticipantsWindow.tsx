@@ -10,13 +10,10 @@ const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI &&
   ? 'http://localhost:3001'
   : ''
 
-interface SupabaseParticipant { display_name: string | null; role: string | null; is_active: boolean | null; avatar_url?: string | null }
-
 interface CoHostProps {
   roomId?: string
   isHost?: boolean
   hostSecret?: string | null
-  supabaseParticipants?: SupabaseParticipant[]
   onDirectChat?: (name: string) => void
   // Microphone moderation — distinct from `isHost` above (which gates only
   // co-host *delegation* and stays host-only by design). Mute/mute-all is
@@ -39,19 +36,22 @@ interface CoHostProps {
 // window and the docked strip below, so dragging between the two never
 // changes what the tiles look like, only the container around them and
 // (via `wrap`) whether they're allowed to reflow onto multiple rows.
-function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDirectChat, canModerate, actingDisplayName, onRequestUnmute, wrap }: CoHostProps) {
+function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, actingDisplayName, onRequestUnmute, wrap }: CoHostProps) {
   const lkParticipants = useLiveKitParticipants()
   const { localParticipant } = useLocalParticipant()
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
   const [busyName, setBusyName] = useState<string | null>(null)
   const [muteBusyIdentity, setMuteBusyIdentity] = useState<string | null>(null)
 
-  // room_participants has no identity column — matched by display_name,
-  // same limitation this whole feature already lives with server-side.
+  // Role and avatar are LiveKit participant attributes (stamped by the
+  // backend at token time, pushed live by /grant-co-host) — read straight
+  // off the roster this component already subscribes to. Replaces a
+  // Supabase room_participants list that every client refetched in full on
+  // every join/leave. Keyed by name, matching the rest of this feature.
   const roleFor = (name: string) =>
-    supabaseParticipants?.find(p => p.is_active && p.display_name === name)?.role ?? 'participant'
+    lkParticipants.find(p => p.name === name)?.attributes?.role ?? 'participant'
   const avatarUrlFor = (name: string) =>
-    supabaseParticipants?.find(p => p.is_active && p.display_name === name)?.avatar_url ?? null
+    lkParticipants.find(p => p.name === name)?.attributes?.avatar_url ?? null
 
   const toggleCoHost = async (name: string) => {
     if (!roomId || !hostSecret) return
@@ -219,7 +219,7 @@ function AttendeeTiles({ roomId, isHost, hostSecret, supabaseParticipants, onDir
 // horizontal strip below. The body is the same always-horizontal,
 // always-scrollable row as the docked strip (never a grid) — dragging
 // between docked and floating only changes the container, not the layout.
-export function ParticipantsWindow({ onClose, onDock, onDirectChat, roomId, isHost, hostSecret, supabaseParticipants, canModerate, actingDisplayName, onRequestUnmute }: {
+export function ParticipantsWindow({ onClose, onDock, onDirectChat, roomId, isHost, hostSecret, canModerate, actingDisplayName, onRequestUnmute }: {
   onClose: () => void
   onDock: () => void
 } & CoHostProps) {
@@ -273,19 +273,19 @@ export function ParticipantsWindow({ onClose, onDock, onDirectChat, roomId, isHo
             <button style={s.pwClose} onClick={onClose}><X size={16} /></button>
           </div>
         </div>
-        <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} supabaseParticipants={supabaseParticipants} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} wrap />
+        <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} wrap />
       </div>
     </div>
   )
 }
 
-export function DockedParticipantsStrip({ onUndock, onClose, onDirectChat, roomId, isHost, hostSecret, supabaseParticipants, canModerate, actingDisplayName, onRequestUnmute }: {
+export function DockedParticipantsStrip({ onUndock, onClose, onDirectChat, roomId, isHost, hostSecret, canModerate, actingDisplayName, onRequestUnmute }: {
   onUndock: () => void
   onClose: () => void
 } & CoHostProps) {
   return (
     <div style={s.dockedStrip}>
-      <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} supabaseParticipants={supabaseParticipants} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} />
+      <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} />
       <div style={s.dockedActions}>
         <button style={s.dockedBtn} onClick={onUndock} title="Undock">↙</button>
         <button style={s.dockedBtn} onClick={onClose} title="Close"><X size={12} /></button>

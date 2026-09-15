@@ -69,6 +69,23 @@ export function AdmissionRequestsWindow({ roomId, pending, hostSecret, actingDis
     }
   }
 
+  // One call admits everyone currently waiting (backend `all: true`). Uses
+  // the same busy flag so the per-row buttons lock while it runs.
+  const admitAll = async () => {
+    setBusyId('__all__')
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/admit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, decision: 'admit', actingDisplayName, hostSecret: hostSecret ?? undefined }),
+      })
+    } catch (e) {
+      console.error('[admission] admit-all failed:', e)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <div style={st.window}>
       <div style={st.header}>
@@ -85,6 +102,16 @@ export function AdmissionRequestsWindow({ roomId, pending, hostSecret, actingDis
               </span>
             )}
           </p>
+        )}
+        {pending.length > 1 && (
+          <button
+            style={{ ...st.actionBtn, ...st.admitBtn, width: '100%', height: 30, marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 11, fontWeight: 600, fontFamily: "'Roboto', sans-serif", letterSpacing: 0.4 }}
+            disabled={busyId !== null}
+            onClick={admitAll}
+            title="Admit everyone waiting"
+          >
+            <UserCheck size={13} /> Admit all {pending.length}
+          </button>
         )}
         {pending.map((r) => (
           <div key={r.id} style={st.row}>

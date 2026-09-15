@@ -154,6 +154,25 @@ if (typeof document !== 'undefined' && !document.getElementById('bhv-equal-grid-
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
       grid-auto-rows: 1fr !important;
     }
+    /* A tile must fill the grid cell it was allocated, in every camera state.
+       In LiveKit's stock layout the tile IS the grid item, so the grid
+       stretches it to the row. Here each tile sits inside a positioning
+       wrapper (needed for CameraOffAvatarOverlay), so the WRAPPER is what
+       the grid stretches — and .lk-participant-tile, a plain flex column with
+       no height rule of its own, falls back to its content height: the
+       video's natural aspect ratio when the camera is on, and 0px when it's
+       off (its placeholder is position:absolute and contributes nothing).
+       Measured live with two participants: cells 710px tall and 50/50 in
+       both states, but the camera-off tile rendered at 0px while the
+       camera-on tile rendered at 204px — which is what made a camera toggle
+       look like one participant vanishing and the other taking over. With
+       the tile pinned to its wrapper, camera state changes only what's
+       drawn inside a box whose size never moves. Applies identically to 1,
+       2 and 3+ participants, so no layout is redesigned — only the tile's
+       failure to fill the space it was already given is corrected. */
+    .lk-grid-layout > * > .lk-participant-tile {
+      height: 100%;
+    }
   `
   document.head.appendChild(style)
 }

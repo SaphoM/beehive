@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback, memo } from 'react'
 import { X, Mic, MicOff, VideoOff, MessageSquare, Crown, BellRing, Megaphone, Users } from 'lucide-react'
 import { ParticipantTile, useTracks, useLocalParticipant, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
 import { Track } from 'livekit-client'
@@ -33,6 +33,178 @@ interface CoHostProps {
   wrap?: boolean
 }
 
+// Above this many participants the tile list is windowed: only the tiles
+// inside (and just around) the scroll viewport are mounted. Below it the
+// layout is exactly what it always was — the auto-fill grid that stretches a
+// lone tile to fill the panel, the slim docked row — because windowing needs
+// fixed tile geometry and there is nothing to gain from it in a small room.
+// Matters for "Large session" rooms: every camera-on tile mounts a <video>,
+// so 300 attendees unwindowed is 300 videos in one side panel.
+const VIRTUALIZE_ABOVE = 60
+const TILE_W = 110, TILE_H = 105, TILE_GAP = 8, GRID_MIN_COL = 140, GRID_PAD = 12
+const OVERSCAN_ROWS = 2
+
+// Windowed range of a 1-D sequence of `total` items laid out at `stride`
+// pixels each, viewed through `viewport` pixels starting at `offset`.
+function windowRange(offset: number, viewport: number, stride: number, total: number, overscan: number) {
+  const first = Math.max(0, Math.floor(offset / stride) - overscan)
+  const last = Math.min(total - 1, Math.ceil((offset + viewport) / stride) + overscan)
+  return { first, last: Math.max(first, last) }
+}
+
+// Tracks scroll position + size of a scroll container so the list above can
+// decide which slice to mount. Scroll events already arrive at most once per
+// frame and the setter bails out when nothing moved, so this is read
+// synchronously in the handler — no rAF hop, which browsers throttle to 1 Hz
+// for occluded windows and would leave a scrolled panel blank for a second.
+function useScrollWindow(ref: React.RefObject<HTMLDivElement | null>, active: boolean) {
+  const [win, setWin] = useState({ top: 0, left: 0, width: 0, height: 0 })
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !active) return
+    const read = () => {
+      setWin(prev => {
+        const next = { top: el.scrollTop, left: el.scrollLeft, width: el.clientWidth, height: el.clientHeight }
+        return prev.top === next.top && prev.left === next.left && prev.width === next.width && prev.height === next.height ? prev : next
+      })
+    }
+    read()
+    el.addEventListener('scroll', read, { passive: true })
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', read); ro.disconnect() }
+  }, [ref, active])
+  return win
+}
+
+interface TileProps {
+  identity: string
+  name: string
+  role: string
+  avatarUrl: string | null
+  camTrack: ReturnType<typeof useTracks>[number] | undefined
+  isMuted: boolean
+  isCamOff: boolean
+  isSelf: boolean
+  fill: boolean
+  roomId?: string
+  isHost?: boolean
+  hasHostSecret: boolean
+  canModerate?: boolean
+  canRequestUnmute: boolean
+  micCapReached: boolean
+  asked: boolean
+  busy: 'cohost' | 'speaker' | 'mute' | null
+  onDirectChat?: (name: string) => void
+  onToggleCoHost: (name: string, grant: boolean) => void
+  onSetSpeaker: (name: string, grant: boolean) => void
+  onMute: (identity: string) => void
+  onAskUnmute: (identity: string) => void
+}
+
+// One attendee tile. Memoized on primitive props so a mute/camera flip on
+// one participant re-renders that tile alone — with hundreds of tiles the
+// roster's per-speaker-change re-render was otherwise the panel's main cost.
+const AttendeeTile = memo(function AttendeeTile({
+  identity, name, role, avatarUrl, camTrack, isMuted, isCamOff, isSelf, fill,
+  roomId, isHost, hasHostSecret, canModerate, canRequestUnmute, micCapReached, asked, busy,
+  onDirectChat, onToggleCoHost, onSetSpeaker, onMute, onAskUnmute,
+}: TileProps) {
+  const isCoHost = role === 'co-host'
+  return (
+    <div style={fill ? { ...s.dockedTile, width: '100%', height: '100%' } : s.dockedTile}>
+      {camTrack && !isCamOff ? (
+        <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
+      ) : (
+        <div style={s.dockedNoVideo}>
+          <Avatar name={name} avatarUrl={avatarUrl} size={52} />
+        </div>
+      )}
+      <div style={s.dockedTileBar}>
+        <span style={s.dockedName}>{name.split(' ')[0]}</span>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {isMuted ? <MicOff size={9} color="#e53e3e" /> : <Mic size={9} color="#48bb78" />}
+          {isCamOff && <VideoOff size={9} color="#e53e3e" />}
+          {onDirectChat && (
+            <button
+              onClick={() => onDirectChat(name)}
+              title={`Message ${name}`}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <MessageSquare size={10} />
+            </button>
+          )}
+          {/* Mic moderation — host/co-host only, never on the
+              moderator's own tile (self-mute already exists via the
+              normal mic button and must stay the participant's own
+              action, never routed through this force-mute path). Mute
+              while on; "request unmute" while off, since there's no
+              server-side force-unmute to offer instead. */}
+          {/* Audience-mode floor: an attendee has no publish rights,
+              so mic moderation is meaningless for them — offer "Let
+              speak" instead. A promoted speaker gets the normal mic
+              controls plus a way back to the audience. */}
+          {canModerate && !isSelf && roomId && role === 'attendee' && (
+            <button
+              onClick={() => onSetSpeaker(name, true)}
+              disabled={busy === 'speaker' || micCapReached}
+              title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : `Let ${name} speak`}
+              style={{ background: 'none', border: 'none', cursor: micCapReached ? 'not-allowed' : 'pointer', color: micCapReached ? '#555' : '#f5a623', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <Megaphone size={10} />
+            </button>
+          )}
+          {canModerate && !isSelf && roomId && role === 'speaker' && (
+            <button
+              onClick={() => onSetSpeaker(name, false)}
+              disabled={busy === 'speaker'}
+              title={`Move ${name} back to the audience`}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <Users size={10} />
+            </button>
+          )}
+          {canModerate && !isSelf && roomId && role !== 'attendee' && (
+            isMuted ? (
+              canRequestUnmute && (
+                <button
+                  onClick={() => onAskUnmute(identity)}
+                  disabled={micCapReached || asked}
+                  title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : asked ? `Asked ${name} — waiting for them` : `Ask ${name} to unmute`}
+                  style={{ background: 'none', border: 'none', cursor: micCapReached || asked ? 'not-allowed' : 'pointer', color: asked ? '#f5a623' : micCapReached ? '#555' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+                >
+                  <BellRing size={10} />
+                </button>
+              )
+            ) : (
+              <button
+                onClick={() => onMute(identity)}
+                disabled={busy === 'mute'}
+                title={`Mute ${name}`}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+              >
+                <MicOff size={10} />
+              </button>
+            )
+          )}
+          {/* Delegated admit rights — host-only, and never shown on
+              the host's own tile (role is 'host' there). */}
+          {isHost && roomId && hasHostSecret && role !== 'host' && (
+            <button
+              onClick={() => onToggleCoHost(name, !isCoHost)}
+              disabled={busy === 'cohost'}
+              title={isCoHost ? 'Remove co-host' : 'Make co-host'}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: isCoHost ? '#f5a623' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <Crown size={10} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
+
 // Shared row of compact attendee tiles. Used by both the floating (detached)
 // window and the docked strip below, so dragging between the two never
 // changes what the tiles look like, only the container around them and
@@ -49,32 +221,27 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
   // off the roster this component already subscribes to. Replaces a
   // Supabase room_participants list that every client refetched in full on
   // every join/leave. Keyed by name, matching the rest of this feature.
-  const roleFor = (name: string) =>
-    lkParticipants.find(p => p.name === name)?.attributes?.role ?? 'participant'
-  const avatarUrlFor = (name: string) =>
-    lkParticipants.find(p => p.name === name)?.attributes?.avatar_url ?? null
-
-  const toggleCoHost = async (name: string) => {
+  const toggleCoHost = useCallback(async (name: string, grant: boolean) => {
     if (!roomId || !hostSecret) return
     setBusyName(name)
     try {
       await fetch(`${API_BASE}/api/rooms/${roomId}/grant-co-host`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: name, grant: roleFor(name) !== 'co-host', hostSecret }),
+        body: JSON.stringify({ displayName: name, grant, hostSecret }),
       })
     } catch (e) {
       console.error('[participants] grant-co-host failed:', e)
     } finally {
       setBusyName(null)
     }
-  }
+  }, [roomId, hostSecret])
 
   // Audience-mode floor control — host OR co-host, one person per click.
   // Grants (or withdraws) publish rights live; the promoted speaker gets a
   // prompt with a one-click Unmute on their side (RoomPage's floorGranted).
   const [speakerBusy, setSpeakerBusy] = useState<string | null>(null)
-  const setSpeaker = async (name: string, grant: boolean) => {
+  const setSpeaker = useCallback(async (name: string, grant: boolean) => {
     if (!roomId) return
     setSpeakerBusy(name)
     try {
@@ -88,14 +255,14 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
     } finally {
       setSpeakerBusy(null)
     }
-  }
+  }, [roomId, actingDisplayName, hostSecret])
 
   // Force-mute is server-only — LiveKit's browser SDK has no ability to
   // affect a track it doesn't own, by design (see the backend endpoint's own
   // comment for why). This is a thin client for that endpoint; the endpoint
   // itself re-derives and enforces authorization independently, so this
   // being reachable at all client-side is not itself a security boundary.
-  const muteOne = async (identity: string) => {
+  const muteOne = useCallback(async (identity: string) => {
     if (!roomId || !canModerate) return
     setMuteBusyIdentity(identity)
     try {
@@ -109,7 +276,7 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
     } finally {
       setMuteBusyIdentity(null)
     }
-  }
+  }, [roomId, canModerate, hostSecret, actingDisplayName])
 
   const muteAll = async () => {
     if (!roomId || !canModerate) return
@@ -139,15 +306,76 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
   // there is no server-side force-unmute, so each request is a prompt the
   // attendee answers, and the cap above is what keeps the answered count sane).
   const [recentlyAsked, setRecentlyAsked] = useState<Set<string>>(new Set())
-  const askToUnmute = (identity: string) => {
-    if (!onRequestUnmute || micCapReached || recentlyAsked.has(identity)) return
+  const askToUnmute = useCallback((identity: string) => {
+    if (!onRequestUnmute) return
     onRequestUnmute(identity)
     setRecentlyAsked(prev => new Set(prev).add(identity))
     setTimeout(() => setRecentlyAsked(prev => { const n = new Set(prev); n.delete(identity); return n }), 8000)
+  }, [onRequestUnmute])
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const total = lkParticipants.length
+  const virtualize = total > VIRTUALIZE_ABOVE
+  const win = useScrollWindow(scrollRef, virtualize)
+
+  // Which slice of the roster to mount. Non-virtualized: everyone (exactly
+  // the old behaviour). Floating grid: fixed-height rows, column count from
+  // the panel's measured width. Docked strip: fixed-width columns.
+  let first = 0, last = total - 1, cols = 1
+  let leadSpace = 0, trailSpace = 0
+  if (virtualize) {
+    if (wrap) {
+      cols = Math.max(1, Math.floor((win.width - GRID_PAD * 2 + TILE_GAP) / (GRID_MIN_COL + TILE_GAP)))
+      const rows = Math.ceil(total / cols)
+      const r = windowRange(win.top, win.height, TILE_H + TILE_GAP, rows, OVERSCAN_ROWS)
+      first = r.first * cols
+      last = Math.min(total - 1, (r.last + 1) * cols - 1)
+      leadSpace = r.first * (TILE_H + TILE_GAP)
+      trailSpace = Math.max(0, (rows - 1 - r.last) * (TILE_H + TILE_GAP))
+    } else {
+      // The moderator buttons sit before the tiles in the same scroller;
+      // the extra overscan absorbs their width rather than measuring it.
+      const r = windowRange(win.left, win.width, TILE_W + TILE_GAP, total, OVERSCAN_ROWS + 2)
+      first = r.first; last = r.last
+      leadSpace = first * (TILE_W + TILE_GAP)
+      trailSpace = Math.max(0, (total - 1 - last) * (TILE_W + TILE_GAP))
+    }
   }
 
-  return (
-    <div style={wrap ? s.dockedInnerWrap : s.dockedInner}>
+  const tiles = lkParticipants.slice(first, last + 1).map(participant => {
+    const name = participant.name || participant.identity
+    const busy = busyName === name ? 'cohost' : speakerBusy === name ? 'speaker' : muteBusyIdentity === participant.identity ? 'mute' : null
+    return (
+      <AttendeeTile
+        key={participant.identity}
+        identity={participant.identity}
+        name={name}
+        role={participant.attributes?.role ?? 'participant'}
+        avatarUrl={participant.attributes?.avatar_url ?? null}
+        camTrack={cameraTracks.find(t => t.participant.identity === participant.identity)}
+        isMuted={!participant.isMicrophoneEnabled}
+        isCamOff={!participant.isCameraEnabled}
+        isSelf={participant.identity === localParticipant.identity}
+        fill={!!wrap}
+        roomId={roomId}
+        isHost={isHost}
+        hasHostSecret={!!hostSecret}
+        canModerate={canModerate}
+        canRequestUnmute={!!onRequestUnmute}
+        micCapReached={micCapReached}
+        asked={recentlyAsked.has(participant.identity)}
+        busy={busy}
+        onDirectChat={onDirectChat}
+        onToggleCoHost={toggleCoHost}
+        onSetSpeaker={setSpeaker}
+        onMute={muteOne}
+        onAskUnmute={askToUnmute}
+      />
+    )
+  })
+
+  const moderatorButtons = (
+    <>
       {/* Mute all — host/co-host only, and only meaningful once someone
           other than the moderator actually has their mic on. */}
       {canModerate && roomId && liveMicCount > 0 && (
@@ -187,107 +415,45 @@ function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, 
           Mute all
         </button>
       )}
-      {lkParticipants.map(participant => {
-        const camTrack = cameraTracks.find(t => t.participant.identity === participant.identity)
-        const isMuted = !participant.isMicrophoneEnabled
-        const isCamOff = !participant.isCameraEnabled
-        const isSelf = participant.identity === localParticipant.identity
-        const name = participant.name || participant.identity
-        const role = roleFor(name)
-        const isCoHost = role === 'co-host'
-        return (
-          <div key={participant.identity} style={wrap ? { ...s.dockedTile, width: '100%', height: '100%' } : s.dockedTile}>
-            {camTrack && !isCamOff ? (
-              <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
-            ) : (
-              <div style={s.dockedNoVideo}>
-                <Avatar name={name} avatarUrl={avatarUrlFor(name)} size={52} />
-              </div>
-            )}
-            <div style={s.dockedTileBar}>
-              <span style={s.dockedName}>{name.split(' ')[0]}</span>
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                {isMuted ? <MicOff size={9} color="#e53e3e" /> : <Mic size={9} color="#48bb78" />}
-                {isCamOff && <VideoOff size={9} color="#e53e3e" />}
-                {onDirectChat && (
-                  <button
-                    onClick={() => onDirectChat(name)}
-                    title={`Message ${name}`}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
-                  >
-                    <MessageSquare size={10} />
-                  </button>
-                )}
-                {/* Mic moderation — host/co-host only, never on the
-                    moderator's own tile (self-mute already exists via the
-                    normal mic button and must stay the participant's own
-                    action, never routed through this force-mute path). Mute
-                    while on; "request unmute" while off, since there's no
-                    server-side force-unmute to offer instead. */}
-                {/* Audience-mode floor: an attendee has no publish rights,
-                    so mic moderation is meaningless for them — offer "Let
-                    speak" instead. A promoted speaker gets the normal mic
-                    controls plus a way back to the audience. */}
-                {canModerate && !isSelf && roomId && role === 'attendee' && (
-                  <button
-                    onClick={() => setSpeaker(name, true)}
-                    disabled={speakerBusy === name || micCapReached}
-                    title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : `Let ${name} speak`}
-                    style={{ background: 'none', border: 'none', cursor: micCapReached ? 'not-allowed' : 'pointer', color: micCapReached ? '#555' : '#f5a623', display: 'flex', alignItems: 'center', padding: 0 }}
-                  >
-                    <Megaphone size={10} />
-                  </button>
-                )}
-                {canModerate && !isSelf && roomId && role === 'speaker' && (
-                  <button
-                    onClick={() => setSpeaker(name, false)}
-                    disabled={speakerBusy === name}
-                    title={`Move ${name} back to the audience`}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
-                  >
-                    <Users size={10} />
-                  </button>
-                )}
-                {canModerate && !isSelf && roomId && role !== 'attendee' && (
-                  isMuted ? (
-                    onRequestUnmute && (
-                      <button
-                        onClick={() => askToUnmute(participant.identity)}
-                        disabled={micCapReached || recentlyAsked.has(participant.identity)}
-                        title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : recentlyAsked.has(participant.identity) ? `Asked ${name} — waiting for them` : `Ask ${name} to unmute`}
-                        style={{ background: 'none', border: 'none', cursor: micCapReached || recentlyAsked.has(participant.identity) ? 'not-allowed' : 'pointer', color: recentlyAsked.has(participant.identity) ? '#f5a623' : micCapReached ? '#555' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
-                      >
-                        <BellRing size={10} />
-                      </button>
-                    )
-                  ) : (
-                    <button
-                      onClick={() => muteOne(participant.identity)}
-                      disabled={muteBusyIdentity === participant.identity}
-                      title={`Mute ${name}`}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
-                    >
-                      <MicOff size={10} />
-                    </button>
-                  )
-                )}
-                {/* Delegated admit rights — host-only, and never shown on
-                    the host's own tile (roleFor() is 'host' there). */}
-                {isHost && roomId && hostSecret && role !== 'host' && (
-                  <button
-                    onClick={() => toggleCoHost(name)}
-                    disabled={busyName === name}
-                    title={isCoHost ? 'Remove co-host' : 'Make co-host'}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: isCoHost ? '#f5a623' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
-                  >
-                    <Crown size={10} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })}
+    </>
+  )
+
+  if (!virtualize) {
+    return (
+      <div ref={scrollRef} style={wrap ? s.dockedInnerWrap : s.dockedInner}>
+        {moderatorButtons}
+        {tiles}
+      </div>
+    )
+  }
+
+  if (wrap) {
+    // Windowed grid: the moderator buttons get their own row above the
+    // tiles (they no longer share the grid's first cells, which would shift
+    // every row's arithmetic), then a spacer / visible rows / spacer so the
+    // scrollbar still reflects the full roster.
+    return (
+      <div ref={scrollRef} style={{ ...s.dockedInnerWrap, display: 'block' }}>
+        {(canModerate && roomId && liveMicCount > 0) && (
+          <div style={{ display: 'flex', gap: TILE_GAP, marginBottom: TILE_GAP }}>{moderatorButtons}</div>
+        )}
+        <div style={{ height: leadSpace }} />
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: TILE_H, gap: TILE_GAP }}>
+          {tiles}
+        </div>
+        <div style={{ height: trailSpace }} />
+      </div>
+    )
+  }
+
+  return (
+    <div ref={scrollRef} style={s.dockedInner}>
+      {moderatorButtons}
+      {/* The flex gap after/before each spacer supplies one of the
+          skipped tiles' gaps, so the spacer itself is one gap short. */}
+      {leadSpace > 0 && <div style={{ width: leadSpace - TILE_GAP, flexShrink: 0 }} />}
+      {tiles}
+      {trailSpace > 0 && <div style={{ width: trailSpace - TILE_GAP, flexShrink: 0 }} />}
     </div>
   )
 }

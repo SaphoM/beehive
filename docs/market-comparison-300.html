@@ -1,0 +1,361 @@
+<title>BeeHive vs Zoom, Teams, Meet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground: #FAFAF7; --surface: #FFFFFF; --ink: #1A1A1C; --ink-2: #4B4E55; --ink-3: #7A7E87;
+    --rule: #DCDEE3; --rule-soft: #ECEEF1;
+    --accent: #E09A1E; --accent-ink: #8A5A06; --accent-soft: #FBF1DC; --accent-tint: #FFF8E8;
+    --yes: #2F8F5B; --yes-soft: #E3F3EA; --no: #C43D36; --no-soft: #FBE5E3; --part: #B8780F; --part-soft: #FBF1DC;
+    --code-bg: #EAECEF;
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #131518; --surface: #1B1E22; --ink: #EDEEF0; --ink-2: #B4B8BF; --ink-3: #7F848D;
+      --rule: #2C3036; --rule-soft: #22262B;
+      --accent: #F0AE3A; --accent-ink: #F5C46A; --accent-soft: #2E2510; --accent-tint: #221C0E;
+      --yes: #5CC48A; --yes-soft: #16301F; --no: #F07A73; --no-soft: #3A1B19; --part: #E0A63A; --part-soft: #2E2510;
+      --code-bg: #22262B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #131518; --surface: #1B1E22; --ink: #EDEEF0; --ink-2: #B4B8BF; --ink-3: #7F848D;
+    --rule: #2C3036; --rule-soft: #22262B;
+    --accent: #F0AE3A; --accent-ink: #F5C46A; --accent-soft: #2E2510; --accent-tint: #221C0E;
+    --yes: #5CC48A; --yes-soft: #16301F; --no: #F07A73; --no-soft: #3A1B19; --part: #E0A63A; --part-soft: #2E2510;
+    --code-bg: #22262B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 44px 24px 80px; display: flex; flex-direction: column; gap: 36px; }
+  h1, h2 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.1; }
+  h1 { font-size: clamp(30px, 4.5vw, 42px); font-weight: 700; letter-spacing: -0.015em; }
+  h2 { font-size: 21px; font-weight: 700; }
+  p { margin: 0; max-width: 68ch; }
+  .eyebrow { font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-ink); }
+  .muted { color: var(--ink-2); }
+  .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  code { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  header { display: flex; flex-direction: column; gap: 12px; padding-bottom: 22px; border-bottom: 2px solid var(--accent); }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); }
+  section { display: flex; flex-direction: column; gap: 14px; }
+
+  /* cost strip */
+  .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+  .strip > div { padding: 18px 20px; border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 6px; }
+  .strip > div:last-child { border-right: 0; }
+  @media (max-width: 800px) { .strip > div { border-right: 0; border-bottom: 1px solid var(--rule); } .strip > div:last-child { border-bottom: 0; } }
+  .strip .vendor { font-family: var(--display); font-weight: 700; font-size: 14px; }
+  .strip .tier { font-size: 13px; color: var(--ink-3); }
+  .strip .cost { font-family: var(--display); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .strip .cost small { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--ink-3); letter-spacing: 0; margin-left: 4px; }
+  .strip .hint { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+  .strip .bee { background: var(--accent-tint); }
+  .strip .bee .vendor { color: var(--accent-ink); }
+  .strip .blocked .cost { color: var(--no); }
+
+  /* table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1080px; font-size: 14px; }
+  th, td { text-align: left; padding: 11px 14px; vertical-align: top; border-bottom: 1px solid var(--rule-soft); }
+  thead th { font-family: var(--display); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); background: var(--ground); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 2; }
+  thead th .v { display: block; font-size: 15px; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 2px; }
+  thead th .t { display: block; font-family: var(--body); font-size: 12.5px; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--ink-3); }
+  tbody th { font-family: var(--display); font-weight: 700; font-size: 13.5px; color: var(--ink-2); white-space: nowrap; background: var(--surface); position: sticky; left: 0; z-index: 1; border-right: 1px solid var(--rule); }
+  tbody tr.group th { background: var(--ground); color: var(--accent-ink); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; padding-top: 14px; }
+  tbody tr.group td { background: var(--ground); }
+  tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+  td.bee, th.bee { background: var(--accent-tint); }
+  thead th.bee { background: var(--accent-soft); }
+  thead th.bee .v { color: var(--accent-ink); }
+  td .price { font-family: var(--display); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; display: block; }
+  td .sub { display: block; font-size: 12px; color: var(--ink-3); font-family: var(--mono); margin-top: 2px; }
+  .chip { display: inline-block; font-family: var(--display); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; white-space: nowrap; margin-right: 4px; }
+  .chip.yes { background: var(--yes-soft); color: var(--yes); }
+  .chip.no { background: var(--no-soft); color: var(--no); }
+  .chip.part { background: var(--part-soft); color: var(--part); }
+  td small { display: block; color: var(--ink-3); font-size: 12.5px; line-height: 1.4; margin-top: 2px; }
+
+  .notes { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 820px) { .notes { grid-template-columns: 1fr 1fr; } }
+  .note { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
+  .note h2 { font-size: 15px; }
+  .note ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  footer { border-top: 1px solid var(--rule); padding-top: 14px; font-size: 12.5px; color: var(--ink-3); display: flex; flex-direction: column; gap: 4px; }
+  footer a { color: var(--accent-ink); }
+</style>
+
+<div class="page">
+
+<header>
+  <span class="eyebrow">Market comparison · 300-attendee tier</span>
+  <h1>What a 300-seat meeting costs on Zoom, Teams, Meet — and on BeeHive</h1>
+  <p class="muted">Only the tiers that reach BeeHive's target of 300 attendees per session are shown — Zoom Business, Microsoft Teams at enterprise level, Google Workspace Business Plus; smaller tiers appear as a footnote where a vendor sells one. BeeHive is shown twice: as it runs today on free infrastructure (the "stub"), and after the plan upgrades the capacity audit calls for.</p>
+  <div class="meta">
+    <span>prices ex VAT · annual billing</span>
+    <span>USD 1 = R16.25 · EUR 1 = R18.76 (mid-Sep 2026)</span>
+    <span>BeeHive 1.0.304 · staging</span>
+    <span>16 Sep 2026</span>
+  </div>
+</header>
+
+<section>
+  <span class="eyebrow">Monthly cost · one recurring 300-attendee session · 10 licensed hosts</span>
+  <div class="strip">
+    <div>
+      <span class="vendor">Zoom Workplace</span>
+      <span class="tier">Business · 300 participants</span>
+      <span class="cost num">R3 482<small>/mo</small></span>
+      <span class="hint">10 × R348.17. Listed in Rand by Zoom SA.</span>
+    </div>
+    <div>
+      <span class="vendor">Microsoft Teams</span>
+      <span class="tier">Teams Enterprise · 1 000 participants</span>
+      <span class="cost num">R1 389<small>/mo</small></span>
+      <span class="hint">10 × $8.55 standalone Teams. With Microsoft 365 E3 (Office, Windows, Intune): 10 × $39 = R6 338.</span>
+    </div>
+    <div>
+      <span class="vendor">Google Meet</span>
+      <span class="tier">Workspace Business Plus · 500 participants</span>
+      <span class="cost num">R3 958<small>/mo</small></span>
+      <span class="hint">10 × €21.10. Business Standard stops at 150, so Plus is the first tier that fits.</span>
+    </div>
+    <div class="bee blocked">
+      <span class="vendor">BeeHive — stub (today)</span>
+      <span class="tier">Supabase Free + LiveKit Build + Render Free</span>
+      <span class="cost num">R0<small>/mo</small></span>
+      <span class="hint">But 300 cannot join: LiveKit Build caps at 100 concurrent connections and Supabase Free at 200 realtime connections. Practical ceiling ~50–100.</span>
+    </div>
+    <div class="bee">
+      <span class="vendor">BeeHive — upgraded</span>
+      <span class="tier">Supabase Pro + LiveKit Ship + Render Starter</span>
+      <span class="cost num">R1 333<small>/mo</small></span>
+      <span class="hint">$25 + $50 + $7 = $82 flat, for any number of hosts. Includes ≈ 4 such sessions of connection-minutes; each extra 300 × 2 h session ≈ R290.</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Side by side</h2>
+  <div class="tablewrap">
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th><span class="v">Zoom Workplace</span><span class="t">Business</span></th>
+        <th><span class="v">Microsoft Teams</span><span class="t">Teams Enterprise · Microsoft 365 E3</span></th>
+        <th><span class="v">Google Meet</span><span class="t">Workspace Business Plus</span></th>
+        <th class="bee"><span class="v">BeeHive · stub</span><span class="t">free infrastructure, v1.0.304</span></th>
+        <th class="bee"><span class="v">BeeHive · upgraded</span><span class="t">Supabase Pro · LiveKit Ship · Render Starter</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="group"><th>Price</th><td></td><td></td><td></td><td class="bee"></td><td class="bee"></td></tr>
+      <tr>
+        <th>Per licensed host / month</th>
+        <td><span class="price num">R348.17</span><span class="sub">Zoom SA list price, ex VAT</span></td>
+        <td><span class="price num">R139 · R634</span><span class="sub">$8.55 Teams Enterprise · $39.00 M365 E3</span></td>
+        <td><span class="price num">R396</span><span class="sub">€21.10, billed in EUR</span></td>
+        <td class="bee"><span class="price num">R0</span><span class="sub">no per-seat licence</span></td>
+        <td class="bee"><span class="price num">R0</span><span class="sub">no per-seat licence</span></td>
+      </tr>
+      <tr>
+        <th>Platform / infrastructure</th>
+        <td>—<small>included in licence</small></td>
+        <td>—<small>included in licence</small></td>
+        <td>—<small>included in licence</small></td>
+        <td class="bee"><span class="price num">R0</span><span class="sub">Supabase Free · LiveKit Build · Render Free</span></td>
+        <td class="bee"><span class="price num">R1 333 /mo</span><span class="sub">$25 Supabase Pro + $50 LiveKit Ship + $7 Render Starter</span></td>
+      </tr>
+      <tr>
+        <th>Usage beyond included</th>
+        <td>Large Meeting add-on from R949.99/mo (500)</td>
+        <td>None up to 1 000 interactive; view-only overflow to 10 000</td>
+        <td>None up to 500</td>
+        <td class="bee">5 000 connection-min then hard stop; 50 GB egress</td>
+        <td class="bee">150 000 connection-min incl., then R0.008/min; 250 GB egress incl., then R1.95/GB</td>
+      </tr>
+      <tr>
+        <th>Pricing model</th>
+        <td>Per host, annual</td>
+        <td>Per user, annual; unlimited users</td>
+        <td>Per user, annual (EUR)</td>
+        <td class="bee">Flat infrastructure, no seats</td>
+        <td class="bee">Flat infrastructure, no seats</td>
+      </tr>
+
+      <tr class="group"><th>Capacity</th><td></td><td></td><td></td><td class="bee"></td><td class="bee"></td></tr>
+      <tr>
+        <th>Participants per meeting</th>
+        <td><b class="num">300</b><small>Pro tier: 100</small></td>
+        <td><b class="num">1 000</b><small>Business tiers: 300</small></td>
+        <td><b class="num">500</b><small>Starter 100 · Standard 150</small></td>
+        <td class="bee"><span class="chip no">~50–100</span><small>LiveKit Build: 100 concurrent connections; Supabase Free: 200 realtime connections</small></td>
+        <td class="bee"><b class="num">300</b> audience mode<small>LiveKit Ship: 1 000 concurrent; Supabase Pro: 500 realtime</small></td>
+      </tr>
+      <tr>
+        <th>Live microphones at once</th>
+        <td>Unlimited (client-limited)</td>
+        <td>Unlimited (client-limited)</td>
+        <td>Unlimited (client-limited)</td>
+        <td class="bee"><b class="num">20</b> cap, host-moderated</td>
+        <td class="bee"><b class="num">20</b> cap, host-moderated</td>
+      </tr>
+      <tr>
+        <th>Cameras on screen</th>
+        <td class="num">49 per page</td>
+        <td class="num">49 per page</td>
+        <td class="num">49 per page</td>
+        <td class="bee"><span class="num">25</span> per page · ≤ 8 recommended</td>
+        <td class="bee"><span class="num">25</span> per page · adaptive stream on</td>
+      </tr>
+      <tr>
+        <th>Meeting duration</th>
+        <td class="num">30 h</td>
+        <td class="num">30 h</td>
+        <td class="num">24 h</td>
+        <td class="bee">No limit</td>
+        <td class="bee">No limit</td>
+      </tr>
+      <tr>
+        <th>Webinar / audience role</th>
+        <td>Add-on (Zoom Webinars)</td>
+        <td><span class="chip yes">yes</span><small>Webinars and town halls included</small></td>
+        <td>Plus and up</td>
+        <td class="bee"><span class="chip yes">yes</span><small>"Large session" rooms: attendees join without publish rights; host promotes speakers</small></td>
+        <td class="bee"><span class="chip yes">yes</span><small>same, at 300</small></td>
+      </tr>
+
+      <tr class="group"><th>In-meeting features</th><td></td><td></td><td></td><td class="bee"></td><td class="bee"></td></tr>
+      <tr>
+        <th>AI meeting notes</th>
+        <td><span class="chip yes">yes</span><small>AI Companion, unlimited summaries</small></td>
+        <td><span class="chip part">partial</span><small>Transcripts and recap included; Copilot notes are a $30 add-on</small></td>
+        <td><span class="chip yes">yes</span><small>Gemini in Meet</small></td>
+        <td class="bee"><span class="chip yes">yes</span><small>AI Note Taker, on by default, one egress per room</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+      <tr>
+        <th>Noise suppression</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span><small>Studio sound, Standard and up</small></td>
+        <td class="bee"><span class="chip yes">yes</span><small>Krisp (high on desktop) with native + expander fallback</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+      <tr>
+        <th>Virtual backgrounds</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip yes">yes</span><small>Blur + library + per-user uploads</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+      <tr>
+        <th>Waiting room &amp; bulk admit</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip yes">yes</span><small>Admit all, co-host delegation</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+      <tr>
+        <th>Cloud recording</th>
+        <td><span class="chip yes">yes</span><small>10 GB per licence</small></td>
+        <td><span class="chip yes">yes</span><small>10 GB (Teams Enterprise) · 1 TB+ (E3)</small></td>
+        <td><span class="chip yes">yes</span><small>to Drive, 5 TB pooled</small></td>
+        <td class="bee"><span class="chip no">no</span><small>audio egress serves AI notes only</small></td>
+        <td class="bee"><span class="chip no">no</span></td>
+      </tr>
+      <tr>
+        <th>Breakout rooms</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip no">no</span></td>
+        <td class="bee"><span class="chip no">no</span></td>
+      </tr>
+      <tr>
+        <th>Phone dial-in</th>
+        <td>Add-on, R2 000/mo</td>
+        <td>Included (Audio Conferencing)</td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip no">no</span></td>
+        <td class="bee"><span class="chip no">no</span></td>
+      </tr>
+      <tr>
+        <th>Screen share, chat, reactions, hands</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip yes">yes</span><small>laser pointer, direct chat, file share</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+      <tr>
+        <th>Desktop &amp; mobile apps</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip yes">yes</span><small>macOS (universal), web, mobile web</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+
+      <tr class="group"><th>Operations</th><td></td><td></td><td></td><td class="bee"></td><td class="bee"></td></tr>
+      <tr>
+        <th>Admin / ops dashboard</th>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td><span class="chip yes">yes</span></td>
+        <td class="bee"><span class="chip yes">yes</span><small>plan readiness, rooms, live mics</small></td>
+        <td class="bee"><span class="chip yes">yes</span></td>
+      </tr>
+      <tr>
+        <th>Data residency</th>
+        <td>Multi-region storage (Business)</td>
+        <td>Microsoft cloud, SA region available</td>
+        <td>Google cloud</td>
+        <td class="bee">Postgres in eu-west-1; LiveKit global mesh</td>
+        <td class="bee">Same; Supabase Pro adds daily backups</td>
+      </tr>
+      <tr>
+        <th>Free-tier risk</th>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td class="bee"><span class="chip no">high</span><small>Supabase Free pauses after 1 week idle; no backups</small></td>
+        <td class="bee"><span class="chip yes">none</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="notes">
+  <div class="note">
+    <h2>How the BeeHive upgraded figure is built</h2>
+    <ul>
+      <li><b>Supabase Pro</b> $25/mo — 500 peak realtime connections, 8 GB database, backups, never pauses.</li>
+      <li><b>LiveKit Cloud Ship</b> $50/mo — 1 000 concurrent connections, 150 000 connection-minutes, 250 GB downstream.</li>
+      <li><b>Render Starter</b> $7/mo — always-on token backend (Free spins down and would add ~30 s to the first join).</li>
+      <li>A 300 × 2 h session is 36 000 connection-minutes: about four per month inside the Ship allowance, then ≈ R290 each. Fifty such sessions would still be under R15 000/mo.</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h2>Reading the comparison honestly</h2>
+    <ul>
+      <li>Vendors price per <em>host</em>; attendees are free everywhere. The strip assumes 10 hosts — at 9 hosts Teams Enterprise (R1 250) is still cheaper than BeeHive's flat R1 333; from 10 hosts up BeeHive is the cheapest option shown, and the gap widens with every host.</li>
+      <li>BeeHive's ceiling of 20 live mics and 25 cameras is a deliberate audience-mode design; Zoom, Teams and Meet allow more but degrade on the client just the same. Teams Enterprise's 1 000 is the largest interactive cap of the four.</li>
+      <li>Cloud recording and breakout rooms are the two features BeeHive does not have; neither is on the current roadmap.</li>
+      <li>The stub column is what runs right now — the upgrade is a plan change plus two environment variables (<code>SUPABASE_PLAN</code>, <code>LIVEKIT_CLOUD_PLAN</code>), not code.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <span>Sources, read 16 Sep 2026: <a href="https://zoom.us/pricing">zoom.us/pricing</a> (ZAR, ex VAT, annual) · <a href="https://www.microsoft.com/en-za/microsoft-teams/enterprise">microsoft.com/en-za Teams Enterprise</a> (USD, annual) · <a href="https://workspace.google.com/pricing">workspace.google.com/pricing</a> (EUR, annual, post-promo) · <a href="https://livekit.com/pricing">livekit.com/pricing</a> · <a href="https://supabase.com/pricing">supabase.com/pricing</a> · <a href="https://render.com/pricing">render.com/pricing</a>.</span>
+  <span>Conversions at USD/ZAR 16.25 and EUR/ZAR 18.76 (mid-September 2026 spot); Rand figures for Teams, Meet and BeeHive infrastructure move with the exchange rate. BeeHive feature claims reflect build 1.0.304 on <code>staging</code>.</span>
+</footer>
+
+</div>

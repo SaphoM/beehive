@@ -516,8 +516,25 @@ interface MeetingCarouselProps {
 export function MeetingCarousel({
   meetings, loading, selectedMeetingId, onSelect, onLaunch, onDelete, onEdit, onUpdateStatus,
 }: MeetingCarouselProps) {
-  const [idx, setIdx] = useState(0)
+  // `meetings` arrives from /api/me/meetings sorted chronologically, which
+  // puts PAST meetings first — so a plain index-0 start showed the oldest
+  // card (a days-old meeting) rather than the next one. Home is the closest
+  // upcoming meeting: the first card that isn't expired. Past cards stay
+  // reachable by paging back. Falls back to 0 when every meeting is past.
+  const homeIdx = (() => {
+    const i = meetings.findIndex(m => !isScheduledMeetingExpired(m))
+    return i === -1 ? 0 : i
+  })()
+  const [idx, setIdx] = useState(homeIdx)
   const [editingMeeting, setEditingMeeting] = useState<MyMeeting | null>(null)
+
+  // Re-home whenever the SET of meetings changes (one scheduled, deleted,
+  // rescheduled, or expiring while the lobby sits open), so the card shown
+  // is the next meeting again. Keyed on ids+dates, not the array identity,
+  // because the hook re-fetches on every window focus and hands back a new
+  // array each time — that must not yank the card away mid-browse.
+  const listKey = meetings.map(m => `${m.roomId}|${m.scheduledDate}|${m.scheduledTime}`).join(',')
+  useEffect(() => { setIdx(homeIdx) }, [listKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const count = meetings.length
   const safeIdx = Math.min(idx, Math.max(0, count - 1))

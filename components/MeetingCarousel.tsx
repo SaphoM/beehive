@@ -358,7 +358,12 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, 
       style={{
         ...s.invitePreview,
         flexDirection: 'row',
-        alignItems: 'center',
+        // Top-align, not centre: with centring the text column was
+        // vertically centred against the taller icon column, so "You
+        // organised" sat at a different height depending on whether the
+        // RSVP row was visible. Both columns now start at the top edge and
+        // the label stays put across every card.
+        alignItems: 'flex-start',
         gap: 12,
         cursor: 'pointer',
         // Subtle gold border when selected — same card, just focused
@@ -398,8 +403,11 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, 
         </div>
       </div>
 
-      {/* Right-side action column */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      {/* Right-side action column. alignSelf:center keeps the icons centred
+          on the card body even though the row itself is now top-aligned
+          (see the outer div) — the text column is what must stay pinned,
+          not the icons. */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0, alignSelf: 'center' }}>
 
         {/* Edit icon — organizer only, hidden while the delete-confirm row is showing to avoid a cramped/ambiguous action column */}
         {isOrganizer && !confirmDelete && (

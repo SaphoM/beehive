@@ -277,6 +277,9 @@ export default function RoomPage() {
   const [opsOpen, setOpsOpen] = useState(OPS_FROM_URL)
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
   const [livekitRoomName, setLivekitRoomName] = useState<string | null>(null)
+  // Human meeting name, for the window title while in a call (see the
+  // document.title effect below). joinRoom already returns it as roomName.
+  const [activeMeetingName, setActiveMeetingName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState('')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(INITIAL_ROOM_ID_FROM_URL)
@@ -331,6 +334,27 @@ export default function RoomPage() {
     window.electronAPI?.setMeetingActive?.(view === 'room')
   }, [view])
 
+  // Window title reflects meeting state. This is the one signal desktop
+  // note-takers and generic system-audio recorders can actually read: they
+  // watch foreground window titles and match a meeting-in-progress pattern
+  // ("Zoom Meeting", "Meet – abc-defg-hij"). Until now the title was the
+  // static "BeeHive — X Spark" in and out of a call, so nothing could tell
+  // the difference. Same string on web (tab title) and desktop (Electron
+  // window title) so both surfaces announce themselves identically.
+  // No third-party detector can be MADE to recognise BeeHive — Fathom,
+  // Otter et al. hard-code Zoom/Meet/Teams — but this costs nothing and
+  // gives any title-watching or "any meeting" recorder something honest to
+  // key on. Restored on leave so the lobby never looks like a live call.
+  useEffect(() => {
+    const base = 'BeeHive — X Spark'
+    if (view === 'room') {
+      document.title = activeMeetingName ? `Meeting: ${activeMeetingName} — BeeHive` : 'Meeting in progress — BeeHive'
+    } else {
+      document.title = base
+    }
+    return () => { document.title = base }
+  }, [view, activeMeetingName])
+
   // Prewarm Krisp's noise-filter module (a multi-MB WASM/ML payload) as
   // early as the lobby, well before any mic track exists — so that when a
   // mic is later enabled, MeetingRoom's applyFilter effect only pays for
@@ -362,6 +386,7 @@ export default function RoomPage() {
     window.history.pushState({}, '', `?room=${room.id}`)
     setActiveRoomId(room.id)
     setLivekitRoomName(result.livekitRoomName)
+    setActiveMeetingName(result.roomName ?? null)
     setToken(result.token)
     setView('room')
   }
@@ -394,6 +419,7 @@ export default function RoomPage() {
     window.history.pushState({}, '', `?room=${targetRoomId}`)
     setActiveRoomId(targetRoomId)
     setLivekitRoomName(result.livekitRoomName)
+    setActiveMeetingName(result.roomName ?? null)
     setToken(result.token)
     setView('room')
   }
@@ -430,6 +456,7 @@ export default function RoomPage() {
     setWaitingInfo(null)
     setActiveRoomId(joinRoomId)
     setLivekitRoomName(result.livekitRoomName)
+    setActiveMeetingName(result.roomName ?? null)
     setToken(result.token)
     setView('room')
   }
@@ -444,6 +471,7 @@ export default function RoomPage() {
     setView('lobby')
     setActiveRoomId(null)
     setLivekitRoomName(null)
+    setActiveMeetingName(null)
     setToken(null)
     // Prompt unauthenticated users (frictionless room join) to register after the meeting
     if (!user) setShowProfileSetup(true)

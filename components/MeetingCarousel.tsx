@@ -374,23 +374,28 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, 
         <p style={{ ...s.inviteRoomName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
           {meeting.roomName}
         </p>
-        {metaParts.length > 0 && (
-          <p style={{ ...s.inviteMeta, color: isNow ? '#4caf50' : '#f5a623' }}>
-            {metaParts.join(' · ')}
-          </p>
-        )}
+        {/* Always rendered, never wraps: every card reserves exactly one
+            meta line so the carousel doesn't change height when paging
+            between a dated meeting, an undated one, or a long date string. */}
+        <p style={{ ...s.inviteMeta, color: isNow ? '#4caf50' : '#f5a623', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minHeight: '1.4em' }}>
+          {metaParts.join(' · ') || ' '}
+        </p>
 
-        {/* Inline RSVP buttons for pending invitees */}
-        {showRsvp && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 4 }} onClick={e => e.stopPropagation()}>
-            <button disabled={rsvpPending} onClick={() => handleRsvp(onAccept)}
+        {/* Inline RSVP buttons for pending invitees. The row is always in
+            the layout and only hidden when not applicable, so an accepted
+            card and a pending card are the same height. */}
+        <div
+          style={{ display: 'flex', gap: 4, marginTop: 4, visibility: showRsvp ? 'visible' : 'hidden', pointerEvents: showRsvp ? 'auto' : 'none' }}
+          aria-hidden={!showRsvp}
+          onClick={e => e.stopPropagation()}
+        >
+            <button disabled={rsvpPending || !showRsvp} tabIndex={showRsvp ? 0 : -1} onClick={() => handleRsvp(onAccept)}
               style={{ flex: 1, background: 'rgba(76,175,80,0.08)', border: '1px solid rgba(76,175,80,0.35)', borderRadius: 6, color: '#4caf50', fontSize: 10, fontWeight: 600, cursor: 'pointer', padding: '4px 0', fontFamily: "'Roboto', sans-serif", opacity: rsvpPending ? 0.5 : 1 }}>Accept</button>
-            <button disabled={rsvpPending} onClick={() => handleRsvp(onTentative)}
+            <button disabled={rsvpPending || !showRsvp} tabIndex={showRsvp ? 0 : -1} onClick={() => handleRsvp(onTentative)}
               style={{ flex: 1, background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: 6, color: '#f5a623', fontSize: 10, fontWeight: 600, cursor: 'pointer', padding: '4px 0', fontFamily: "'Roboto', sans-serif", opacity: rsvpPending ? 0.5 : 1 }}>Maybe</button>
-            <button disabled={rsvpPending} onClick={() => handleRsvp(onDecline)}
+            <button disabled={rsvpPending || !showRsvp} tabIndex={showRsvp ? 0 : -1} onClick={() => handleRsvp(onDecline)}
               style={{ flex: 1, background: 'none', border: '1px solid #2a2a2a', borderRadius: 6, color: '#444', fontSize: 10, fontWeight: 600, cursor: 'pointer', padding: '4px 0', fontFamily: "'Roboto', sans-serif", opacity: rsvpPending ? 0.5 : 1 }}>Decline</button>
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Right-side action column */}

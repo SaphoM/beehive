@@ -122,6 +122,12 @@ export const s: Record<string, React.CSSProperties> = {
   // both are open, while staying under popup menus (50) and overlays (200+).
   // top:62 clears the view-control cluster (auto-cam / fullscreen) pinned
   // at top:14 right:14, ~40px tall, in the video area.
+  // Docked chat: a fixed side column that is a flex SIBLING of the video area
+  // (the pre-floating layout), so it takes real width and the grid shares the
+  // rest — for users who want chat always beside the video rather than over
+  // it. Same visual language as the floating panel; the two are the same
+  // component in different positions, toggled by the title-bar dock button.
+  sidebarDocked: { width: 320, flexShrink: 0, background: '#111', borderLeft: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   sidebar: { position: 'absolute', top: 62, right: 88, bottom: 100, width: 'min(340px, calc(100% - 100px))', background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, boxShadow: '0 12px 40px rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', zIndex: 45, overflow: 'hidden' },
   sidebarTitle: { color: '#888', fontWeight: 600, fontSize: 11, letterSpacing: 1, padding: '0 4px 0 16px', minHeight: 44, borderBottom: '1px solid #1e1e1e', textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   // Small reopen chip shown only while the chat panel is closed. Joins the

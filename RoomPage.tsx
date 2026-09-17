@@ -799,6 +799,20 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   // sitting beside it — opening over the grid on every join would cover the
   // right-hand tiles. The reopen chip is always one click away.
   const [showChat, setShowChat] = useState(false)
+  // Docked (fixed side column beside the video) vs floating (overlay over
+  // it). Same panel, two positions — mirrors participantsDocked below.
+  // Remembered per device: someone who always wants chat docked shouldn't
+  // have to re-dock it every meeting.
+  const [chatDocked, setChatDocked] = useState(() => {
+    try { return localStorage.getItem('beehive:chatDocked') === '1' } catch { return false }
+  })
+  const toggleChatDocked = useCallback(() => {
+    setChatDocked(d => {
+      const next = !d
+      try { localStorage.setItem('beehive:chatDocked', next ? '1' : '0') } catch { /* best-effort */ }
+      return next
+    })
+  }, [])
   const [showParticipants, setShowParticipants] = useState(false)
   const [participantsDocked, setParticipantsDocked] = useState(false)
   // Meeting-prep checklist/agenda picked back at scheduling time (if any) —
@@ -3806,17 +3820,35 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
             bottom tracks the measured bar height so the panel clears a
             wrapped, two-row bar at narrow widths too. */}
         {showChat && (
-          <div style={{ ...s.sidebar, bottom: controlsBarHeight + 32 }} role="complementary" aria-label="Chat">
+          <div
+            style={chatDocked ? s.sidebarDocked : { ...s.sidebar, bottom: controlsBarHeight + 32 }}
+            role="complementary"
+            aria-label="Chat"
+          >
             <div style={s.sidebarTitle}>
               <span>Chat</span>
-              <button
-                style={{ ...s.iconBtn, minWidth: 40, minHeight: 40 }}
-                onClick={() => setShowChat(false)}
-                title="Close chat"
-                aria-label="Close chat"
-              >
-                <X size={16} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                {/* Dock ⇄ float. Same affordance as the participants strip's
+                    ↙ Undock, kept as a plain icon button so both panels feel
+                    like one system. */}
+                <button
+                  style={{ ...s.iconBtn, minWidth: 40, minHeight: 40 }}
+                  onClick={toggleChatDocked}
+                  title={chatDocked ? 'Float chat over the meeting' : 'Dock chat beside the meeting'}
+                  aria-label={chatDocked ? 'Float chat' : 'Dock chat'}
+                  aria-pressed={chatDocked}
+                >
+                  {chatDocked ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
+                <button
+                  style={{ ...s.iconBtn, minWidth: 40, minHeight: 40 }}
+                  onClick={() => setShowChat(false)}
+                  title="Close chat"
+                  aria-label="Close chat"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             {/* ── DM wallet cards ─────────────────────────────────── */}

@@ -26,6 +26,18 @@ declare global {
       hideDock?: () => void
       pushDockState?: (state: DockState) => void
       onDockAction?: (cb: (action: DockAction) => void) => () => void
+      // Auto-update (electron/updater.cjs, exposed by preload.cjs). These were
+      // added to the preload in v1.0.248 but never to this declaration, so
+      // every call site was untyped and tsc reported them as non-existent.
+      // All optional: the web build has no electronAPI at all, and every
+      // caller already guards with `?.`.
+      onUpdateStatus?: (cb: (data: unknown) => void) => () => void
+      getAppVersion?: () => Promise<string>
+      downloadUpdate?: () => Promise<unknown>
+      installUpdate?: () => Promise<unknown>
+      checkForUpdates?: () => Promise<unknown>
+      dismissUpdate?: () => void
+      setMeetingActive?: (active: boolean) => void
     }
   }
 }

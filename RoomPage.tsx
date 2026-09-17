@@ -1023,7 +1023,15 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     if (isMobile) return
 
     const MAX_SCALE = 1.90 // peak magnification directly under the cursor
-    const SIGMA     = 95   // Gaussian width (px) — how far the wave spreads
+    // Gaussian width. Was 95px, which on a 58px button pitch put the
+    // immediate neighbours at 83% of peak and the next pair at 47% — so
+    // hovering ONE button visibly magnified three or five, and the enlarged
+    // neighbours' hit-areas overlapped the target's (see the ::before note
+    // in the <style> below). 24px keeps the target ramping smoothly from
+    // ~1.55× at its edge to 1.9× at centre while its neighbours stay at
+    // ~1.05× — visually at rest. The button under the pointer is the one
+    // that responds; nothing else moves.
+    const SIGMA     = 24
     const MAX_LIFT  = 12   // px — subtle lift; scale carries the visual weight
     const V_GATE    = 70   // px above/below the bar within which the dock "engages"
 
@@ -1037,7 +1045,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     let engaged = false
 
     const W   = 48  // button layout width (px)
-    const GAP = 12  // CSS gap between buttons (px)
+    const GAP = 10  // CSS gap between buttons (px) — must match s.controlsPill.gap
 
     // Abramowitz & Stegun erf approximation (max error ±1.5e-7).
     // Used to compute the smooth integral of the gaussian wave, giving each
@@ -3602,15 +3610,19 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                 position: relative;
               }
               .bhv-btn::before {
-                /* Transparent overlay that extends the click zone beyond the visual
-                   circle — 18 px extra on top and sides, 10 px on the bottom.
-                   Especially important when the button is lifted and magnified: the
-                   top half of the enlarged icon is the natural click target and needs
-                   a generous hit area. The pseudo-element scales with the button's
-                   CSS transform, so the expanded zone grows with the icon. */
+                /* Transparent overlay that extends the click zone a little beyond
+                   the visual circle so a lifted, magnified icon is still easy to
+                   hit at its top edge. Deliberately SMALL: this pseudo-element
+                   scales with the button's transform, and the previous -18px inset
+                   reached ~34px past the icon at 1.9× — clean across the 10px gap
+                   into the neighbour's box, so the magnified button stole its
+                   neighbours' clicks and a one-pixel move could flip the target.
+                   -4px stays inside the gap at every scale, so hit-testing is
+                   deterministic: the button under the pointer is the one that
+                   gets the click. */
                 content: '';
                 position: absolute;
-                inset: -18px -18px -10px -18px;
+                inset: -4px;
                 border-radius: 50%;
               }
               .bhv-btn:active {

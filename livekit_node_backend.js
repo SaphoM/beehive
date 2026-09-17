@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'fs'
 import { randomUUID, randomBytes } from 'crypto'
 import { createMeetingIntelligence } from './meetingIntelligence.js'
 import { buildIcs, icsFilenameFor } from './shared/icsBuilder.js'
+import { isScheduledMeetingExpired, SERVER_TZ_SLACK_MS } from './shared/meetingExpiry.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -246,9 +247,22 @@ app.post('/api/livekit/token', async (req, res) => {
   // fall through untouched, exactly as before this feature existed.
   const { data: room } = await supabase
     .from('rooms')
-    .select('id, requires_admission, scheduler_auth_user_id, audience_mode')
+    .select('id, requires_admission, scheduler_auth_user_id, audience_mode, scheduled_date, scheduled_time, duration_minutes')
     .eq('livekit_room_name', roomName)
     .single()
+
+  // Expired scheduled meeting — refuse a token outright. The lobby and
+  // carousel already hide the Join affordance for these, but this is the
+  // authoritative gate: a stale carousel, a bookmarked invite link, or a
+  // client that predates the UI check would otherwise still get in. Same
+  // rule as the client (shared/meetingExpiry.js), widened by the timezone
+  // slack so the server never rejects a join the client just allowed.
+  if (room && isScheduledMeetingExpired(
+    { scheduledDate: room.scheduled_date, scheduledTime: room.scheduled_time, durationMinutes: room.duration_minutes },
+    { slackMs: SERVER_TZ_SLACK_MS },
+  )) {
+    return res.status(410).json({ error: 'This meeting has ended', reason: 'expired' })
+  }
 
   if (room?.requires_admission) {
     let isHost = false

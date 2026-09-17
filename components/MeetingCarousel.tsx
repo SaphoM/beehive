@@ -4,6 +4,7 @@ import type { MyMeeting } from '../livekit_react_hooks'
 import { s, DATE_INPUT_CLASS, DATE_INPUT_CSS, openDatePicker } from './roomStyles'
 import { TimePicker } from './TimePicker'
 import { canAddToCalendar, downloadMeetingIcs } from './calendarInvite'
+import { isScheduledMeetingExpired } from './roomUtils'
 
 const EDIT_DURATIONS = [15, 30, 45, 60, 90]
 
@@ -62,6 +63,11 @@ interface ConfirmSheetProps {
 export function ConfirmSheet({ meeting, onConfirm, onCancel }: ConfirmSheetProps) {
   const isOrganizer = meeting.role === 'organizer'
   const verb = isOrganizer ? 'Start' : 'Join'
+  // The sheet is reachable from the lobby's primary button, not only the
+  // card's (already gated) play icon — so it must gate itself too. An
+  // expired meeting gets a plain "this meeting has ended" sheet with no
+  // Join button, rather than one that lets the user through.
+  const isExpired = isScheduledMeetingExpired(meeting)
 
   // Close on Escape
   useEffect(() => {
@@ -90,7 +96,7 @@ export function ConfirmSheet({ meeting, onConfirm, onCancel }: ConfirmSheetProps
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span style={{ color: '#555', fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' }}>
-            {verb} scheduled meeting
+            {isExpired ? 'This meeting has ended' : `${verb} scheduled meeting`}
           </span>
           <span style={{
             color: '#fff', fontSize: 15, fontWeight: 300, letterSpacing: 1.5,
@@ -105,24 +111,34 @@ export function ConfirmSheet({ meeting, onConfirm, onCancel }: ConfirmSheetProps
           )}
         </div>
 
+        {isExpired && (
+          <p style={{ margin: 0, color: '#888', fontSize: 12.5, lineHeight: 1.5 }}>
+            The scheduled time for this meeting has passed, so it can no longer be {isOrganizer ? 'started' : 'joined'}.
+            {isOrganizer && ' You can schedule a new one from the Schedule tab.'}
+          </p>
+        )}
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button
-            onClick={onConfirm}
-            style={{
-              background: '#f5a623', color: '#000', border: 'none', borderRadius: 10,
-              padding: '12px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%',
-            }}
-          >
-            {verb} Scheduled Meeting
-          </button>
+          {!isExpired && (
+            <button
+              onClick={onConfirm}
+              style={{
+                background: '#f5a623', color: '#000', border: 'none', borderRadius: 10,
+                padding: '12px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%',
+              }}
+            >
+              {verb} Scheduled Meeting
+            </button>
+          )}
           <button
             onClick={onCancel}
+            autoFocus={isExpired}
             style={{
               background: '#222', color: '#666', border: '1px solid #2a2a2a', borderRadius: 10,
               padding: '11px 20px', fontSize: 13, cursor: 'pointer', width: '100%',
             }}
           >
-            Cancel
+            {isExpired ? 'Close' : 'Cancel'}
           </button>
         </div>
       </div>
@@ -307,12 +323,10 @@ function MeetingCard({ meeting, selected, onSelect, onLaunch, onEdit, onDelete, 
   const isNow = cd === 'Starting now'
   const showRsvp = !isOrganizer && meeting.status === 'pending'
 
-  // Grey out the launch icon 10 minutes after the scheduled time has passed
-  const isExpired = (() => {
-    if (!meeting.scheduledDate) return false
-    const target = new Date(`${meeting.scheduledDate}T${meeting.scheduledTime || '00:00'}`)
-    return Date.now() > target.getTime() + 10 * 60 * 1000
-  })()
+  // Grey out the launch icon once the meeting is over — shared rule, so this
+  // card, the lobby's primary button, the confirm sheet and the backend all
+  // agree on exactly when that is (see roomUtils.isScheduledMeetingExpired).
+  const isExpired = isScheduledMeetingExpired(meeting)
 
   async function handleRsvp(action: () => void) {
     setRsvpPending(true)

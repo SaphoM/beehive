@@ -39,6 +39,16 @@ export const STING_RED = '#ef4444'
 export const WEB_BASE = (import.meta.env.VITE_WEB_BASE_URL as string | undefined)?.replace(/\/$/, '')
   || (typeof window !== 'undefined' && window.location.protocol !== 'file:' ? window.location.origin : '')
 
+// Scheduled-meeting expiry. Previously the carousel card greyed its own play
+// icon with an inline "+10 min" check, but the lobby's big primary button and
+// the confirm sheet had no check at all — so selecting an expired card still
+// produced a live "Join Scheduled Meeting" that let the user in. The rule
+// now lives in shared/meetingExpiry.js, consumed by every UI gate here AND by
+// the backend's /api/livekit/token, so a stale carousel or a shared link
+// can't bypass it either. Re-exported so components keep importing from
+// roomUtils as they do everything else.
+export { isScheduledMeetingExpired } from '../shared/meetingExpiry.js'
+
 // BeeHive is in private Beta — accounts are provisioned by X Spark rather than
 // self-served, so "Register" points people here. Shared by AuthScreen and the
 // Lobby's RegisterPanel so both stay in sync from one source.

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { User } from '@supabase/supabase-js'
 import { s } from './roomStyles'
-import { SUBTEXTS, STING_RED, REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO, type Subtext } from './roomUtils'
+import { SUBTEXTS, STING_RED, REQUEST_ACCESS_EMAIL, REQUEST_ACCESS_MAILTO, isScheduledMeetingExpired, type Subtext } from './roomUtils'
 import { SchedulePanel } from './SchedulePanel'
 import { FathomPanel } from './FathomPanel'
 import { MeetingNotesPanel } from './MeetingNotesPanel'
@@ -430,16 +430,23 @@ export function Lobby({
                         </button>
                       </>
                     ) : (() => {
-                      // Primary label adapts to whichever carousel card is selected
+                      // Primary label adapts to whichever carousel card is selected.
+                      // An expired selection is treated as no selection: the
+                      // button falls back to plain "Start Meet" rather than
+                      // offering "Join Scheduled Meeting" for a meeting that's
+                      // over (the card greys its own icon, but selecting the
+                      // card is a plain tap, so this path previously let the
+                      // user straight into an old meeting).
+                      const liveSelection = selectedMeeting && !isScheduledMeetingExpired(selectedMeeting) ? selectedMeeting : null
                       const baseLabel = creating
-                        ? (selectedMeeting ? (selectedMeeting.role === 'organizer' ? 'Starting…' : 'Joining…') : 'Starting…')
-                        : selectedMeeting
-                          ? (selectedMeeting.role === 'organizer' ? 'Start Scheduled Meeting' : 'Join Scheduled Meeting')
+                        ? (liveSelection ? (liveSelection.role === 'organizer' ? 'Starting…' : 'Joining…') : 'Starting…')
+                        : liveSelection
+                          ? (liveSelection.role === 'organizer' ? 'Start Scheduled Meeting' : 'Join Scheduled Meeting')
                           : `Start ${subtext}`
                       const btnLabel = !creating && criticalAudio ? 'Resolve Audio Issue' : baseLabel
 
-                      const btnClick = selectedMeeting
-                        ? () => setConfirmMeeting(selectedMeeting)
+                      const btnClick = liveSelection
+                        ? () => setConfirmMeeting(liveSelection)
                         : onCreateRoom
 
                       return (
@@ -451,8 +458,8 @@ export function Lobby({
                           >
                             {btnLabel}
                           </button>
-                          {/* "Start a new meeting instead" only shown when a scheduled meeting is selected */}
-                          {selectedMeeting && (
+                          {/* "Start a new meeting instead" only shown when a live scheduled meeting is selected */}
+                          {liveSelection && (
                             <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
                               Start a new meeting instead
                             </button>

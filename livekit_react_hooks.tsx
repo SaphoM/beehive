@@ -397,6 +397,14 @@ export function useJoinRoom() {
         setLoading(false)
         return { error: reason }
       }
+      // 410 = the backend's scheduled-meeting expiry gate (see
+      // /api/livekit/token). Surface the same message the ended-room path
+      // uses so the lobby renders its normal "this meeting has ended" state.
+      if (tokenRes.status === 410) {
+        setError(ENDED_MEETING_ERROR)
+        setLoading(false)
+        return { error: ENDED_MEETING_ERROR }
+      }
       if (!tokenRes.ok) {
         setError('Failed to get access token')
         setLoading(false)
@@ -440,6 +448,11 @@ export function useJoinRoom() {
     ])
     if (participantError) console.error('[join] participant insert failed:', participantError.message)
 
+    if (tokenRes.status === 410) {
+      setError(ENDED_MEETING_ERROR)
+      setLoading(false)
+      return { error: ENDED_MEETING_ERROR }
+    }
     if (!tokenRes.ok) {
       setError('Failed to get access token')
       setLoading(false)

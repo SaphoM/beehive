@@ -2,11 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Honey Com — X Spark</title>
+    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BeeHive — X Spark</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@100;300;400;500;700&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; overflow-x: hidden; }
+      body { font-family: 'Roboto', sans-serif; background: #0a0a0a; color: #fff; }
+      #root { width: 100%; overflow-x: hidden; }
+      @keyframes floatUp { 0% { opacity:1; transform:translateY(0) scale(1); } 100% { opacity:0; transform:translateY(-120px) scale(1.4); } }
+      @keyframes pillFloat { 0% { opacity:0; transform:translateX(-50%) translateY(0) scale(0.92); } 12% { opacity:1; transform:translateX(-50%) translateY(-18px) scale(1); } 75% { opacity:1; } 100% { opacity:0; transform:translateX(-50%) translateY(-170px) scale(1); } }
+      @keyframes composerIn { 0% { opacity:0; transform:translateY(10px) scale(0.94); } 100% { opacity:1; transform:translateY(0) scale(1); } }
+      @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+      .controls-bar::-webkit-scrollbar { display: none; }
+
+      /* Smart Meeting Preparation type cards — hover/focus lift + focus ring */
+      .bhv-prep-card:hover { transform: translateY(-2px); border-color: #444 !important; background: #202020 !important; }
+      .bhv-prep-card:focus-visible { outline: 2px solid #f5a623; outline-offset: 2px; }
+
+      /* ── Mobile: lift speaking indicator above controls bar ─────────── */
+      @media (max-width: 640px) {
+        /* safe-area accounts for home indicator (34px on iPhone 13); +130px clears the controls bar */
+        .speaking-wrap { bottom: calc(env(safe-area-inset-bottom, 0px) + 130px) !important; }
+        /* Hide the full speaker video window on mobile (chip only) */
+        .speaking-wrap > div:first-child { display: none !important; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <!-- Responsive zoom-to-fit + --vh setup — externalized to viewport-init.js
+         (public/) so the CSP's script-src can be 'self' with no unsafe-inline.
+         Not async/defer: must run synchronously before layout, same timing as
+         when this was inline. -->
+    <script src="/viewport-init.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

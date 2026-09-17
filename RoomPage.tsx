@@ -755,7 +755,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   const { messages, sendMessage } = useChat(roomId)
   const recordings = useRecordings(roomId)
   const [chatInput, setChatInput] = useState('')
-  const [showChat, setShowChat] = useState(() => window.innerWidth > 768)
+  // Closed by default now that the panel floats over the video rather than
+  // sitting beside it — opening over the grid on every join would cover the
+  // right-hand tiles. The reopen chip is always one click away.
+  const [showChat, setShowChat] = useState(false)
   const [showParticipants, setShowParticipants] = useState(false)
   const [participantsDocked, setParticipantsDocked] = useState(false)
   // Meeting-prep checklist/agenda picked back at scheduling time (if any) —
@@ -841,6 +844,27 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   // Mobile responsive
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 640)
   const [isSmallPhone, setIsSmallPhone] = useState(() => window.innerWidth <= 430)
+
+  // Height of the bottom control bar. The bar now wraps onto a second row
+  // on narrow windows (see s.controlsPill), so anything anchored above it —
+  // the right-edge button column: chat chip, personal notes, assistant —
+  // has to lift with it or it lands on top of the wrapped buttons. The
+  // bar's height is content-driven, so it can't be expressed in CSS alone;
+  // one ResizeObserver on the pill is the minimal, event-driven answer (no
+  // polling, no work on ordinary resizes that don't change the row count).
+  // 68 is the single-row height (48px buttons + 2×10 padding), the default
+  // before the observer fires.
+  const [controlsBarHeight, setControlsBarHeight] = useState(68)
+  useEffect(() => {
+    const el = controlsBarRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const h = Math.round(entries[0]?.contentRect.height ?? 0)
+      if (h > 0) setControlsBarHeight(h + 20) // +20 = pill's vertical padding
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isMobile]) // the desktop pill only exists when !isMobile; re-attach on that flip
   const [showMobileEmoji, setShowMobileEmoji] = useState(false)
   const [showReactions, setShowReactions] = useState(false)
   const [speakerMuted, setSpeakerMuted] = useState(false)
@@ -3133,16 +3157,39 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
             rawMicTrack={rawMicTrack}
           />
 
-          {/* BeeHive Bot Assistant — floating agenda helper, always available */}
+          {/* Right-edge button column: chat reopen chip, Personal Notes, Bot
+              Assistant. Each child keeps its own absolute `bottom` (218 /
+              154 / 90 from the video area's floor) — this wrapper just
+              shifts the whole column up by however much the control bar
+              has grown past its single-row height, so the column never
+              lands on wrapped buttons at narrow widths. Zero offset on a
+              normal desktop; the observer above supplies the number. */}
           {overlayMode !== 'hidden' && (
-            <BotAssistant roomId={roomId} displayName={displayName} canEdit={canAdmit} hostSecret={myHostSecret} />
-          )}
-
-          {/* Personal AI Note Taker — one per participant, fully isolated
-              from every other participant's session (see PersonalNotesToggle
-              / usePersonalNotes / 010_personal_meeting_notes.sql). */}
-          {overlayMode !== 'hidden' && (
-            <PersonalNotesToggle roomId={roomId} identity={localParticipant.identity || null} displayName={displayName} />
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 40, transform: `translateY(-${Math.max(0, controlsBarHeight - 68)}px)`, transition: 'transform 0.15s ease' }}>
+              {/* pointer-events:none on the full-size wrapper so it never blocks
+                  the video under it. pointer-events is inherited, so this inner
+                  layer sets `auto` and — being display:contents — adds no box of
+                  its own; the children hit-test normally against the wrapper. */}
+              <div style={{ display: 'contents', pointerEvents: 'auto' }}>
+                {!showChat && !isMobile && (
+                  <button
+                    style={s.chatReopenBtn}
+                    className="bhv-btn"
+                    onClick={() => setShowChat(true)}
+                    title="Open chat"
+                    aria-label="Open chat"
+                  >
+                    <MessageSquare size={18} />
+                  </button>
+                )}
+                {/* BeeHive Bot Assistant — floating agenda helper, always available */}
+                <BotAssistant roomId={roomId} displayName={displayName} canEdit={canAdmit} hostSecret={myHostSecret} />
+                {/* Personal AI Note Taker — one per participant, fully isolated
+                    from every other participant's session (see PersonalNotesToggle
+                    / usePersonalNotes / 010_personal_meeting_notes.sql). */}
+                <PersonalNotesToggle roomId={roomId} identity={localParticipant.identity || null} displayName={displayName} />
+              </div>
+            </div>
           )}
 
           {/* Full-screen HUD — floating attendees/hands/reactions/controls window,
@@ -3274,7 +3321,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
           {isMobile ? (
             /* ── Mobile controls ─────────────────────────────────────────── */
             overlayMode !== 'hidden' && (() => {
-              const btnSize = isSmallPhone ? 40 : 46
+              // 44px floor: small phones previously dropped to 40px, under the
+              // comfortable tap-target minimum. Icons inside stay 16px.
+              const btnSize = isSmallPhone ? 44 : 46
               const mb: React.CSSProperties = { background: '#2a2a2a', border: 'none', borderRadius: 50, width: btnSize, height: btnSize, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', flexShrink: 0 }
               return (
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10 }}>
@@ -3469,7 +3518,8 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
             })()
           ) : isPresenting && overlayMode === 'minimized' ? (
             /* ── Desktop: minimised presenter bar ────────────────────────── */
-            <div style={{ ...s.controls, gap: 8, padding: '8px 14px' }}>
+            <div style={s.controls}>
+            <div style={{ ...s.controlsPill, gap: 8, padding: '8px 14px' }}>
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} showIcon onDeviceError={handleMicDeviceError} />
               <button
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
@@ -3486,6 +3536,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
               <button onClick={() => setOverlayMode('visible')} style={{ ...s.controlBtn, fontSize: 16 }} title="Expand">⤢</button>
               <button onClick={() => setOverlayMode('hidden')} style={{ ...s.controlBtn }} title="Hide controls"><EyeOff size={18} /></button>
               <button style={{ ...s.controlBtn, background: '#c53030' }} onClick={leaveWithNotification} title="Leave"><PhoneOff size={20} /></button>
+            </div>
             </div>
           ) : overlayMode !== 'hidden' ? (
             /* ── Desktop: full controls bar ──────────────────────────────── */
@@ -3515,7 +3566,8 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
               }
               .bhv-emoji:hover { filter: none !important; }
             `}</style>
-            <div ref={controlsBarRef} style={{ ...s.controls, overflow: 'visible' }} className="controls-bar">
+            <div style={s.controls}>
+            <div ref={controlsBarRef} style={{ ...s.controlsPill, overflow: 'visible' }} className="controls-bar">
               <TrackToggle source={Track.Source.Microphone} style={s.controlBtn} className="bhv-btn" showIcon onDeviceError={handleMicDeviceError} />
               <button className="bhv-btn"
                 style={{ ...s.controlBtn, ...(speakerMuted ? { background: '#4a1a1a', border: '1px solid #fc8181' } : {}) }}
@@ -3702,14 +3754,30 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                 </>
               )}
             </div>
+            </div>
             </>
           ) : null}
         </div>
 
-        {/* Chat Sidebar */}
+        {/* Chat — floating panel over the video area (see s.sidebar). Closing
+            it removes the panel entirely; the reopen chip lives in the
+            right-edge button column inside the video area. One `showChat`
+            state drives both, so there is never a duplicate panel or chip.
+            bottom tracks the measured bar height so the panel clears a
+            wrapped, two-row bar at narrow widths too. */}
         {showChat && (
-          <div style={s.sidebar}>
-            <div style={s.sidebarTitle}>Chat</div>
+          <div style={{ ...s.sidebar, bottom: controlsBarHeight + 32 }} role="complementary" aria-label="Chat">
+            <div style={s.sidebarTitle}>
+              <span>Chat</span>
+              <button
+                style={{ ...s.iconBtn, minWidth: 40, minHeight: 40 }}
+                onClick={() => setShowChat(false)}
+                title="Close chat"
+                aria-label="Close chat"
+              >
+                <X size={16} />
+              </button>
+            </div>
 
             {/* ── DM wallet cards ─────────────────────────────────── */}
             {openDms.size > 0 && (() => {

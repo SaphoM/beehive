@@ -73,12 +73,33 @@ export const s: Record<string, React.CSSProperties> = {
   dockedName: { color: '#fff', fontSize: 10, fontWeight: 300, fontFamily: "'Roboto', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   dockedActions: { display: 'flex', gap: 4, flexShrink: 0 },
   dockedBtn: { background: '#222', border: '1px solid #333', borderRadius: 6, color: '#888', width: 26, height: 26, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 },
-  iconBtn: { background: 'transparent', border: 'none', color: '#aaa', fontSize: 18, cursor: 'pointer', padding: '4px 6px', borderRadius: 6, display: 'flex', alignItems: 'center' },
+  // 44px minimum box so the header icons (chat, fullscreen, share) meet a
+  // comfortable click target — the icon glyph itself stays 18px. Previously
+  // ~30×26px, which meant aiming at the glyph.
+  iconBtn: { background: 'transparent', border: 'none', color: '#aaa', fontSize: 18, cursor: 'pointer', padding: 0, minWidth: 44, minHeight: 44, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   leaveBtn: { background: '#c53030', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-  roomBody: { display: 'flex', flex: 1, overflow: 'hidden' },
+  // position:relative so the floating chat panel and its reopen chip anchor
+  // to the meeting area (not the page), and stay inside it on resize.
+  roomBody: { display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' },
   reactionFloat: { position: 'absolute', bottom: 100, right: 20, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', zIndex: 20 },
   floatingEmoji: { fontSize: 36, animation: 'floatUp 2.5s ease-out forwards' },
-  controls: { position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 12, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', borderRadius: 40, padding: '10px 16px', zIndex: 10 },
+  // The bar is centred by translateX(-50%), so without a width cap it grew
+  // past BOTH viewport edges symmetrically and roomWrapper's overflowX:hidden
+  // clipped Mic (first) and Leave (last) first — the two that matter most.
+  // maxWidth keeps it inside the viewport with a 12px margin each side;
+  // flexWrap folds overflow onto a second row instead of off-screen, so no
+  // control is ever hidden and no overflow:hidden is needed. gap 12→10.
+  // Outer: spans the full width with a 12px margin each side, and centres
+  // the pill inside it. No translateX — a translated shrink-to-fit box
+  // resolves its width against the 50% start point and wraps far too early
+  // (Leave dropped to its own row at 1280px in testing). pointerEvents:none
+  // so the empty strip either side of the pill doesn't block clicks on
+  // whatever is behind it; the pill re-enables them.
+  controls: { position: 'absolute', bottom: 20, left: 12, right: 12, display: 'flex', justifyContent: 'center', zIndex: 10, pointerEvents: 'none' },
+  // Inner pill: the visible bar. flexWrap folds overflow onto a second row
+  // instead of off-screen, so no control is ever hidden and no
+  // overflow:hidden is needed. gap 12→10.
+  controlsPill: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 10, maxWidth: '100%', boxSizing: 'border-box', background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', borderRadius: 40, padding: '10px 16px', pointerEvents: 'auto' },
   controlBtn: { background: '#2a2a2a', border: 'none', borderRadius: 50, width: 48, height: 48, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', position: 'relative', gap: 2 },
   hdBadge: { position: 'absolute', bottom: 6, right: 6, fontSize: 8, fontWeight: 700, color: '#f5a623', lineHeight: 1 },
   reactionBar: { position: 'absolute', bottom: 120, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 6, background: '#1a1a1a', border: '1px solid #333', borderRadius: 30, padding: '8px 12px' },
@@ -86,15 +107,36 @@ export const s: Record<string, React.CSSProperties> = {
   qualityMenu: { position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: 10, overflow: 'hidden', minWidth: 160 },
   qualityOption: { display: 'block', width: '100%', background: 'none', border: 'none', color: '#ccc', padding: '10px 16px', cursor: 'pointer', fontSize: 13, textAlign: 'left' },
   qualityActive: { background: '#2a2a2a', color: '#fff', fontWeight: 600 },
-  sidebar: { width: 300, background: '#111', borderLeft: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column' },
-  sidebarTitle: { color: '#888', fontWeight: 600, fontSize: 11, letterSpacing: 1, padding: '14px 16px', borderBottom: '1px solid #1e1e1e', textTransform: 'uppercase' },
+  // Floating chat panel. Was a 300px flex sibling of the video area, so it
+  // permanently stole 300px of meeting width while open. Now positioned
+  // absolutely inside roomBody so it overlays the video and the grid keeps
+  // the full width (the 2-person 50/50 layout is unaffected by it opening).
+  // Width is viewport-aware: 340px on desktop, shrinking to fit with a 12px
+  // margin on narrow windows so it can never be clipped by the edge. The
+  // bottom inset clears the control bar (bottom:20 + ~68px bar). zIndex 20
+  // sits above video/tiles (0) and the bar (10) but below popup menus (50)
+  // and every overlay (200+), matching the existing ladder.
+  // right:88 leaves the 24px-edge button column (assistant / notes / chat
+  // chip, 52px wide) fully clickable beside the open panel. zIndex 45 keeps
+  // chat above the assistant's own 320px panel (40) so it's readable if
+  // both are open, while staying under popup menus (50) and overlays (200+).
+  // top:62 clears the view-control cluster (auto-cam / fullscreen) pinned
+  // at top:14 right:14, ~40px tall, in the video area.
+  sidebar: { position: 'absolute', top: 62, right: 88, bottom: 100, width: 'min(340px, calc(100% - 100px))', background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, boxShadow: '0 12px 40px rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', zIndex: 45, overflow: 'hidden' },
+  sidebarTitle: { color: '#888', fontWeight: 600, fontSize: 11, letterSpacing: 1, padding: '0 4px 0 16px', minHeight: 44, borderBottom: '1px solid #1e1e1e', textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  // Small reopen chip shown only while the chat panel is closed. Joins the
+  // existing right-edge column — Bot Assistant @ bottom:90 and Personal
+  // Notes @ bottom:154 (BotAssistant.tsx / PersonalNotesToggle.tsx), both
+  // 52px on a 64px rhythm — so it never overlaps them or the centred
+  // control bar. Same zIndex:40 as its neighbours.
+  chatReopenBtn: { position: 'absolute', right: 24, bottom: 218, width: 48, height: 48, borderRadius: 24, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)', border: '1px solid #2a2a2a', color: '#ccc', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 40 },
   messages: { flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 },
   message: { display: 'flex', flexDirection: 'column', gap: 2 },
   msgName: { color: '#5b5ef4', fontSize: 12, fontWeight: 600 },
   msgText: { color: '#ddd', fontSize: 13, lineHeight: 1.4 },
   msgTime: { color: '#444', fontSize: 11 },
   chatInputRow: { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid #1e1e1e' },
-  sendBtn: { background: '#f5a623', color: '#fff', border: 'none', borderRadius: 8, width: 38, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { background: '#f5a623', color: '#fff', border: 'none', borderRadius: 8, width: 44, minHeight: 44, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   fileCard: { display: 'flex', flexDirection: 'column' as const, gap: 4, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 10, padding: '10px 12px' },
   fileCardLink: { display: 'flex', alignItems: 'center', gap: 8, color: '#ddd', textDecoration: 'none', fontSize: 13, background: '#111', border: '1px solid #222', borderRadius: 8, padding: '8px 10px', marginTop: 4 },
   recordings: { padding: '12px 14px', borderTop: '1px solid #1e1e1e' },

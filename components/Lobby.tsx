@@ -458,12 +458,20 @@ export function Lobby({
                           >
                             {btnLabel}
                           </button>
-                          {/* "Start a new meeting instead" only shown when a live scheduled meeting is selected */}
-                          {liveSelection && (
-                            <button style={s.secondaryBtn} onClick={onCreateRoom} disabled={creating}>
-                              Start a new meeting instead
-                            </button>
-                          )}
+                          {/* "Start a new meeting instead" applies only when a live
+                              scheduled meeting is selected — but the button stays in
+                              the layout regardless, hidden rather than unmounted, so
+                              the card doesn't change height as the user pages between
+                              live, expired and no-meeting states. */}
+                          <button
+                            style={{ ...s.secondaryBtn, visibility: liveSelection ? 'visible' : 'hidden', pointerEvents: liveSelection ? 'auto' : 'none' }}
+                            onClick={onCreateRoom}
+                            disabled={creating || !liveSelection}
+                            tabIndex={liveSelection ? 0 : -1}
+                            aria-hidden={!liveSelection}
+                          >
+                            Start a new meeting instead
+                          </button>
                         </>
                       )
                     })()}

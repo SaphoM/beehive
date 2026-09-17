@@ -80,6 +80,12 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
   // default — an ordinary scheduled meeting is a conversation, not a
   // broadcast, and this changes what every attendee can do.
   const [audienceMode, setAudienceMode] = useState(false)
+  // Let AI note-taker bots (Fathom, Otter, Fireflies, …) into this meeting
+  // without waiting at the door. Bots arrive before the host and give up
+  // after a few minutes in a lobby, so without this nobody is there to admit
+  // them. Off by default — it's per-meeting, and a human whose name matches
+  // a bot pattern could skip the waiting room, so the organiser decides.
+  const [allowNotetakers, setAllowNotetakers] = useState(false)
 
   const addEmail = () => {
     const e = emailInput.trim().toLowerCase()
@@ -109,6 +115,7 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
       time || undefined,
       duration,
       audienceMode,
+      allowNotetakers,
     )
     if (!result) return
     const { room, hostSecret } = result
@@ -318,6 +325,17 @@ export function SchedulePanel({ displayName, onDisplayNameChange, isSting, onSch
         />
         <span style={{ color: '#aaa', fontSize: 12 }}>Large session</span>
         <span style={{ color: '#555', fontSize: 11 }}>— attendees join as audience, raise a hand to speak</span>
+      </label>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={allowNotetakers}
+          onChange={e => setAllowNotetakers(e.target.checked)}
+          style={{ width: 14, height: 14, accentColor: '#f5a623', cursor: 'pointer' }}
+        />
+        <span style={{ color: '#aaa', fontSize: 12 }}>Allow AI note-takers</span>
+        <span style={{ color: '#555', fontSize: 11 }}>— Fathom, Otter, Fireflies etc. skip the waiting room</span>
       </label>
 
       <div style={{ display: 'flex', gap: 8 }}>

@@ -9,6 +9,7 @@ import { randomUUID, randomBytes } from 'crypto'
 import { createMeetingIntelligence } from './meetingIntelligence.js'
 import { buildIcs, icsFilenameFor } from './shared/icsBuilder.js'
 import { isScheduledMeetingExpired, SERVER_TZ_SLACK_MS } from './shared/meetingExpiry.js'
+import { isNotetakerName } from './shared/notetakers.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -148,7 +149,7 @@ const meetingIntelligence = createMeetingIntelligence({ supabase, egressClient }
 // in localStorage, and it rides back to this backend on every subsequent
 // token request for this room to prove host identity.
 app.post('/api/rooms/schedule', async (req, res) => {
-  const { name, organisation, accessToken, scheduledDate, scheduledTime, durationMinutes, audienceMode } = req.body
+  const { name, organisation, accessToken, scheduledDate, scheduledTime, durationMinutes, audienceMode, allowNotetakers } = req.body
   if (!name) return res.status(400).json({ error: 'name is required' })
 
   const livekitRoomName = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -187,6 +188,10 @@ app.post('/api/rooms/schedule', async (req, res) => {
       // /api/rooms/:roomId/speaker. Opt-in; false leaves the room exactly
       // as scheduled rooms have always behaved.
       audience_mode: !!audienceMode,
+      // Let known AI note-taker bots skip the waiting room for this room
+      // (migration 013 / shared/notetakers.js). Opt-in; false keeps the
+      // door exactly as it is for everyone.
+      allow_notetakers: !!allowNotetakers,
       ...(scheduledDate ? { scheduled_date: scheduledDate } : {}),
       ...(scheduledTime ? { scheduled_time: scheduledTime } : {}),
       ...(durationMinutes ? { duration_minutes: durationMinutes } : {}),
@@ -247,7 +252,7 @@ app.post('/api/livekit/token', async (req, res) => {
   // fall through untouched, exactly as before this feature existed.
   const { data: room } = await supabase
     .from('rooms')
-    .select('id, requires_admission, scheduler_auth_user_id, audience_mode, scheduled_date, scheduled_time, duration_minutes')
+    .select('id, requires_admission, scheduler_auth_user_id, audience_mode, allow_notetakers, scheduled_date, scheduled_time, duration_minutes')
     .eq('livekit_room_name', roomName)
     .single()
 
@@ -283,6 +288,18 @@ app.post('/api/livekit/token', async (req, res) => {
       isHost = authUser.id === room.scheduler_auth_user_id
     }
 
+    // Host-approved AI note-taker (migration 013). Bots arrive BEFORE the
+    // host and give up after a few minutes in a lobby, so with nobody there
+    // to click Admit they never get in. When the organiser has opted this
+    // room in and the joiner names itself like a known bot
+    // (shared/notetakers.js), skip the waiting room. Deliberately placed
+    // AFTER the expiry gate above (a bot can't enter a finished meeting) and
+    // BEFORE the admission upsert (no pending row is created, so the host's
+    // waiting-room panel stays clean). Recorded as a plain participant so
+    // it shows in the roster like any attendee. Instant rooms never reach
+    // this branch — they have no waiting room to skip.
+    const isNotetaker = !isHost && room.allow_notetakers && isNotetakerName(displayName)
+
     if (isHost) {
       role = 'host'
       await supabase.from('room_participants').insert({
@@ -292,6 +309,16 @@ app.post('/api/livekit/token', async (req, res) => {
         joined_at: new Date().toISOString(),
         role: 'host',
       })
+      // Falls through to normal token issuance below.
+    } else if (isNotetaker) {
+      await supabase.from('room_participants').insert({
+        room_id: room.id,
+        display_name: displayName,
+        is_active: true,
+        joined_at: new Date().toISOString(),
+        role: 'participant',
+      })
+      console.log(`[token] note-taker "${displayName}" auto-admitted to ${room.id} (allow_notetakers)`)
       // Falls through to normal token issuance below.
     } else {
       // Upsert this identity's admission request — idempotent across

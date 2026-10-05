@@ -141,32 +141,30 @@ import { createSegmentationEngine } from './components/segmentation/createSegmen
 import type { SegmentationEngine } from './components/segmentation/types'
 
 // LiveKit's own <GridLayout> picks its column/row count from a fixed table
-// of {columns, rows, orientation, minWidth} definitions (@livekit/components-
-// core's selectGridLayout) keyed off the *container's* current aspect ratio
-// and participant count — for 2 tiles in a landscape container it should
-// pick a plain 2x1 (two equal tiles side by side), but the actual container
-// (main video area, minus the chat sidebar and any floating panels) doesn't
-// reliably land in "landscape" by that function's simple width/height>1
-// check, and its fallback layouts include entries wider than the visible
-// tile count (e.g. 2x2 for anything up to 4 tiles) — which is exactly what
-// produced one full-size tile plus a visibly empty grid cell, confirmed
-// directly against a real screenshot. Rather than fight LiveKit's own
-// adaptive layout-selection heuristic (a bigger, riskier change reaching
-// into meeting/track code this fix is explicitly scoped away from), this
-// overrides the CSS it emits: `auto-fit` with an explicit minmax collapses
-// any grid track that has no tile in it to 0 width, so whatever count of
-// tiles are actually present always evenly fills the whole area — no empty
-// cells, no single tile inflating to fill leftover space, ever. `!important`
-// is required because LiveKit sets `--lk-col-count`/`--lk-row-count` via
-// direct DOM `style.setProperty` calls in a `useLayoutEffect`, which would
-// otherwise re-win over a plain (non-!important) override on every resize.
+// of {columns, rows, orientation, minWidth} definitions keyed off the
+// container's current aspect ratio, not the authoritative participant-count
+// model BeeHive requires (2 → 50/50, 3 → 33.3%×3, 4+ → grid). BeeHive now
+// sets explicit inline grid-template-columns/rows on the layout instead, and
+// LiveKit's --lk-col-count/--lk-row-count DOM writes can no longer override
+// them. Only two CSS patches remain here: the small-viewport stacking rule
+// and the tile-fills-its-cell fix below.
 if (typeof document !== 'undefined' && !document.getElementById('bhv-equal-grid-tiles')) {
   const style = document.createElement('style')
   style.id = 'bhv-equal-grid-tiles'
   style.textContent = `
-    .lk-grid-layout {
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
-      grid-auto-rows: 1fr !important;
+    /* Participant-count layout model (spec): 1 → single, 2 → 50/50,
+       3 → three equal columns, 4+ → responsive grid. The explicit
+       inline grid-template-columns/rows set on .lk-grid-layout below
+       own desktop sizing; this media query only re-stacks on small
+       viewports, where forcing three-across would make tiles unusably
+       narrow. !important is required because inline styles would
+       otherwise win over a plain media-query rule. */
+    @media (max-width: 640px) {
+      .lk-grid-layout {
+        grid-template-columns: 1fr !important;
+        grid-template-rows: none !important;
+        grid-auto-rows: minmax(0, 1fr) !important;
+      }
     }
     /* A tile must fill the grid cell it was allocated, in every camera state.
        In LiveKit's stock layout the tile IS the grid item, so the grid
@@ -702,6 +700,21 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
       if (!existing || t.publication) byKey.set(key, t)
     }
     return [...byKey.values()]
+  })()
+
+  // Authoritative stage-layout model: participant count picks the grid,
+  // camera state only changes what's drawn inside each tile. cameraTracks
+  // always carries one entry per participant (placeholder when camera is
+  // off), so its length is the true participant count — NOT the number of
+  // live video tracks, which would wrongly collapse e.g. 3 participants
+  // with one camera off into a 50/50 layout.
+  const stageGrid = (() => {
+    const n = cameraTracks.length
+    if (n <= 1) return { cols: 1, rows: 1 }
+    if (n === 2) return { cols: 2, rows: 1 }   // 50% | 50%
+    if (n === 3) return { cols: 3, rows: 1 }   // 33.3% | 33.3% | 33.3%
+    const cols = Math.ceil(Math.sqrt(n))
+    return { cols, rows: Math.ceil(n / cols) } // 4→2×2, 6→3×2, 9→3×3, …
   })()
 
   // Presence — role and avatar — now come from LiveKit participant
@@ -3086,7 +3099,18 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
               )}
             </div>
           ) : (
-            <GridLayout tracks={cameraTracks} style={{ height: '100%' }}>
+            <GridLayout tracks={cameraTracks} style={{
+              height: '100%',
+              // Participant-count layout (authoritative model): each participant
+              // contributes exactly one camera entry — a real trackRef when the
+              // camera is on, a placeholder when it's off — so cameraTracks.length
+              // IS the participant count here, and the tile mix never changes the
+              // count (camera OFF keeps the tile, it never drops a track from the
+              // layout). 1 → single, 2 → 50%|50%, 3 → 33.3% × 3 in one row,
+              // 4+ → balanced grid (4→2×2, 6→3×2, 9→3×3, etc.).
+              gridTemplateColumns: `repeat(${stageGrid.cols}, 1fr)`,
+              gridTemplateRows: `repeat(${stageGrid.rows}, 1fr)`,
+            }}>
               <div style={{ position: 'relative', width: '100%', height: '100%' }}>
                 <ParticipantTile />
                 <CameraOffAvatarOverlay avatarUrlFor={avatarUrlFor} />

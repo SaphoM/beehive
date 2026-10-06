@@ -1,28 +1,28 @@
 {
-  "version": "1.0.373",
-  "releaseDate": "2026-10-06T10:39:53.435Z",
+  "version": "1.0.376",
+  "releaseDate": "2026-10-06T10:59:34.104Z",
   "critical": false,
   "minimumVersion": "1.0.200",
   "notes": [
-    "Prompt to add Fathom notetaker after joining the meeting"
+    "Meet-style window title triggers Fathom recorder; Restart Now fallback swaps in the staged update when Squirrel no-ops"
   ],
   "mac": {
-    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.373/BeeHive-universal.zip",
-    "sha512": "ypudYufI6IKsd4rAUckirlQ2P7UjM254VyjUpizlYrdg3zCHWyOYcqJbgR4KHBQaezOmV93TXb0g+iBaB2liUQ==",
-    "size": 241905176,
-    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.373/BeeHive-universal.dmg",
-    "dmgSha512": "n8HbmNgXR7/zSRLu1KHa/BJXqB2T/BR1slP9/uirG7J44qHG92ordNHtcGYpkz4LNk5Aj4HK+dR3FJxTxm1tbw==",
-    "dmgSize": 241969189
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.376/BeeHive-universal.zip",
+    "sha512": "4tdcUF5dZbTR3dFPWDT69mSf6aKaT22YiQnSHSWMb9kPpLJIpNqVutjN7DV3qTM0xyJYxsHRli8dThSXgN1Gaw==",
+    "size": 241903481,
+    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.376/BeeHive-universal.dmg",
+    "dmgSha512": "9ehZW5tddGovubseEhtpGUnulWHksFKWi56FYUw2nVyxnIlxxUxKBxXV8ZvM6yR8sMZd3x0pS/uHQBe5ZR81Ig==",
+    "dmgSize": 241968088
   },
   "win": {
-    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.373/BeeHive-Setup.exe",
-    "sha512": "UU/hK4xw6fYblyr0DTmOFjcDfOaFIuI/fctEHh7pPbnTPHPAKTQAm8Y9rRTZHxqyKGwIEwpXoW7eRtW4jBrMHA==",
-    "size": 233542977,
-    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.373/BeeHive-Setup-x64.exe",
-    "x64Sha512": "NLSDxUQZpqaN+ZecLACkWizJKVooQq6MzHrZME3Nz3FlhfwzCYM+anvFu+ip84ICN3DavNve/6DF4AlYPJsKeg==",
-    "x64Size": 120801710,
-    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.373/BeeHive-Setup-arm64.exe",
-    "arm64Sha512": "HcwmuvM0xSozMceB9rwGUpsPiefK/Q6wSA3U9zuMBJe7cL/XkBr+IW9BXWiHhIQYOFYZ20PST79rFn1nCMpZSA==",
-    "arm64Size": 113292513
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.376/BeeHive-Setup.exe",
+    "sha512": "xzhWewymrGXZhAYfyYskLajghpy3PfncIIPid/UomPFDlueUeO4qeaiyask61+uYjBLd1+iFATzurlLNxZZVnQ==",
+    "size": 233544460,
+    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.376/BeeHive-Setup-x64.exe",
+    "x64Sha512": "gMZ8Wgqo3rYXcSgXnuQnt1xRzA1C3ztAF6E09g4DLj4AVswbztmZxzRIW88QjrZnoEup8n2Lv5MyWgcwO3xh3g==",
+    "x64Size": 120802554,
+    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.376/BeeHive-Setup-arm64.exe",
+    "arm64Sha512": "ecvIDIDu2oK33TpZAiWX0HYa5ldYV0Kqd4vQKuAiY++ns1cZ3Nca61jLpxiHo4kBCCD09n4Semtk3uc83jiHNg==",
+    "arm64Size": 113293152
   }
 }

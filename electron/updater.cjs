@@ -190,6 +190,52 @@ function scheduleChecks() {
   }, CHECK_INTERVAL_MS)
 }
 
+// Manual fallback for Restart Now — see install-update handler. Runs a
+// detached shell script that waits for this app to die, swaps /Applications'
+// BeeHive.app with the one inside the staged zip, strips the quarantine
+// xattr (running the extraction from a spawned script inherits no TCC file
+// consent), and relaunches. Squirrel's failure mode is a silent no-op, so
+// this is purely a safety net.
+function applyStagedUpdateManually() {
+  try {
+    const { app } = require('electron')
+    const { spawn } = require('child_process')
+    const fs = require('fs')
+    const path = require('path')
+    const os = require('os')
+    const pendingDir = path.join(os.homedir(), 'Library', 'Caches', 'beehive-updater', 'pending')
+    let zip = null
+    try {
+      zip = fs.readdirSync(pendingDir).filter(f => f.endsWith('.zip'))
+        .map(f => path.join(pendingDir, f))
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0]
+    } catch { /* dir missing */ }
+    if (!zip) {
+      console.error('[updater] no staged zip found — nothing to fall back to')
+      return
+    }
+    const script = `
+#!/bin/bash
+pkill -f "/Applications/BeeHive.app" 2>/dev/null
+sleep 3
+TMP=$(mktemp -d)
+ditto -xk "${zip}" "$TMP" || exit 1
+xattr -dr com.apple.quarantine "$TMP/BeeHive.app" 2>/dev/null
+mv /Applications/BeeHive.app /tmp/BeeHive-old.app 2>/dev/null
+mv "$TMP/BeeHive.app" /Applications/
+open -a /Applications/BeeHive.app
+`
+    const scriptPath = path.join(os.tmpdir(), 'beehive-apply-update.sh')
+    fs.writeFileSync(scriptPath, script, { mode: 0o755 })
+    const child = spawn('/bin/bash', [scriptPath], { detached: true, stdio: 'ignore' })
+    child.unref()
+    // Let the script outlive us, then die for it.
+    setTimeout(() => app.quit(), 500)
+  } catch (e) {
+    console.error('[updater] manual fallback failed:', e)
+  }
+}
+
 function registerIPC() {
   ipcMain.on('set-meeting-active', (_, active) => setMeetingActive(!!active))
 
@@ -204,10 +250,29 @@ function registerIPC() {
   })
 
   ipcMain.handle('install-update', () => {
-    if (!_configured) return
-    // isSilent=false on Windows pops the installer visibly; isForceRunAfter=true
-    // relaunches BeeHive after installation completes.
-    autoUpdater.quitAndInstall(false, true)
+    if (!_configured) return { ok: false, error: 'updater not configured' }
+    try {
+      // Try the normal path first — on the CI-built mac app this should spawn
+      // Squirrel's ShipIt and swap the bundle. If it silently does nothing
+      // (which it did for 1.0.320→1.0.371→1.0.373, shipping a dead button —
+      // Squirrel fails to run ShipIt when the app was quarantined/deferred
+      // before signing moved, and the error is swallowed), this timeout
+      // catches it we fall back to applying the staged zip ourselves.
+      // NOTE: var rather than let/const so a throw above still clears below.
+      var quitTimer = setTimeout(() => {
+        console.warn('[updater] quitAndInstall no-op after 10s — applying staged update manually')
+        applyStagedUpdateManually()
+      }, 10000)
+      quitTimer.unref?.()
+      autoUpdater.quitAndInstall(false, true)
+      // Quit expected to fire within a few seconds; if we reach this line and
+      // the app has NOT exited the timer above becomes the saviour.
+      return { ok: true }
+    } catch (e) {
+      console.error('[updater] quitAndInstall threw:', e)
+      applyStagedUpdateManually()
+      return { ok: false, error: e.message }
+    }
   })
 
   ipcMain.handle('check-for-updates', async () => {

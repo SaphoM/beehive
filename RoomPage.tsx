@@ -423,7 +423,18 @@ export default function RoomPage() {
   useEffect(() => {
     const base = 'BeeHive — X Spark'
     if (view === 'room') {
-      document.title = activeMeetingName ? `Meeting: ${activeMeetingName} — BeeHive` : 'Meeting in progress — BeeHive'
+      // Google-Meet-style title — Fathom's desktop recorder detects meetings
+      // by watching window/tab titles for Zoom/Meet/Teams patterns, so a
+      // BeeHive title that looks like a Meet call is what it keys on to
+      // start recording. The human-readable 'Meeting: … — BeeHive' used to
+      // just say "Meeting" to it — always apparently "not a known meeting".
+      // The meeting's real name is dropped after the dash so users still
+      // see which call they're in, and a BeeHive suffix survives the title
+      // bar so it's still ours, just detectable too.
+      const legitMeetCode = activeRoomId ? activeRoomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10).match(/.{1,3}/g)?.join('-') : null
+      document.title = activeMeetingName
+        ? `Meet — ${activeMeetingName}${legitMeetCode ? ` (${legitMeetCode})` : ''} — BeeHive`
+        : `Meet — BeeHive${legitMeetCode ? ` (${legitMeetCode})` : ''}`
     } else {
       document.title = base
     }

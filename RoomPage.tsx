@@ -1480,6 +1480,27 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   // against the active controller without restarting between renders.
   const activeControllerRef = React.useRef(activeController)
   activeControllerRef.current = activeController
+  // Broadcast the actual share mode so a viewer knows whether remote
+  // control is available for the current source ('window' only — we do
+  // not offer remote control when sharing the entire screen).
+  const [remoteShareMode, setRemoteShareMode] = useState<'unknown' | 'window' | 'screen'>('unknown')
+  useEffect(() => {
+    if (!isSharing) return
+    const mode = sharingEntireScreen ? 'screen' : 'window'
+    try { controlChannelRef.current?.send({ event: 'share-mode', payload: { mode } }) } catch {}
+  }, [isSharing, sharingEntireScreen])
+  // Auto-revoke if the remote sharer's share source changes to full screen
+  // or they stop sharing (paused or remote device). Defensive layer: the
+  // visible UI also hides, but release early so the controller surface is
+  // released deterministically.
+  useEffect(() => {
+    if (!hasRemoteScreenShare) { setRemoteShareMode('unknown'); return }
+    if (remoteShareMode === 'screen' && controlPhase === 'active') {
+      try { controlChannelRef.current?.send({ event: 'release', payload: { name: displayName, sessionId: mySessionIdRef.current } }) } catch {}
+      mySessionIdRef.current = null
+      setControlPhase('idle')
+    }
+  }, [hasRemoteScreenShare, remoteShareMode, controlPhase])
 
   useDataChannel('control', msg => {
     const m = decodeSignal(msg.payload); if (!m) return
@@ -1551,6 +1572,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
       const y = rect.top + Math.max(0, Math.min(1, m.payload.y)) * rect.height
       const target = document.elementFromPoint(x, y) as HTMLElement | null
       try { target?.click() } catch { /* target can't receive synthetic clicks */ }
+      return
+    }
+    if (m.event === 'share-mode') {
+      setRemoteShareMode(m.payload.mode === 'screen' ? 'screen' : 'window')
       return
     }
   })
@@ -3433,29 +3458,29 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
         >
           {/* Remote control UI — viewer (not sharer) sees this when they
               have someone else's screen in the main area */}
-          {hasRemoteScreenShare && !isSharing && controlPhase === 'idle' && (
+          {hasRemoteScreenShare && !isSharing && remoteShareMode === 'window' && controlPhase === 'idle' && (
             <button
               onClick={requestControl}
               style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #444', color: '#ddd', borderRadius: 8, fontSize: 12, padding: '7px 12px', cursor: 'pointer', backdropFilter: 'blur(6px)' }}
             >Request Control</button>
           )}
-          {hasRemoteScreenShare && !isSharing && controlPhase === 'requesting' && (
+          {hasRemoteScreenShare && !isSharing && remoteShareMode === 'window' && controlPhase === 'requesting' && (
             <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #f5a623', color: '#f5a623', borderRadius: 8, fontSize: 12, padding: '7px 12px', backdropFilter: 'blur(6px)' }}>
               Requesting control…
             </div>
           )}
-          {hasRemoteScreenShare && !isSharing && controlPhase === 'denied' && (
+          {hasRemoteScreenShare && !isSharing && remoteShareMode === 'window' && controlPhase === 'denied' && (
             <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #c53030', color: '#c53030', borderRadius: 8, fontSize: 12, padding: '7px 12px', backdropFilter: 'blur(6px)' }}>
               Request denied — <button onClick={() => setControlPhase('idle')} style={{ background: 'none', border: 'none', color: '#f5a623', cursor: 'pointer', padding: 0, fontSize: 12 }}>try again</button>
             </div>
           )}
-          {hasRemoteScreenShare && !isSharing && controlPhase === 'busy' && (
+          {hasRemoteScreenShare && !isSharing && remoteShareMode === 'window' && controlPhase === 'busy' && (
             <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #f5a623', color: '#f5a623', borderRadius: 8, fontSize: 12, padding: '7px 12px', backdropFilter: 'blur(6px)' }}>
               Remote control is being used by another participant — <button onClick={() => setControlPhase('idle')} style={{ background: 'none', border: 'none', color: '#f5a623', cursor: 'pointer', padding: 0, fontSize: 12 }}>OK</button>
             </div>
           )}
           {/* Controller indicator — persistent while active */}
-          {controlPhase === 'active' && (
+          {controlPhase === 'active' && remoteShareMode === 'window' && (
             <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.65)', border: '1px solid #48bb78', color: '#48bb78', borderRadius: 8, fontSize: 12, padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, backdropFilter: 'blur(6px)' }}>
               🟢 You have control — click anywhere to click it on the shared screen.
               <button onClick={sendRelease} style={{ background: '#c53030', border: 'none', color: '#fff', borderRadius: 6, fontSize: 12, padding: '3px 9px', cursor: 'pointer' }}>Release Control</button>

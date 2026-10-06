@@ -245,6 +245,16 @@ ipcMain.handle('open-media-privacy-settings', (_, kind) => {
 })
 
 // ---------------------------------------------------------------------------
+// IPC: restart the app (used after screen permission grant to pick up new permissions)
+// ---------------------------------------------------------------------------
+ipcMain.handle('restart-app', () => {
+  if (process.platform !== 'darwin') return false
+  app.relaunch()
+  app.exit(0)
+  return true
+})
+
+// ---------------------------------------------------------------------------
 // IPC: list available windows + screens for screen sharing
 // Returns sanitised objects (NativeImage can't cross the context bridge)
 // ---------------------------------------------------------------------------

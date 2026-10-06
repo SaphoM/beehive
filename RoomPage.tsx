@@ -3044,7 +3044,34 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     }
   }, [])
 
+  // Proactively check if screen permission was granted but app needs restart
+  const checkScreenPermissionNeedsRestart = useCallback(async () => {
+    if (!window.electronAPI) return false
+    const status = await window.electronAPI.getScreenAccessStatus()
+    if (status !== 'granted') return false
+    // Permission is granted but we need to verify if sources are actually available
+    // (they won't be until app restarts due to macOS TCC caching)
+    const sources = await window.electronAPI.getDesktopSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+    return sources.length === 0 // granted but no sources = needs restart
+  }, [])
+
   const shareDesktopSource = useCallback(async (sourceId: string, isEntireScreen = false, windowTitle = '') => {
+    // On macOS, if screen recording permission was just granted but app hasn't restarted,
+    // getDesktopSources returns empty array even though status is 'granted'.
+    // Check proactively and offer restart before attempting capture.
+    if (window.electronAPI) {
+      const sourcesCheck = await window.electronAPI.getDesktopSources({ types: ['window', 'screen'], thumbnailSize: { width: 1, height: 1 } })
+      if (sourcesCheck.length === 0) {
+        const needsRestart = await checkScreenPermissionNeedsRestart()
+        if (needsRestart && window.electronAPI.restartApp) {
+          setDeviceErrorToast('Screen recording permission is granted but BeeHive needs to restart to pick it up.')
+          setTimeout(() => window.electronAPI?.restartApp(), 1500)
+        } else {
+          await notifyScreenPermissionProblem()
+        }
+        return
+      }
+    }
     setShowWindowPicker(false)
     // Electron's desktopCapturer id is "window:<CGWindowNumber>:0" for window
     // sources on macOS — an exact native window ID, not a guessable title match.
@@ -3118,7 +3145,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
         types: ['screen'],
         thumbnailSize: { width: 320, height: 180 },
       })
-      if (sources.length === 0) { await notifyScreenPermissionProblem(); return }
+      if (sources.length === 0) { 
+        // Check if permission is granted but app needs restart
+        const needsRestart = await checkScreenPermissionNeedsRestart()
+        if (needsRestart && window.electronAPI.restartApp) {
+          setDeviceErrorToast('Screen recording permission is granted but BeeHive needs to restart to pick it up.')
+          setTimeout(() => window.electronAPI?.restartApp(), 1500)
+        } else {
+          await notifyScreenPermissionProblem()
+        }
+        return 
+      }
       // Primary display has the lowest numeric display_id on both macOS and Windows.
       const sorted = [...sources].sort((a, b) => {
         const ai = parseInt(a.display_id || '9999', 10)
@@ -3192,6 +3229,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     setDetectingWindow(true)
     try {
       const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+      if (sources.length === 0) {
+        const needsRestart = await checkScreenPermissionNeedsRestart()
+        if (needsRestart && window.electronAPI.restartApp) {
+          setDeviceErrorToast('Screen recording permission is granted but BeeHive needs to restart to pick it up.')
+          setTimeout(() => window.electronAPI?.restartApp(), 1500)
+        } else {
+          await notifyScreenPermissionProblem()
+        }
+        return
+      }
       const keywords = ['keynote', 'powerpoint', 'impress', 'slides']
       const match = sources.find(src =>
         keywords.some(kw => src.name.toLowerCase().includes(kw))
@@ -3205,7 +3252,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     } finally {
       setDetectingWindow(false)
     }
-  }, [])
+  }, [checkScreenPermissionNeedsRestart, notifyScreenPermissionProblem])
 
   const confirmAndShare = useCallback(async () => {
     if (!pendingSource) return
@@ -4370,6 +4417,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                       setShareMenu(false)
                       if (window.electronAPI) {
                         const sources = await window.electronAPI.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+                        if (sources.length === 0) {
+                          const needsRestart = await checkScreenPermissionNeedsRestart()
+                          if (needsRestart && window.electronAPI.restartApp) {
+                            setDeviceErrorToast('Screen recording permission is granted but BeeHive needs to restart to pick it up.')
+                            setTimeout(() => window.electronAPI?.restartApp(), 1500)
+                          } else {
+                            await notifyScreenPermissionProblem()
+                          }
+                          return
+                        }
                         setDesktopSources(sources); setShowWindowPicker(true)
                       } else { await startShare() }
                     }}
@@ -4875,6 +4932,16 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
           onClose={() => setShowWindowPicker(false)}
           onRefresh={async () => {
             const sources = await window.electronAPI!.getDesktopSources({ thumbnailSize: { width: 640, height: 400 } })
+            if (sources.length === 0) {
+              const needsRestart = await checkScreenPermissionNeedsRestart()
+              if (needsRestart && window.electronAPI.restartApp) {
+                setDeviceErrorToast('Screen recording permission is granted but BeeHive needs to restart to pick it up.')
+                setTimeout(() => window.electronAPI?.restartApp(), 1500)
+              } else {
+                await notifyScreenPermissionProblem()
+              }
+              return
+            }
             setDesktopSources(sources)
           }}
         />

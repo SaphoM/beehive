@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // handler for why).
   openMediaPrivacySettings: (kind) => ipcRenderer.invoke('open-media-privacy-settings', kind),
 
+  // Restart the app (used after screen permission grant to pick up new permissions)
+  restartApp: () => ipcRenderer.invoke('restart-app'),
+
   // Drive the presenter's slideshow (Keynote / PowerPoint) — 'next' | 'prev'
   presentationControl: (direction) => ipcRenderer.invoke('presentation-control', direction),
 

@@ -321,6 +321,9 @@ export default function RoomPage() {
   // instead of only recording from the outside. Skipped entirely when this
   // tab is itself a notetaker bot (?notetaker=…).
   const [notetakerPrompt, setNotetakerPrompt] = useState(false)
+  // Reference to the window/tab the notetaker is joining in, so we can take
+  // it down when the owner leaves — see handleLeave.
+  const notetakerWindowRef = React.useRef<Window | null>(null)
   const [displayName, setDisplayName] = useState(NOTETAKER_FROM_URL ? notetakerDisplayName(NOTETAKER_FROM_URL) : '')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(INITIAL_ROOM_ID_FROM_URL)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
@@ -557,6 +560,11 @@ export default function RoomPage() {
   }
 
   const handleLeave = () => {
+    // The notetaker window is ours — closed alongside the owner so the bot
+    // doesn't linger in the meeting after the human leaves. close() is a no-op
+    // if the user already closed it or never opened one.
+    try { notetakerWindowRef.current?.close() } catch { /* cross-origin or already gone */ }
+    notetakerWindowRef.current = null
     window.history.pushState({}, '', '/')
     setView('lobby')
     setActiveRoomId(null)
@@ -635,7 +643,7 @@ export default function RoomPage() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
-              onClick={() => { setNotetakerPrompt(false); window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker') }}
+              onClick={() => { setNotetakerPrompt(false); notetakerWindowRef.current = window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker') }}
               style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, padding: '9px 0', cursor: 'pointer' }}
             >
               Yes, add Fathom

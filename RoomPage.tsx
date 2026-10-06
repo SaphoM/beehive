@@ -326,6 +326,11 @@ export default function RoomPage() {
   // Reference to the window/tab the notetaker is joining in, so we can take
   // it down when the owner leaves — see handleLeave.
   const notetakerWindowRef = React.useRef<Window | null>(null)
+  // Browser path: instead of opening a second tab (which steals focus away
+  // from the meeting), the note-taker runs in a hidden same-origin iframe
+  // inside this tab. Holding the URL here drives both the iframe src and the
+  // "listening in the background" chip below.
+  const [notetakerEmbeddedUrl, setNotetakerEmbeddedUrl] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState(NOTETAKER_FROM_URL ? notetakerDisplayName(NOTETAKER_FROM_URL) : '')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(INITIAL_ROOM_ID_FROM_URL)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
@@ -562,11 +567,12 @@ export default function RoomPage() {
   }
 
   const handleLeave = () => {
-    // The notetaker window is ours — closed alongside the owner so the bot
-    // doesn't linger in the meeting after the human leaves. close() is a no-op
-    // if the user already closed it or never opened one.
+    // The notetaker window/iframe is ours — closed alongside the owner so the
+    // bot doesn't linger in the meeting after the human leaves. close() is a
+    // no-op if the user already closed it or never opened one.
     try { notetakerWindowRef.current?.close() } catch { /* cross-origin or already gone */ }
     notetakerWindowRef.current = null
+    setNotetakerEmbeddedUrl(null)
     window.history.pushState({}, '', '/')
     setView('lobby')
     setActiveRoomId(null)
@@ -651,17 +657,27 @@ export default function RoomPage() {
             <button
               onClick={() => {
                 setNotetakerPrompt(false)
-                // Open the note-taker tab WITHOUT stealing focus from the main
-                // meeting tab: a plain window.open() brings the new tab to the
-                // front in Chromium-based browsers, yanking the user out of
-                // the call. Blurring the new window + refocusing the opener
-                // (both legal because we're still inside the click's user
-                // gesture) keeps the meeting as the focal point while the
-                // note-taker tab runs quietly in the background.
-                const nt = window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker')
-                if (nt) { try { nt.blur() } catch { /* noop */ } }
-                notetakerWindowRef.current = nt
-                window.focus()
+                // Electron: open the note-taker's hidden BrowserWindow
+                // (intercepted by setWindowOpenHandler in main.cjs) against
+                // the production WEB_BASE.
+                if (window.electronAPI) {
+                  notetakerWindowRef.current = window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker')
+                  return
+                }
+                // Browser: never open a second tab — that's what redirects
+                // attention away from the meeting. Instead the note-taker
+                // runs embedded in a hidden same-origin iframe inside THIS
+                // tab, so the meeting stays front and center with zero
+                // focus/redirect side effects. The URL uses window.location
+                // .origin (NOT WEB_BASE): if the host is on the deployed app
+                // the frame is same-origin there; if they're on the dev server
+                // it stays same-origin locally. Either way no CSP framing
+                // block and no cross-origin isolation, and the meeting tab
+                // never moves. The iframe is kept in the layout (1px,
+                // transparent, pointer-events:none) rather than display:none
+                // so the browser always treats it as visible and never
+                // throttles the LiveKit connection.
+                setNotetakerEmbeddedUrl(`${window.location.origin}/?room=${activeRoomId}&notetaker=fathom`)
               }}
               style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, padding: '9px 0', cursor: 'pointer' }}
             >
@@ -675,6 +691,41 @@ export default function RoomPage() {
             </button>
           </div>
         </div>
+      )}
+      {notetakerEmbeddedUrl && (
+        <>
+          {/* Hidden note-taker session: same-origin iframe pinned to the corner
+              of THIS tab (1px, transparent, inert) — no second tab, so nothing
+              can steal focus or move the user away from the meeting. */}
+          <iframe
+            key="notetaker-embed"
+            src={notetakerEmbeddedUrl}
+            title="Fathom Notetaker (background)"
+            tabIndex={-1}
+            aria-hidden="true"
+            style={{
+              position: 'fixed', right: 0, bottom: 0,
+              width: 1, height: 1, border: 0, opacity: 0,
+              pointerEvents: 'none',
+            }}
+          />
+          {/* Small reassurance chip so the host knows the bot is in the room
+              even though nothing visibly happened (no tab opened). */}
+          <div
+            data-testid="notetaker-chat-chip"
+            style={{
+              position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 200, display: 'flex', alignItems: 'center', gap: 8,
+              background: '#1a1a1a', border: '1px solid #333', borderRadius: 999,
+              padding: '8px 14px', boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+              pointerEvents: 'none',
+            }}
+          >
+            <Avatar name="Fathom Notetaker" size={20} />
+            <span style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>Fathom Notetaker</span>
+            <span style={{ color: '#48bb78', fontSize: 12 }}>● listening in the background</span>
+          </div>
+        </>
       )}
       </>
     )

@@ -57,6 +57,37 @@ export function useAuth() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Keep the signed-in session alive across long meetings — the drop-after-~1h
+  // issue: Supabase access tokens expire hourly and the session is re-derived
+  // from the stored refresh token. autoRefreshToken should already handle it,
+  // but in the packaged Electron app it can silently stall (background
+  // renderer throttling, file: origin), and the first failed refresh then
+  // flips the whole useAuth state to signed-out, unmounting the live room.
+  // So: proactively refresh every 60s and on every focus return, and tolerate
+  // transient failures (network/timeout) — the stored refresh token remains
+  // valid for days, so a dropped call must not log the user out. Explicit
+  // sign-out and genuinely invalid/rotated refresh tokens still sign out.
+  useEffect(() => {
+    let alive = true
+    const refresh = async () => {
+      try {
+        const { data: { session: s }, error } = await supabase.auth.refreshSession()
+        if (!error && alive && s) { setSession(s); setUser(s.user ?? null) }
+        if (error?.status === 400 || error?.status === 401 || error?.status === 403) {
+          // Refresh token no longer valid — nothing we can do, let it settle.
+          console.warn('[auth] refresh token rejected, session will expire:', error.message)
+        }
+      } catch (e) {
+        console.warn('[auth] proactive refresh failed (transient?), keeping session:', e?.message ?? e)
+      }
+    }
+    const id = setInterval(refresh, 60_000)
+    const onVis = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('focus', refresh)
+    return () => { alive = false; clearInterval(id); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', refresh) }
+  }, [])
+
   const signInWithMagicLink = useCallback(async (email: string) => {
     const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
     const { error } = await supabase.auth.signInWithOtp({

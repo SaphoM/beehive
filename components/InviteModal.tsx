@@ -12,16 +12,28 @@ interface Props {
 
 export function InviteModal({ roomId, onClose, accent = '#f5a623' }: Props) {
   const [copied, setCopied] = useState(false)
+  const [copiedNotetaker, setCopiedNotetaker] = useState(false)
 
   // WEB_BASE is the deployed web URL (VITE_WEB_BASE_URL), with a same-origin fallback
   // for the web. It intentionally resolves to '' under Electron's file:// origin so we
   // never generate an un-shareable file:// invite link.
   const link = roomId ? `${WEB_BASE}/?room=${roomId}` : WEB_BASE
+  // AI note-taker deep link — open this on the note-taker's own browser
+  // (Fathom, Otter, …) and it joins the LiveKit room itself instead of
+  // recording from the outside. Auto-admitted past the waiting room when
+  // the host enabled Allow AI note-takers.
+  const notetakerLink = roomId ? `${WEB_BASE}/?room=${roomId}&notetaker=fathom` : WEB_BASE
 
   async function copyLink() {
     await navigator.clipboard.writeText(link)
     setCopied(true)
     setTimeout(() => setCopied(false), 2500)
+  }
+
+  async function copyNotetakerLink() {
+    await navigator.clipboard.writeText(notetakerLink)
+    setCopiedNotetaker(true)
+    setTimeout(() => setCopiedNotetaker(false), 2500)
   }
 
   const overlay: React.CSSProperties = {
@@ -78,6 +90,23 @@ export function InviteModal({ roomId, onClose, accent = '#f5a623' }: Props) {
           {copied ? <Check size={15} /> : <Copy size={15} />}
           {copied ? 'Copied!' : 'Copy link'}
         </button>
+
+        {/* AI note-taker link — prioritised to Fathom */}
+        <div>
+          <p style={{ color: '#555', fontSize: 11, fontWeight: 300, letterSpacing: 0.5, margin: '0 0 8px', textTransform: 'uppercase' }}>
+            AI note-taker link (Fathom)
+          </p>
+          <div style={linkBox} onClick={copyNotetakerLink} title="Click to copy">
+            {notetakerLink}
+          </div>
+          <button
+            onClick={copyNotetakerLink}
+            style={{ background: 'none', border: 'none', color: copiedNotetaker ? '#48bb78' : accent, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: '8px 0 0', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            {copiedNotetaker ? <Check size={13} /> : <Copy size={13} />}
+            {copiedNotetaker ? 'Copied!' : 'Copy note-taker link'}
+          </button>
+        </div>
 
         {/* Footer note */}
         <p style={{ color: '#444', fontSize: 11, fontWeight: 300, margin: 0, lineHeight: 1.6, textAlign: 'center' }}>

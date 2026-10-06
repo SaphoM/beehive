@@ -257,6 +257,42 @@ const INITIAL_ROOM_ID_FROM_URL = new URLSearchParams(window.location.search).get
 // ?ops=1 opens the Operations dashboard (admin role required — the backend
 // enforces it; this only picks the view).
 const OPS_FROM_URL = new URLSearchParams(window.location.search).get('ops') === '1'
+// ?notetaker=fathom (or otter / fireflies / …) turns this tab into a
+// headless bot joiner: no name prompt, no permission warm-up — it joins the
+// room straight as e.g. "Fathom Notetaker". This is what an AI note-taker's
+// own browser opens when the user hits capture/join on its desktop or web
+// app: the bot becomes a real participant in the LiveKit room (auto-admitted
+// by the token endpoint when the host enabled Allow AI note-takers) instead
+// of only watching/recording from the outside. Same top-level capture
+// reasoning as INITIAL_ROOM_ID_FROM_URL above.
+const NOTETAKER_FROM_URL = (() => {
+  const v = new URLSearchParams(window.location.search).get('notetaker')
+  return v && v.trim() ? v.trim() : null
+})()
+const NOTETAKER_DISPLAY_NAMES: Record<string, string> = {
+  fathom: 'Fathom Notetaker',
+  otter: 'Otter.ai Notetaker',
+  'otter.ai': 'Otter.ai Notetaker',
+  fireflies: 'Fireflies Notetaker',
+  readai: 'Read.ai Notetaker',
+  'read.ai': 'Read.ai Notetaker',
+  tldv: 'TLDV Notetaker',
+  'tl;dv': 'TLDV Notetaker',
+  krisp: 'Krisp Notetaker',
+  supernormal: 'Supernormal Notetaker',
+  grain: 'Grain Notetaker',
+  jamie: 'Jamie Notetaker',
+  meetgeek: 'MeetGeek Notetaker',
+  ai: 'AI Note Taker',
+}
+function notetakerDisplayName(param: string): string {
+  const key = param.toLowerCase()
+  if (NOTETAKER_DISPLAY_NAMES[key]) return NOTETAKER_DISPLAY_NAMES[key]
+  // Unknown product: "Acme" -> "Acme Notetaker" — still matches the
+  // shared/notetakers.js matcher only if the product is a known one, so an
+  // unrecognised name will wait at the door (honest fallback, never bypass).
+  return key.includes('note') ? param : `${param} Notetaker`
+}
 
 // Waiting-room pending-count badge, shown on the toolbar's "Waiting Room"
 // button even while its panel is closed — see useAdmissionRequests.
@@ -279,7 +315,7 @@ export default function RoomPage() {
   // document.title effect below). joinRoom already returns it as roomName.
   const [activeMeetingName, setActiveMeetingName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
-  const [displayName, setDisplayName] = useState('')
+  const [displayName, setDisplayName] = useState(NOTETAKER_FROM_URL ? notetakerDisplayName(NOTETAKER_FROM_URL) : '')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(INITIAL_ROOM_ID_FROM_URL)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
   const [showProfileSetup, setShowProfileSetup] = useState(false)
@@ -291,6 +327,7 @@ export default function RoomPage() {
   // Derive display name from auth profile or email prefix
   useEffect(() => {
     if (displayName) return  // user has typed something, leave it
+    if (NOTETAKER_FROM_URL) return // bot's name is already set — never override
     if (profile?.full_name) {
       setDisplayName(profile.full_name)
     } else if (user?.email) {
@@ -308,6 +345,41 @@ export default function RoomPage() {
     if (roomId) setJoinRoomId(roomId)
   }, [])
 
+  // AI note-taker headless join: when the tab was opened via
+  // ?room=ID&notetaker=fathom (etc.), skip the lobby entirely and join as
+  // the note-taker's own name. The token endpoint admits it straight
+  // through the waiting room when the host enabled Allow AI note-takers;
+  // a pending result means the host hasn't — the bot parks in the waiting
+  // view rather than in a lobby it can't operate.
+  const notetakerJoinAttempted = React.useRef(false)
+  useEffect(() => {
+    if (!NOTETAKER_FROM_URL || notetakerJoinAttempted.current) return
+    const roomId = new URLSearchParams(window.location.search).get('room')
+    if (!roomId) return
+    notetakerJoinAttempted.current = true
+    ;(async () => {
+      const name = notetakerDisplayName(NOTETAKER_FROM_URL)
+      const result = await joinRoom(roomId, name)
+      if ('pending' in result) {
+        setWaitingInfo({ requestId: result.requestId, identity: result.identity })
+        setView('waiting')
+        return
+      }
+      if ('error' in result) {
+        console.error('[notetaker] join failed:', result.error)
+        setJoinRoomId(roomId)
+        return
+      }
+      window.history.pushState({}, '', `?room=${roomId}&notetaker=${encodeURIComponent(NOTETAKER_FROM_URL)}`)
+      setActiveRoomId(roomId)
+      setLivekitRoomName(result.livekitRoomName)
+      setActiveMeetingName(result.roomName ?? null)
+      setToken(result.token)
+      setView('room')
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     if (!window.electronAPI?.requestMediaPermissions) return
     window.electronAPI.requestMediaPermissions().catch(() => {})
@@ -319,7 +391,7 @@ export default function RoomPage() {
   // silently fail (or stall) on phones. Request once on entering a room,
   // release the tracks immediately — we only want the permission grant.
   useEffect(() => {
-    if (view !== 'room' || window.electronAPI) return
+    if (view !== 'room' || window.electronAPI || NOTETAKER_FROM_URL) return
     navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
       .then(stream => stream.getTracks().forEach(t => t.stop()))
       .catch(() => { /* denied or unavailable — toggles will surface it */ })

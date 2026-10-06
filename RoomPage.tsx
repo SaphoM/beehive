@@ -2573,14 +2573,18 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     window.electronAPI?.stopPresentation?.()
     try {
       await supabase.from('chat_messages').insert({ room_id: roomId, display_name: '__SYSTEM__', message: `__LEAVE__${displayName}` })
-      await supabase.from('room_participants').update({ is_active: false }).eq('room_id', roomId).eq('display_name', displayName)
+      await supabase.from('room_participants').update({ is_active: false, left_at: new Date().toISOString() }).eq('room_id', roomId).eq('display_name', displayName)
       const { count } = await supabase.from('room_participants').select('id', { count: 'exact', head: true }).eq('room_id', roomId).eq('is_active', true)
       if ((count ?? 0) === 0) {
         await supabase.from('rooms').update({ ended_at: new Date().toISOString(), is_active: false }).eq('id', roomId)
       }
     } catch { /* best-effort */ }
+    // Disconnect our LiveKit session explicitly — don't rely on the renderer
+    // unmount timing to close the connection, or the roster can still show us
+    // for a few seconds after the DB already says we left. Idempotent.
+    try { await room.disconnect() } catch {}
     onLeave()
-  }, [roomId, displayName, onLeave, localParticipant, myHandRaised])
+  }, [roomId, displayName, onLeave, localParticipant, room, myHandRaised])
 
   // StrictMode mounts effects twice in dev, which double-inserted the
   // "joined" announcement — guard so one join announces exactly once.

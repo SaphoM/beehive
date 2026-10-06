@@ -107,6 +107,7 @@ import { AdmissionRequestsWindow } from './components/AdmissionRequestsWindow'
 import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { Avatar } from './components/Avatar'
+import { NotetakerScreen } from './components/NotetakerScreen'
 import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
 import { DEVICE_CHECK_CACHE_KEY } from './components/useDeviceReadiness'
 import { RoomAudioCoordination } from './components/RoomAudioCoordination'
@@ -626,13 +627,17 @@ export default function RoomPage() {
         onDisconnected={handleLeave}
         style={{ height: 'var(--vh, 100vh)' }}
       >
-        <MeetingRoom
-          roomId={activeRoomId}
-          displayName={displayName}
-          onLeave={handleLeave}
-          subtext={subtext}
-          userId={user?.id ?? null}
-        />
+        {NOTETAKER_FROM_URL
+          ? <NotetakerScreen displayName={displayName} />
+          : (
+            <MeetingRoom
+              roomId={activeRoomId}
+              displayName={displayName}
+              onLeave={handleLeave}
+              subtext={subtext}
+              userId={user?.id ?? null}
+            />
+          )}
         <RoomAudioRenderer />
       </LiveKitRoom>
       {notetakerPrompt && (

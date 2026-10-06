@@ -48,7 +48,7 @@ export function NotetakerScreen({ displayName }: { displayName: string }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
         <div style={{ fontSize: 16, fontWeight: 600 }}>{displayName}</div>
-        <div style={{ fontSize: 12, color: '#888' }}>AI note-taker — listening to this meeting in the background</div>
+        <div style={{ fontSize: 12, color: '#888' }}>AI note-taker — recording this meeting in the background</div>
       </div>
     </div>
   )

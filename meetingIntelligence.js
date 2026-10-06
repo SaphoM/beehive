@@ -21,7 +21,7 @@ import { EncodedFileOutput, EncodedFileType, S3Upload } from '@livekit/protocol'
 import { createTranscriptionProvider } from './providers/transcription.js'
 import { createLLMProvider } from './providers/llm.js'
 
-const BUCKET = 'meeting-intelligence'
+export const BUCKET = 'meeting-intelligence'
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000
 const STUCK_THRESHOLD_MS = 10 * 60 * 1000
 const MAX_ATTEMPTS = 5

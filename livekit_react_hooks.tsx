@@ -30,7 +30,7 @@ export const supabase = createClient(
 
 // In packaged Electron (file: origin) there is no Vite proxy — hit :3001 directly.
 // In dev Electron the renderer is served by Vite (http: origin), so use the proxy.
-const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+export const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
   ? 'http://localhost:3001'
   : ''
 

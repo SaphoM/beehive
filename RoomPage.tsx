@@ -91,6 +91,7 @@ import {
   useAuth,
   useProfile,
   supabase,
+  API_BASE,
 } from './livekit_react_hooks'
 
 import { Lobby } from './components/Lobby'
@@ -657,6 +658,18 @@ export default function RoomPage() {
             <button
               onClick={() => {
                 setNotetakerPrompt(false)
+                // Adding the AI note-taker also turns on the room's recording,
+                // so the meeting exists afterwards ("recordings after the
+                // meeting ends"). Best-effort and non-fatal: the note-taker
+                // presence works regardless of whether the recording toggle
+                // succeeds or whether egress is even configured yet on this
+                // deployment — the backend logs/records any failure and the
+                // Meeting Notes panel surfaces its status.
+                fetch(`${API_BASE}/api/rooms/${activeRoomId}/intelligence-settings`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ recordingEnabled: true, aiNotesEnabled: true, actingDisplayName: displayName }),
+                }).catch(() => {})
                 // Electron: open the note-taker's hidden BrowserWindow
                 // (intercepted by setWindowOpenHandler in main.cjs) against
                 // the production WEB_BASE.
@@ -723,7 +736,7 @@ export default function RoomPage() {
           >
             <Avatar name="Fathom Notetaker" size={20} />
             <span style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>Fathom Notetaker</span>
-            <span style={{ color: '#48bb78', fontSize: 12 }}>● listening in the background</span>
+            <span style={{ color: '#48bb78', fontSize: 12 }}>● recording &amp; notetaking in the background</span>
           </div>
         </>
       )}

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { randomUUID, randomBytes } from 'crypto'
-import { createMeetingIntelligence } from './meetingIntelligence.js'
+import { createMeetingIntelligence, BUCKET } from './meetingIntelligence.js'
 import { buildIcs, icsFilenameFor } from './shared/icsBuilder.js'
 import { isScheduledMeetingExpired, SERVER_TZ_SLACK_MS } from './shared/meetingExpiry.js'
 import { isNotetakerName } from './shared/notetakers.js'
@@ -133,6 +133,55 @@ const egressClient = new EgressClient(
 const webhookReceiver = new WebhookReceiver(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET)
 
 const meetingIntelligence = createMeetingIntelligence({ supabase, egressClient })
+
+// ------------------------------------------------------------
+// ensureMeetingEgress — idempotent "start a recording for this room".
+// Shared by the room_started webhook branch AND the
+// /intelligence-settings endpoint, so whether recording is switched on
+// before the room starts (Schedule toggle → room_started) or mid-meeting
+// ("Add Fathom" after the host already joined → settings call), exactly
+// one egress gets started, never two. No active job → insert one and start
+// egress; already-recording → no-op; egress rejected → job marked failed
+// so the Meeting Notes UI shows the failure instead of a silent zombie.
+// ------------------------------------------------------------
+async function ensureMeetingEgress(roomRowId, livekitRoomName) {
+  const { data: existing } = await supabase
+    .from('meeting_intelligence_jobs')
+    .select('id')
+    .eq('room_id', roomRowId)
+    .eq('status', 'recording')
+    .maybeSingle()
+  if (existing) {
+    console.log('[intelligence] room already recording — skipping duplicate egress:', roomRowId)
+    return { skipped: true }
+  }
+
+  const { data: job, error: insertError } = await supabase
+    .from('meeting_intelligence_jobs')
+    .insert({ room_id: roomRowId, status: 'recording' })
+    .select('id')
+    .single()
+  if (insertError || !job) {
+    console.error('[intelligence] failed to create job row for opted-in room:', roomRowId, insertError?.message)
+    return { error: insertError }
+  }
+
+  try {
+    const { egressId, storagePath } = await meetingIntelligence.startMeetingEgress(roomRowId, livekitRoomName, job.id)
+    const { error: updateError } = await supabase.from('meeting_intelligence_jobs')
+      .update({ egress_id: egressId, audio_storage_path: storagePath })
+      .eq('id', job.id)
+    if (updateError) console.error('[intelligence] failed to record egress_id on job:', job.id, updateError.message)
+    return { egressId }
+  } catch (egressError) {
+    console.error('[intelligence] startMeetingEgress failed, marking job failed:', job.id, egressError?.message)
+    const { error: failError } = await supabase.from('meeting_intelligence_jobs')
+      .update({ status: 'failed', attempts: 1, last_error: String(egressError?.message ?? egressError).slice(0, 2000), updated_at: new Date().toISOString() })
+      .eq('id', job.id)
+    if (failError) console.error('[intelligence] additionally failed to record the failure itself:', job.id, failError.message)
+    return { error: egressError }
+  }
+}
 
 // ============================================================
 // SCHEDULE A ROOM (waiting-room-gated — Schedule tab only)
@@ -894,56 +943,7 @@ app.post('/api/livekit/webhook', async (req, res) => {
       if (roomRow) {
         const { data: settings } = await supabase.from('room_intelligence_settings').select('recording_enabled').eq('room_id', roomRow.id).single()
         if (settings?.recording_enabled) {
-          // Idempotency guard: LiveKit's webhook delivery is at-least-once
-          // (it retries), so room_started can genuinely arrive more than
-          // once for the same room going live. Without this check, each
-          // delivery would insert its own job row and start its own real,
-          // billable LiveKit Egress recording — two simultaneous egresses
-          // for one meeting, and room_finished's stop-egress lookup below
-          // only expects one active job per room. One meeting must produce
-          // exactly one recording; a second delivery while one is already
-          // active is a no-op, not a second job.
-          const { data: existing } = await supabase.from('meeting_intelligence_jobs')
-            .select('id')
-            .eq('room_id', roomRow.id)
-            .eq('status', 'recording')
-            .maybeSingle()
-          if (existing) {
-            console.log('[intelligence] room_started received again while a job is already recording — skipping duplicate egress:', roomRow.id)
-          } else {
-            const { data: job, error: insertError } = await supabase.from('meeting_intelligence_jobs')
-              .insert({ room_id: roomRow.id, status: 'recording' })
-              .select('id')
-              .single()
-            if (insertError || !job) {
-              console.error('[intelligence] failed to create job row for opted-in room:', roomRow.id, insertError?.message)
-            } else {
-              // Own try/catch, distinct from the outer one: if the egress
-              // call itself fails (LiveKit rejects the request, network
-              // error, etc.), the job row already exists at this point —
-              // without this, the failure would only be console-logged by
-              // the outer catch below, leaving the job permanently stuck at
-              // 'recording' forever. 'recording' is deliberately excluded
-              // from the sweep's retry set (a long meeting legitimately
-              // sits there for a while), so a job that never actually got a
-              // real egress would otherwise never transition anywhere —
-              // not retried, not marked failed, just a silent zombie the
-              // Meeting Notes UI would show as "Recording…" indefinitely.
-              try {
-                const { egressId, storagePath } = await meetingIntelligence.startMeetingEgress(roomRow.id, event.room.name, job.id)
-                const { error: updateError } = await supabase.from('meeting_intelligence_jobs')
-                  .update({ egress_id: egressId, audio_storage_path: storagePath })
-                  .eq('id', job.id)
-                if (updateError) console.error('[intelligence] failed to record egress_id on job:', job.id, updateError.message)
-              } catch (egressError) {
-                console.error('[intelligence] startMeetingEgress failed, marking job failed:', job.id, egressError?.message)
-                const { error: failError } = await supabase.from('meeting_intelligence_jobs')
-                  .update({ status: 'failed', attempts: 1, last_error: String(egressError?.message ?? egressError).slice(0, 2000), updated_at: new Date().toISOString() })
-                  .eq('id', job.id)
-                if (failError) console.error('[intelligence] additionally failed to record the failure itself:', job.id, failError.message)
-              }
-            }
-          }
+          await ensureMeetingEgress(roomRow.id, event.room.name)
         }
       }
     } catch (e) {
@@ -1085,6 +1085,28 @@ app.post('/api/livekit/webhook', async (req, res) => {
         if (updateError || !updated) {
           console.error('[intelligence] failed to mark job egress_done, job will never be dispatched for processing:', job.id, updateError?.message)
         } else {
+          // Surface this recording in the in-room Recordings list
+          // (useRecordings → RoomPage). The table's only other feed — the
+          // pre-existing egress_ended branch above — reads egressInfo.file,
+          // a deprecated field absent from every real payload, so that
+          // branch has never actually written a row: the recordings section
+          // has been dead since the day it was wired. This inserts from the
+          // same correct fileResults[0] entry this branch already trusts.
+          // file_url is the Supabase *public* object URL (built from env) so
+          // the link the UI opens actually plays when the bucket is public —
+          // LiveKit's own file.location points at the S3 API endpoint, which
+          // requires credentials and 403s from a plain browser tab.
+          const sbBase = String(process.env.SUPABASE_URL || '').replace(/\/+$/, '')
+          const publicUrl = sbBase ? `${sbBase}/storage/v1/object/public/${BUCKET}/${file.filename}` : file.location
+          await supabase.from('recordings').insert({
+            room_id: updated.room_id,
+            file_url: publicUrl,
+            storage_path: file.filename,
+            file_size_bytes: Number(file.size ?? 0),
+            duration_seconds: file.duration,
+            status: 'ready',
+            completed_at: new Date().toISOString(),
+          })
           setImmediate(() => meetingIntelligence.runJob(updated.id).catch(e => console.error('[intelligence] job failed:', updated.id, e?.message)))
         }
       }
@@ -1351,6 +1373,32 @@ app.post('/api/rooms/:roomId/intelligence-settings', async (req, res) => {
   if (error) {
     console.error('[intelligence] settings upsert failed:', error.message)
     return res.status(500).json({ error: 'Failed to update recording settings' })
+  }
+
+  // Recording switched ON for a room that is ALREADY live (the "Add Fathom"
+  // flow — the host clicks it after joining, so room_started has long since
+  // fired). room_started won't come again for this room, so start the egress
+  // right here instead. Gated on the room actually existing in LiveKit
+  // (roomService.listRooms) so a settings toggle alone, with no meeting
+  // going on, never starts a billable egress against thin air. Best-effort:
+  // any failure here is logged-only and must never fail the settings write
+  // the caller already succeeded at.
+  if (recordingEnabled) {
+    try {
+      const { data: roomRow } = await supabase
+        .from('rooms')
+        .select('id, livekit_room_name')
+        .eq('id', roomId)
+        .maybeSingle()
+      if (roomRow?.livekit_room_name) {
+        const liveRooms = await roomService.listRooms([roomRow.livekit_room_name])
+        if (Array.isArray(liveRooms) && liveRooms.length > 0) {
+          await ensureMeetingEgress(roomRow.id, roomRow.livekit_room_name)
+        }
+      }
+    } catch (e) {
+      console.error('[intelligence] settings-triggered egress start failed:', roomId, e?.message)
+    }
   }
 
   return res.json({ ok: true })

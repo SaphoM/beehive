@@ -287,6 +287,11 @@ const ANIM = `
 }`
 
 const card: React.CSSProperties = {
+  // The lobby is a full-viewport `-webkit-app-region: drag` region (frameless
+  // window). Without an explicit no-drag opt-out here, Electron treats every
+  // real click on this card as a window-drag gesture and it never reaches the
+  // buttons' onClick — see roomStyles.ts lobbyCard for the same pattern.
+  WebkitAppRegion: 'no-drag' as any,
   position: 'fixed',
   bottom: 24,
   right: 24,
@@ -305,6 +310,7 @@ const card: React.CSSProperties = {
 }
 
 const chip: React.CSSProperties = {
+  WebkitAppRegion: 'no-drag' as any, // same drag-region swallow as `card`
   position: 'fixed',
   bottom: 80,
   right: 24,

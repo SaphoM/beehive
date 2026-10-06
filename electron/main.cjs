@@ -102,6 +102,23 @@ async function createWindow() {
   // Allow window.open() (used by the "Pop out" presentation viewer) to spawn a
   // real native child window instead of being blocked by Electron's default deny
   mainWindow.webContents.setWindowOpenHandler(({ frameName, url }) => {
+    if (frameName === 'beehive-notetaker') {
+      // The AI note-taker ("Fathom Notetaker") joins via the web app but the
+      // user must never see its window — it runs in the background. Hidden
+      // from the start (show:false) instead of opened then minimized, so
+      // there's no flash, no dock badge, no focus steal; background
+      // throttling off so its timers/subscriptions stay alive while hidden.
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1280,
+          height: 800,
+          show: false,
+          skipTaskbar: true,
+          webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+        },
+      }
+    }
     if (frameName === 'beehive-popout') {
       return {
         action: 'allow',

@@ -8,6 +8,7 @@
 // stale initials while another shows the real photo.
 
 import { useState, useRef, useEffect } from 'react'
+import { isNotetakerName } from '../shared/notetakers.js'
 import { Camera } from 'lucide-react'
 import { supabase } from '../livekit_react_hooks'
 
@@ -24,6 +25,9 @@ import { supabase } from '../livekit_react_hooks'
 export function getInitials(name: string | null | undefined): string {
   const trimmed = (name ?? '').normalize('NFC').trim()
   if (!trimmed) return '?'
+  // AI note-taker bots always render as NT rather than e.g. FN — one badge
+  // in the roster makes every bot variant recognisable at a glance.
+  if (isNotetakerName(trimmed)) return 'NT'
   const cleaned = trimmed.replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim()
   if (!cleaned) return '?'
   const words = cleaned.split(' ').filter(Boolean)

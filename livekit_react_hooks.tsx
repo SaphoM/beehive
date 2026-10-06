@@ -18,6 +18,12 @@ export const supabase = createClient(
       detectSessionInUrl: true,
       persistSession: true,
       autoRefreshToken: true,
+      // Desktop stays logged in across launches (localStorage); the web
+      // build uses sessionStorage so closing the tab logs the user out —
+      // required on shared/public machines, not just a preference.
+      storage: (typeof window !== 'undefined' && (window as any).electronAPI)
+        ? window.localStorage
+        : window.sessionStorage,
     },
   }
 )

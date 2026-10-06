@@ -940,12 +940,19 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   const [openDms, setOpenDms] = useState<Set<string>>(new Set())
   const [expandedDms, setExpandedDms] = useState<Set<string>>(new Set())
   const [dmInputs, setDmInputs] = useState<Record<string, string>>({})
-  const [dmUnread, setDmUnread] = useState<Set<string>>(new Set())
+  // Unread annotations — stored as message-id sets (not plain counts), so the
+  // same realtime event delivered twice can never double-count. Group unread
+  // is one set; DMs are keyed per peer. Counts are derived at render time.
+  const [allUnreadIds, setAllUnreadIds] = useState<Set<string>>(new Set())
+  const [dmUnreadIds, setDmUnreadIds] = useState<Record<string, Set<string>>>({})
+  // Every chat_messages row id already evaluated for read/unread, so each
+  // incoming message is classified exactly once regardless of re-renders.
+  const processedMsgIdsRef = useRef<Set<string>>(new Set())
 
   const openDm = (name: string) => {
     setOpenDms(prev => new Set([...prev, name]))
     setExpandedDms(prev => new Set([...prev, name]))
-    setDmUnread(prev => { const n = new Set(prev); n.delete(name); return n })
+    setDmUnreadIds(prev => { const n = { ...prev }; delete n[name]; return n })
   }
   const closeDm = (name: string) => {
     setOpenDms(prev => { const n = new Set(prev); n.delete(name); return n })
@@ -954,7 +961,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   const toggleDm = (name: string) => {
     setExpandedDms(prev => {
       const n = new Set(prev)
-      if (n.has(name)) { n.delete(name) } else { n.add(name); setDmUnread(u => { const nu = new Set(u); nu.delete(name); return nu }) }
+      if (n.has(name)) { n.delete(name) } else { n.add(name); setDmUnreadIds(u => { const nu = { ...u }; delete nu[name]; return nu }) }
       return n
     })
   }
@@ -2340,20 +2347,56 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     return () => window.removeEventListener('keydown', onKey)
   }, [canControlSlides, controlSlides])
 
+  // Classify each incoming chat message exactly once (processedMsgIdsRef) as
+  // read or unread:
+  //   • own messages never create unread for me
+  //   • system annotations (__JOIN__/__LEAVE__) are not notifications
+  //   • group message + chat panel open → counts as read (already visible)
+  //   • group message + closed → All unread
+  //   • DM to me + that conversation expanded → counts as read
+  //   • DM to me + not expanded → unread under that peer
+  // Idempotent: keyed by message id, so duplicate realtime deliveries or a
+  // re-stitched initial fetch can never bump a counter twice.
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    // Mark incoming DMs as unread when the card isn't expanded
-    const last = messages[messages.length - 1]
-    if (!last?.message.startsWith('__DM__')) return
-    try {
-      const { from, to } = JSON.parse(last.message.slice(6))
-      const peer = from === displayName ? to : from
-      if (from !== displayName && (to === displayName)) {
-        setDmUnread(prev => expandedDms.has(peer) ? prev : new Set([...prev, peer]))
-        setOpenDms(prev => new Set([...prev, peer]))
+    for (const m of messages) {
+      if (processedMsgIdsRef.current.has(m.id)) continue
+      processedMsgIdsRef.current.add(m.id)
+      if (m.display_name === displayName || m.display_name === '__SYSTEM__') continue
+      if (m.message.startsWith('__JOIN__') || m.message.startsWith('__LEAVE__')) continue
+      if (m.message.startsWith('__DM__')) {
+        try {
+          const { from, to } = JSON.parse(m.message.slice(6))
+          if (from === displayName || to !== displayName) continue
+          const peer = from
+          if (expandedDms.has(peer) && showChat) continue // visibly active → read
+          setDmUnreadIds(prev => ({ ...prev, [peer]: new Set([...(prev[peer] ?? []), m.id]) }))
+          setOpenDms(prev => new Set([...prev, peer]))
+        } catch { /* ignore malformed */ }
+        continue
       }
-    } catch { /* ignore malformed */ }
-  }, [messages])
+      // Group message (incl. __FILE__ shares to the room)
+      if (showChat) continue // panel is open and showing it → read immediately
+      setAllUnreadIds(prev => new Set([...prev, m.id]))
+    }
+  }, [messages, showChat, expandedDms, displayName])
+
+  // Opening the group panel means every current group message has been seen —
+  // clear the All unread set. (DM sets are cleared per-conversation in
+  // openDm/toggleDm, so opening chat alone never wipes a DM's unread state.)
+  useEffect(() => {
+    if (showChat) setAllUnreadIds(prev => (prev.size === 0 ? prev : new Set()))
+  }, [showChat])
+
+  // Meeting isolation — switching room wipes per-meeting unread state AND the
+  // processed-id baseline, so an old meeting's badge never leaks and the new
+  // room's refetched history is never miscounted (each row is re-evaluated,
+  // but there is nothing to mark: no messages are unread until someone sends).
+  useEffect(() => {
+    setAllUnreadIds(new Set())
+    setDmUnreadIds({})
+    processedMsgIdsRef.current = new Set()
+  }, [roomId])
 
   const handleSend = async () => {
     if (!chatInput.trim()) return
@@ -2865,7 +2908,9 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
         micOn: localParticipant.isMicrophoneEnabled,
         camOn: localParticipant.isCameraEnabled,
         handRaised: myHandRaised,
-        chatUnread: dmUnread.size,
+        // Total unread across group + every DM — drives the chat button badge
+        // and the floating desktop dock's chat badge (electron/dock.html).
+        chatUnread: allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0),
         participantCount: activeCount,
         speakingName,
         connectionQuality,
@@ -2881,7 +2926,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     push()
     const t = setInterval(push, 1000)
     return () => clearInterval(t)
-  }, [showingDock, localParticipant, myHandRaised, dmUnread, activeCount, speakingName, connectionQuality, shareLabel, sharingEntireScreen, shareElapsedDisplay, elapsedDisplay, canControlSlides, raisedHands])
+  }, [showingDock, localParticipant, myHandRaised, allUnreadIds, dmUnreadIds, activeCount, speakingName, connectionQuality, shareLabel, sharingEntireScreen, shareElapsedDisplay, elapsedDisplay, canControlSlides, raisedHands])
 
   // Actions dispatched from the dock — relayed here since only this renderer
   // holds the live LiveKit Room connection. Re-subscribes whenever any handler
@@ -2954,8 +2999,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
             </button>
           )}
           {!isMobile && (
-            <button style={s.iconBtn} onClick={() => setShowChat(v => !v)} title="Toggle chat">
+            <button style={{ ...s.iconBtn, position: 'relative' }} onClick={() => setShowChat(v => !v)} title="Toggle chat"
+              aria-label={`Messages, ${allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)} unread`}>
               <MessageSquare size={18} />
+              {(allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)) > 0 && (
+                <span style={{ position: 'absolute', top: -4, right: -4, minWidth: 14, height: 14, borderRadius: 7, background: '#ed4c5c', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', pointerEvents: 'none', zIndex: 1 }}>
+                  {(allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)) > 9 ? '9+' : allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)}
+                </span>
+              )}
             </button>
           )}
           <button
@@ -3587,11 +3638,17 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                       </button>
                       {/* Chat */}
                       <button
-                        style={{ ...mb, ...(showChat ? { background: '#1a1a4a', border: '1px solid #5b5ef4' } : {}) }}
+                        style={{ ...mb, position: 'relative', ...(showChat ? { background: '#1a1a4a', border: '1px solid #5b5ef4' } : {}) }}
                         onClick={() => setShowChat(v => !v)}
                         title="Chat"
+                        aria-label={`Messages, ${allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)} unread`}
                       >
                         <MessageSquare size={isSmallPhone ? 16 : 18} />
+                        {(allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)) > 0 && (
+                          <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 15, height: 15, borderRadius: 8, background: '#ed4c5c', border: '1px solid #0a0a0a', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', pointerEvents: 'none', zIndex: 1 }}>
+                            {(allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)) > 9 ? '9+' : allUnreadIds.size + Object.values(dmUnreadIds).reduce((n, s) => n + s.size, 0)}
+                          </span>
+                        )}
                       </button>
                       {/* Leave */}
                       <button style={{ ...mb, background: '#c53030' }} onClick={leaveWithNotification} title="Leave">
@@ -3896,7 +3953,6 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                 <div style={{ borderBottom: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column', gap: 0 }}>
                   {[...openDms].map(peer => {
                     const isExpanded = expandedDms.has(peer)
-                    const hasUnread = dmUnread.has(peer)
                     const color = dmColor(peer)
                     const thread = messages.filter(m => {
                       if (!m.message.startsWith('__DM__')) return false
@@ -3921,7 +3977,14 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               <span style={{ color: '#ddd', fontSize: 12, fontWeight: 600, fontFamily: "'Roboto', sans-serif" }}>{peer}</span>
-                              {hasUnread && <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />}
+                               {(dmUnreadIds[peer]?.size ?? 0) > 0 && (
+                                <span
+                                  aria-label={`${dmUnreadIds[peer]!.size} unread messages`}
+                                  style={{ minWidth: 16, height: 16, borderRadius: 8, background: '#ed4c5c', color: '#fff', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', fontFamily: "'Roboto', sans-serif" }}
+                                >
+                                  {dmUnreadIds[peer]!.size > 9 ? '9+' : dmUnreadIds[peer]!.size}
+                                </span>
+                              )}
                             </div>
                             {!isExpanded && lastPreview && (
                               <span style={{ color: '#555', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, display: 'block' }}>{lastPreview}</span>

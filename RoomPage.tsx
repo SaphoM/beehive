@@ -649,7 +649,20 @@ export default function RoomPage() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
-              onClick={() => { setNotetakerPrompt(false); notetakerWindowRef.current = window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker') }}
+              onClick={() => {
+                setNotetakerPrompt(false)
+                // Open the note-taker tab WITHOUT stealing focus from the main
+                // meeting tab: a plain window.open() brings the new tab to the
+                // front in Chromium-based browsers, yanking the user out of
+                // the call. Blurring the new window + refocusing the opener
+                // (both legal because we're still inside the click's user
+                // gesture) keeps the meeting as the focal point while the
+                // note-taker tab runs quietly in the background.
+                const nt = window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker')
+                if (nt) { try { nt.blur() } catch { /* noop */ } }
+                notetakerWindowRef.current = nt
+                window.focus()
+              }}
               style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, padding: '9px 0', cursor: 'pointer' }}
             >
               Yes, add Fathom

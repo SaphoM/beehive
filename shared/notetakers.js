@@ -38,6 +38,10 @@ const PRODUCT_WITH_SUFFIX = new RegExp(
   'i',
 )
 const GENERIC = /\b(?:ai|meeting)[\s-]?(?:note[\s-]?taker|notetaker|notes|assistant|recorder|scribe)\b/i
+// Bots self-labeling just "Note Taker" / "NoteTaker" (seen in real room
+// rosters), with no product word and no ai/meeting prefix. A bare note-taker
+// self-name is bot enough — a human's name alone never reads that way.
+const BARE_NOTETAKER = /\bnote[\s-]?taker\b/i
 
 /**
  * True if a joiner's display name identifies it as an AI note-taker bot.
@@ -46,5 +50,5 @@ const GENERIC = /\b(?:ai|meeting)[\s-]?(?:note[\s-]?taker|notetaker|notes|assist
 export function isNotetakerName(displayName) {
   const n = String(displayName ?? '').trim()
   if (!n) return false
-  return PRODUCT_WITH_SUFFIX.test(n) || GENERIC.test(n)
+  return PRODUCT_WITH_SUFFIX.test(n) || GENERIC.test(n) || BARE_NOTETAKER.test(n)
 }

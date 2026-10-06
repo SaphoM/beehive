@@ -108,6 +108,7 @@ import { FullscreenHud } from './components/FullscreenHud'
 import { Toast } from './components/Toast'
 import { Avatar } from './components/Avatar'
 import { NotetakerScreen } from './components/NotetakerScreen'
+import { isNotetakerName } from './shared/notetakers.js'
 import { CameraOffAvatarOverlay } from './components/CameraOffAvatarOverlay'
 import { DEVICE_CHECK_CACHE_KEY } from './components/useDeviceReadiness'
 import { RoomAudioCoordination } from './components/RoomAudioCoordination'
@@ -870,7 +871,10 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
   // Keyed by display name, matching how every other per-participant lookup
   // in this file already works (the LiveKit identity is a random per-
   // connection UUID; the name is what's stable and human-meaningful).
-  const avatarUrlFor = (name: string) => liveKitParticipants.find(p => p.name === name)?.attributes?.avatar_url ?? null
+  // AI note-takers never show a human avatar — always the NT badge — even
+  // if a stale/malformed attribute ever leaked through the token endpoint.
+  const avatarUrlFor = (name: string) =>
+    isNotetakerName(name) ? null : (liveKitParticipants.find(p => p.name === name)?.attributes?.avatar_url ?? null)
   const canAdmit = myRole === 'host' || myRole === 'co-host'
 
   // Audience mode: whether I may publish at all. LiveKit enforces this at

@@ -236,6 +236,14 @@ app.post('/api/livekit/token', async (req, res) => {
   // only for older clients that don't send one.
   const participantIdentity = identity || displayName
 
+  // AI note-taker joins (e.g. a web tab opened with ?notetaker=fathom) inherit
+  // the opener's auth session (window.open copies sessionStorage), so the
+  // token endpoint could otherwise impersonate the signed-in user: it would
+  // grant host privileges via the scheduler fallback AND stamp the USER's
+  // avatar_url onto the bot's participant attributes, making the roster show
+  // the host's face instead of the NT badge. Bots get no avatar, ever.
+  const nameIsNotetaker = isNotetakerName(displayName)
+
   // Resolve the signed-in user once (if any). Used below for the organiser
   // host-fallback check AND for the avatar attribute — one Supabase auth
   // round-trip per join, not two. Anonymous joins simply have no user.
@@ -298,7 +306,7 @@ app.post('/api/livekit/token', async (req, res) => {
     // waiting-room panel stays clean). Recorded as a plain participant so
     // it shows in the roster like any attendee. Instant rooms never reach
     // this branch — they have no waiting room to skip.
-    const isNotetaker = !isHost && room.allow_notetakers && isNotetakerName(displayName)
+    const isNotetaker = !isHost && room.allow_notetakers && nameIsNotetaker
 
     if (isHost) {
       role = 'host'
@@ -406,7 +414,7 @@ app.post('/api/livekit/token', async (req, res) => {
   })
 
   let avatarUrl = null
-  if (authUser) {
+  if (authUser && !nameIsNotetaker) {
     const { data: profile } = await supabase.from('profiles').select('avatar_url').eq('id', authUser.id).maybeSingle()
     avatarUrl = profile?.avatar_url ?? null
   }

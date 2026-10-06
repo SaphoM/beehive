@@ -1463,6 +1463,217 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
     cursorChannelRef.current.send({ type: 'broadcast', event: 'cursor-off', payload: { name: displayName } })
   }, [laserActive, displayName])
 
+  // Remote control — control channel (reliable) + pointer channel (lossy).
+  // State machine: IDLE -> REQUESTED -> APPROVED -> ACTIVE -> REVOKED/IDLE.
+  // Only the sharer (isSharing) accepts requests. One active controller at
+  // a time. Pointer only during ACTIVE. Clicks only for the active controller.
+  const [controlPhase, setControlPhase] = useState<'idle' | 'requesting' | 'active' | 'denied' | 'busy'>('idle')
+  const [activeController, setActiveController] = useState<null | { name: string; sessionId: string }>(null)
+  const [incomingRequest, setIncomingRequest] = useState<null | { name: string; sessionId: string }>(null)
+  const mySessionIdRef = useRef<string | null>(null)
+  const sessionLastActivityRef = useRef(0)
+  const activeControllerSessionIdRef = React.useRef<string | null>(null)
+  const currentControlPhaseRef = React.useRef(controlPhase)
+  currentControlPhaseRef.current = controlPhase
+  const controlChannelRef = useRef(null as any)
+  // keep a ref mirror so the reliable handler below can validate senders
+  // against the active controller without restarting between renders.
+  const activeControllerRef = React.useRef(activeController)
+  activeControllerRef.current = activeController
+
+  useDataChannel('control', msg => {
+    const m = decodeSignal(msg.payload); if (!m) return
+    if (m.event === 'request') {
+      // only the sharer can accept
+      if (!isSharing) return
+      const active = activeControllerRef.current
+      if (active) {
+        controlChannelRef.current?.send({ event: 'busy', payload: { to: m.payload.name, sessionId: m.payload.sessionId } })
+        return
+      }
+      setIncomingRequest({ name: m.payload.name, sessionId: m.payload.sessionId })
+      return
+    }
+    if (m.event === 'allow') {
+      if (mySessionIdRef.current && m.payload.sessionId === mySessionIdRef.current) {
+        setControlPhase('active')
+      }
+      return
+    }
+    if (m.event === 'deny') {
+      if (mySessionIdRef.current && m.payload.sessionId === mySessionIdRef.current) {
+        setControlPhase('denied')
+        mySessionIdRef.current = null
+        sentRequestRef.current = false
+      }
+      return
+    }
+    if (m.event === 'revoke') {
+      if (activeControllerRef.current && m.payload.sessionId === activeControllerRef.current.sessionId) {
+        setActiveController(null)
+        activeControllerSessionIdRef.current = null
+      }
+      if (mySessionIdRef.current && m.payload.sessionId === mySessionIdRef.current) {
+        setControlPhase('idle')
+        mySessionIdRef.current = null
+        sentRequestRef.current = false
+      }
+      return
+    }
+    if (m.event === 'busy') {
+      if (mySessionIdRef.current && m.payload.sessionId === mySessionIdRef.current) {
+        setControlPhase('busy')
+        mySessionIdRef.current = null
+        sentRequestRef.current = false
+      }
+      return
+    }
+    if (m.event === 'release') {
+      if (activeControllerRef.current && m.payload.sessionId === activeControllerRef.current.sessionId) {
+        setActiveController(null)
+        activeControllerSessionIdRef.current = null
+      }
+      if (mySessionIdRef.current && m.payload.sessionId === mySessionIdRef.current) {
+        setControlPhase('idle')
+        mySessionIdRef.current = null
+        sentRequestRef.current = false
+      }
+      return
+    }
+    if (m.event === 'click') {
+      const active = activeControllerRef.current
+      if (!active || active.sessionId !== m.payload.sessionId || active.name !== m.payload.name) return
+      sessionLastActivityRef.current = Date.now()
+      const el = mainAreaRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const x = rect.left + Math.max(0, Math.min(1, m.payload.x)) * rect.width
+      const y = rect.top + Math.max(0, Math.min(1, m.payload.y)) * rect.height
+      const target = document.elementFromPoint(x, y) as HTMLElement | null
+      try { target?.click() } catch { /* target can't receive synthetic clicks */ }
+      return
+    }
+  })
+  controlChannelRef.current = signalSender('control', room, true, signalsReady)
+  const controlPointerChannelRef = useRef(null as any)
+  controlPointerChannelRef.current = signalSender('control-pointer', room, false, signalsReady)
+
+  const CONTROL_POINTER_THROTTLE = 33 // ~30fps
+  const controlPointerRef = useRef(0)
+  // Lossy pointer events over the 'control-pointer' topic; the 'cursors'
+  // topic carries the unrelated laser-pointer feature. Remote-control
+  // pointers show as red via the same overlay so the sharer sees both.
+  useDataChannel('control-pointer', msg => {
+    const m = decodeSignal(msg.payload); if (!m) return
+    if (m.event !== 'pointer') return
+    const active = activeControllerRef.current
+    if (!active || active.name !== m.payload.name) return
+    sessionLastActivityRef.current = Date.now()
+    setRemoteCursors(prev => {
+      const next = new Map(prev)
+      next.set(m.payload.name, { x: m.payload.x, y: m.payload.y, color: '#e05252' })
+      return next
+    })
+  })
+
+  const handleMainAreaRemoteMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (controlPhase !== 'active') return
+    const now = Date.now()
+    if (now - controlPointerRef.current < CONTROL_POINTER_THROTTLE) return
+    controlPointerRef.current = now
+    const rect = mainAreaRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    // lossy pointer events travel on the 'control-pointer' topic
+    try { controlPointerChannelRef.current?.send({ type: 'broadcast', event: 'pointer', payload: { name: displayName, x, y } }) } catch {}
+  }, [controlPhase, displayName])
+
+  const sendControlClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (controlPhase !== 'active' || !mySessionIdRef.current) return
+    const rect = mainAreaRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    controlChannelRef.current?.send({ event: 'click', payload: { name: displayName, sessionId: mySessionIdRef.current, x, y, button: 'left' } })
+  }, [controlPhase, displayName, room])
+
+  const sendRelease = useCallback(() => {
+    if (mySessionIdRef.current) {
+      controlChannelRef.current?.send({ event: 'release', payload: { name: displayName, sessionId: mySessionIdRef.current } })
+    }
+    mySessionIdRef.current = null
+    setControlPhase('idle')
+    sentRequestRef.current = false
+  }, [displayName])
+
+  const requestControl = useCallback(() => {
+    if (controlPhase !== 'idle') return
+    const sid = crypto.randomUUID()
+    mySessionIdRef.current = sid
+    sentRequestRef.current = true
+    setControlPhase('requesting')
+    controlChannelRef.current?.send({ event: 'request', payload: { name: displayName, sessionId: sid } })
+  }, [controlPhase, displayName])
+
+  const sharerApprove = useCallback(() => {
+    if (!incomingRequest) return
+    controlChannelRef.current?.send({ event: 'allow', payload: { sessionId: incomingRequest.sessionId, name: incomingRequest.name } })
+    setActiveController({ name: incomingRequest.name, sessionId: incomingRequest.sessionId })
+    activeControllerSessionIdRef.current = incomingRequest.sessionId
+    sessionLastActivityRef.current = Date.now()
+    setIncomingRequest(null)
+  }, [incomingRequest])
+
+  const sharerDeny = useCallback(() => {
+    if (!incomingRequest) return
+    controlChannelRef.current?.send({ event: 'deny', payload: { sessionId: incomingRequest.sessionId, name: incomingRequest.name } })
+    setIncomingRequest(null)
+  }, [incomingRequest])
+
+  const sharerRevoke = useCallback(() => {
+    if (!activeControllerRef.current) return
+    controlChannelRef.current?.send({ event: 'revoke', payload: { sessionId: activeControllerRef.current.sessionId, name: activeControllerRef.current.name } })
+    setActiveController(null)
+    activeControllerSessionIdRef.current = null
+  }, [])
+
+  // Safety timeout for ghosted sessions and cleanup on disconnect/share-stop.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (!activeControllerRef.current) return
+      if (Date.now() - (sessionLastActivityRef.current || 0) > 10_000) {
+        controlChannelRef.current?.send({ event: 'revoke', payload: { sessionId: activeControllerRef.current.sessionId, name: activeControllerRef.current.name, reason: 'timeout' } })
+        setActiveController(null)
+        activeControllerSessionIdRef.current = null
+      }
+    }, 2000)
+    return () => clearInterval(iv)
+  }, [])
+
+  const sentRequestRef = React.useRef(false)
+  // clear request tally on unmount
+  useEffect(() => () => {
+    mySessionIdRef.current = null
+    sentRequestRef.current = false
+  }, [])
+
+  // Laser pointer ref — now also used as the remote-control pointer channel
+  useEffect(() => {
+    // no-op: controlPointerRef is the send-gate for lossy pointer sends
+  }, [])
+
+  const handleLaserOuterClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Share taps to remote controller clicks during ACTIVE
+    if (controlPhase === 'active') { sendControlClick(e); return }
+  }, [controlPhase, sendControlClick])
+
+  // Laser toggle refused while control active
+  const setLaserActiveSafe = (v: boolean) => {
+    if (controlPhase === 'active' && v) return
+    setLaserActive(v)
+  }
+
   // Tell others to drop my cursor when the laser is switched OFF — on the
   // transition only. This used to fire on mount too (laserActive starts
   // false), which was a no-op over Supabase but, over the data channel,
@@ -3216,9 +3427,56 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
             background: '#060606',
             cursor: laserActive ? 'crosshair' : undefined,
           }}
-          onMouseMove={handleMainAreaMouseMove}
+          onMouseMove={(e) => { handleMainAreaMouseMove(e); handleMainAreaRemoteMouseMove(e) }}
           onMouseLeave={handleMainAreaMouseLeave}
+          onClick={(e) => { if (controlPhase === 'active') sendControlClick(e) }}
         >
+          {/* Remote control UI — viewer (not sharer) sees this when they
+              have someone else's screen in the main area */}
+          {hasRemoteScreenShare && !isSharing && controlPhase === 'idle' && (
+            <button
+              onClick={requestControl}
+              style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #444', color: '#ddd', borderRadius: 8, fontSize: 12, padding: '7px 12px', cursor: 'pointer', backdropFilter: 'blur(6px)' }}
+            >Request Control</button>
+          )}
+          {hasRemoteScreenShare && !isSharing && controlPhase === 'requesting' && (
+            <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #f5a623', color: '#f5a623', borderRadius: 8, fontSize: 12, padding: '7px 12px', backdropFilter: 'blur(6px)' }}>
+              Requesting control…
+            </div>
+          )}
+          {hasRemoteScreenShare && !isSharing && controlPhase === 'denied' && (
+            <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #c53030', color: '#c53030', borderRadius: 8, fontSize: 12, padding: '7px 12px', backdropFilter: 'blur(6px)' }}>
+              Request denied — <button onClick={() => setControlPhase('idle')} style={{ background: 'none', border: 'none', color: '#f5a623', cursor: 'pointer', padding: 0, fontSize: 12 }}>try again</button>
+            </div>
+          )}
+          {hasRemoteScreenShare && !isSharing && controlPhase === 'busy' && (
+            <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.55)', border: '1px solid #f5a623', color: '#f5a623', borderRadius: 8, fontSize: 12, padding: '7px 12px', backdropFilter: 'blur(6px)' }}>
+              Remote control is being used by another participant — <button onClick={() => setControlPhase('idle')} style={{ background: 'none', border: 'none', color: '#f5a623', cursor: 'pointer', padding: 0, fontSize: 12 }}>OK</button>
+            </div>
+          )}
+          {/* Controller indicator — persistent while active */}
+          {controlPhase === 'active' && (
+            <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 95, background: 'rgba(0,0,0,0.65)', border: '1px solid #48bb78', color: '#48bb78', borderRadius: 8, fontSize: 12, padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, backdropFilter: 'blur(6px)' }}>
+              🟢 You have control — click anywhere to click it on the shared screen.
+              <button onClick={sendRelease} style={{ background: '#c53030', border: 'none', color: '#fff', borderRadius: 6, fontSize: 12, padding: '3px 9px', cursor: 'pointer' }}>Release Control</button>
+            </div>
+          )}
+          {/* Sharer indicators */}
+          {incomingRequest && (
+            <div style={{ position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)', zIndex: 96, background: '#1a1a1a', border: '1px solid #f5a623', borderRadius: 10, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10, minWidth: 300, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
+              <div style={{ color: '#fff', fontSize: 13 }}>{incomingRequest.name} wants to control your screen.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={sharerApprove} style={{ flex: 1, background: '#48bb78', color: '#000', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, padding: '8px 0', cursor: 'pointer' }}>Allow</button>
+                <button onClick={sharerDeny} style={{ flex: 1, background: 'transparent', border: '1px solid #333', color: '#ccc', borderRadius: 8, fontSize: 13, padding: '8px 0', cursor: 'pointer' }}>Deny</button>
+              </div>
+            </div>
+          )}
+          {activeController && (
+            <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 95, background: 'rgba(152, 15, 23, 0.7)', border: '1px solid #e05252', color: '#fff', borderRadius: 8, fontSize: 12, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, backdropFilter: 'blur(6px)' }}>
+              🔴 Remote control active — {activeController.name}.
+              <button onClick={sharerRevoke} style={{ background: '#fff', color: '#c53030', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>Revoke</button>
+            </div>
+          )}
           {hasRemoteScreenShare ? (
             <ParticipantTile
               trackRef={remoteScreenTracks[0]}
@@ -3321,7 +3579,7 @@ function MeetingRoom({ roomId, displayName, onLeave, subtext, userId }: {
               {/* Laser pointer — desktop only (needs mouse cursor) */}
               {!isMobile && (
                 <button
-                  onClick={() => setLaserActive(v => !v)}
+                  onClick={() => setLaserActiveSafe(!laserActive)}
                   title={laserActive ? 'Turn off laser pointer' : 'Laser pointer — show your cursor to everyone'}
                   style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: laserActive ? `${myColor}33` : 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', border: `1px solid ${laserActive ? myColor : '#333'}`, borderRadius: 8, color: laserActive ? myColor : '#ccc', cursor: 'pointer' }}
                 >

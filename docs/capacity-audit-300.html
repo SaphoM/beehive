@@ -1,0 +1,355 @@
+<title>BeeHive 300 Capacity Audit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground: #F3F4F6;
+    --surface: #FFFFFF;
+    --ink: #1A1A1C;
+    --ink-2: #4B4E55;
+    --ink-3: #7A7E87;
+    --rule: #DCDEE3;
+    --accent: #E09A1E;
+    --accent-ink: #8A5A06;
+    --accent-soft: #FBF1DC;
+    --safe: #2F8F5B;    --safe-soft: #E3F3EA;
+    --blocked: #C43D36; --blocked-soft: #FBE5E3;
+    --degrade: #B8780F; --degrade-soft: #FBF1DC;
+    --unknown: #6B7280; --unknown-soft: #ECEDF0;
+    --code-bg: #EAECEF;
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #131518; --surface: #1B1E22; --ink: #EDEEF0; --ink-2: #B4B8BF; --ink-3: #7F848D;
+      --rule: #2C3036; --accent: #F0AE3A; --accent-ink: #F5C46A; --accent-soft: #2E2510;
+      --safe: #5CC48A; --safe-soft: #16301F; --blocked: #F07A73; --blocked-soft: #3A1B19;
+      --degrade: #E0A63A; --degrade-soft: #2E2510; --unknown: #9AA0AA; --unknown-soft: #262A30;
+      --code-bg: #22262B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #131518; --surface: #1B1E22; --ink: #EDEEF0; --ink-2: #B4B8BF; --ink-3: #7F848D;
+    --rule: #2C3036; --accent: #F0AE3A; --accent-ink: #F5C46A; --accent-soft: #2E2510;
+    --safe: #5CC48A; --safe-soft: #16301F; --blocked: #F07A73; --blocked-soft: #3A1B19;
+    --degrade: #E0A63A; --degrade-soft: #2E2510; --unknown: #9AA0AA; --unknown-soft: #262A30;
+    --code-bg: #22262B;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; display: flex; flex-direction: column; gap: 56px; }
+
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.1; }
+  h1 { font-size: clamp(34px, 5vw, 48px); font-weight: 700; letter-spacing: -0.015em; }
+  h2 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+  h3 { font-size: 18px; font-weight: 700; }
+  p { margin: 0; max-width: 66ch; }
+  p + p { margin-top: 12px; }
+  a { color: var(--accent-ink); }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  .eyebrow { font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-ink); }
+  .muted { color: var(--ink-2); }
+  .num { font-variant-numeric: tabular-nums; }
+  section { display: flex; flex-direction: column; gap: 18px; }
+
+  header { display: flex; flex-direction: column; gap: 14px; padding-bottom: 28px; border-bottom: 2px solid var(--accent); }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); }
+
+  .verdict { display: grid; grid-template-columns: 1fr; gap: 0; background: var(--surface); border: 1px solid var(--rule); border-left: 6px solid var(--blocked); border-radius: 6px; overflow: hidden; }
+  @media (min-width: 720px) { .verdict { grid-template-columns: 1.3fr 1fr; } }
+  .verdict > div { padding: 24px 26px; }
+  .verdict > div + div { border-top: 1px solid var(--rule); }
+  @media (min-width: 720px) { .verdict > div + div { border-top: 0; border-left: 1px solid var(--rule); } }
+  .verdict .answer { font-family: var(--display); font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .verdict .answer strong { color: var(--blocked); }
+  .bignum { font-family: var(--display); font-size: 64px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+  .bignum small { font-size: 22px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; margin-left: 6px; }
+  .class { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 11px; border-radius: 999px; background: var(--blocked-soft); color: var(--blocked); }
+  .class::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+
+  pre.arch { font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 20px; overflow-x: auto; margin: 0; color: var(--ink-2); }
+  pre.arch b { color: var(--ink); font-weight: 600; }
+  pre.arch i { color: var(--accent-ink); font-style: normal; }
+
+  .facts { display: grid; grid-template-columns: 1fr; gap: 0; border-top: 1px solid var(--rule); margin: 0; }
+  .facts > div { display: grid; grid-template-columns: 180px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  @media (max-width: 560px) { .facts > div { grid-template-columns: 1fr; gap: 4px; } }
+  .facts dt { font-family: var(--display); font-weight: 700; font-size: 14px; color: var(--ink-2); margin: 0; padding-top: 2px; }
+  .facts dd { margin: 0; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14.5px; }
+  th, td { text-align: left; padding: 11px 14px; vertical-align: top; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--display); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 700; background: var(--ground); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td:first-child { font-weight: 600; font-family: var(--display); font-size: 14px; white-space: nowrap; }
+  .chip { display: inline-block; font-family: var(--display); font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
+  .chip.safe { background: var(--safe-soft); color: var(--safe); }
+  .chip.no { background: var(--blocked-soft); color: var(--blocked); }
+  .chip.deg { background: var(--degrade-soft); color: var(--degrade); }
+  .chip.unk { background: var(--unknown-soft); color: var(--unknown); }
+
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 16px 20px; border-radius: 0 6px 6px 0; }
+  .callout .eyebrow { margin-bottom: 6px; display: block; }
+  .formula { font-family: var(--mono); font-size: 14px; background: var(--code-bg); padding: 12px 16px; border-radius: 6px; overflow-x: auto; white-space: pre; }
+
+  figure { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 20px 20px 14px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13.5px; color: var(--ink-2); margin-top: 10px; max-width: 66ch; }
+  .chart-text { font-family: var(--mono); font-size: 11px; fill: var(--ink-3); }
+  .chart-val { font-family: var(--mono); font-size: 11.5px; font-weight: 600; fill: var(--ink); }
+  .chart-axis { stroke: var(--rule); stroke-width: 1; }
+  .chart-bar { fill: var(--accent); }
+
+  .prio { display: flex; flex-direction: column; gap: 14px; }
+  .item { display: grid; grid-template-columns: 44px 1fr; gap: 14px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; }
+  .item .n { font-family: var(--display); font-weight: 700; font-size: 22px; color: var(--accent-ink); line-height: 1; padding-top: 2px; }
+  .item h3 { margin-bottom: 6px; }
+  .item .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 14px; margin-top: 10px; }
+  .item .kv b { font-family: var(--display); font-weight: 700; color: var(--ink-3); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; padding-top: 3px; }
+  .p1 .item, .p2 .item { grid-template-columns: 1fr; padding: 13px 18px; }
+  .p1 .item h3, .p2 .item h3 { font-size: 16px; }
+
+  ol.answers { padding-left: 22px; margin: 0; display: flex; flex-direction: column; gap: 8px; max-width: 70ch; }
+  ol.answers li::marker { font-family: var(--display); font-weight: 700; color: var(--accent-ink); }
+
+  .done { border-left: 4px solid var(--safe); }
+  .done h3::after, .item.done h3::after { content: "  shipped"; font-family: var(--display); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--safe); margin-left: 8px; vertical-align: middle; }
+  .status { background: var(--surface); border: 1px solid var(--rule); border-left: 6px solid var(--safe); border-radius: 6px; padding: 22px 26px; display: flex; flex-direction: column; gap: 12px; }
+  .status ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; font-size: 15.5px; }
+  footer { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 13.5px; color: var(--ink-3); }
+</style>
+
+<div class="page">
+
+<header>
+  <span class="eyebrow">Technical capacity audit</span>
+  <h1>Can BeeHive run a 300-attendee conference?</h1>
+  <p class="muted">A read-only audit of the live implementation — LiveKit configuration, media defaults, per-join backend work, the presence layer, and one measured mass-join burst. Findings are traced to file and line; nothing was changed.</p>
+  <div class="meta">
+    <span>audited build&nbsp;1.0.294 · status updated for&nbsp;1.0.303</span>
+    <span>branch&nbsp;staging</span>
+    <span>livekit-client&nbsp;2.20&nbsp;·&nbsp;components-react&nbsp;2.9.21</span>
+    <span>2026-09-11 · updated 2026-09-16</span>
+  </div>
+</header>
+
+<section>
+  <div class="verdict">
+    <div>
+      <span class="class">Red — contained</span>
+      <p class="answer" style="margin-top:14px">Not as-is. <strong>Conditional</strong> after four contained fixes — none of them in the media path.</p>
+      <p class="muted" style="margin-top:12px;font-size:15px">The LiveKit core is sound for 300 in audience mode. The blockers live in BeeHive's own presence and realtime layer, plus one waiting-room gap. This is two subsystems, not a rebuild.</p>
+    </div>
+    <div>
+      <span class="eyebrow">Practical maximum today</span>
+      <div class="bignum num" style="margin-top:8px">~50<small>comfortable</small></div>
+      <div class="bignum num" style="font-size:30px;margin-top:6px">~100<small>at the edge</small></div>
+      <p class="muted" style="margin-top:14px;font-size:14px">After P0 + P1: <b>300 in audience mode</b>, with ≤ 8 cameras and ≤ 20 unmuted at any moment.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="status">
+    <span class="eyebrow" style="color:var(--safe)">Status update — build 1.0.303 (16 Sep 2026)</span>
+    <p><b>Every code-side blocker in this audit has since shipped.</b> What remains is infrastructure confirmation, which no code change can substitute for.</p>
+    <ul>
+      <li><b>P0 #1 presence</b> — roster now derived from LiveKit participant attributes; the N² <code>room_participants</code> refetch is gone (v1.0.298).</li>
+      <li><b>P0 #2 fan-out</b> — cursors, reactions, hands and moderation signals ride LiveKit data channels, not Supabase broadcast (v1.0.298).</li>
+      <li><b>P0 #3 bulk admit</b> — <code>/admit { all: true }</code> + "Admit all" in the waiting-room panel (v1.0.298).</li>
+      <li><b>P1 adaptiveStream / dynacast</b> — enabled, plus a hard cap of 20 live microphones with one-click ask-to-unmute (v1.0.299).</li>
+      <li><b>P1 audience role</b> — "Large session" rooms issue <code>canPublish:false</code> tokens; host/co-host promote speakers one at a time (v1.0.301).</li>
+      <li><b>P1 participants panel</b> — windowed above 60 participants, tiles memoized; verified with a 301-person roster (v1.0.303).</li>
+      <li><b>Ops Dashboard</b> — admin view of plan readiness, room and mic counts (v1.0.300).</li>
+    </ul>
+    <p class="muted" style="font-size:15px"><b>Still open — P0 #4:</b> confirm Supabase plan (Realtime peak connections ≥ 300 → Pro or above) and the LiveKit Cloud quota, then set <code>SUPABASE_PLAN</code> and <code>LIVEKIT_CLOUD_PLAN</code> on Render so the Ops Dashboard reports green. Until then the verdict below stands as written: <em>300 in audience mode is realistic, conditional on the plan tiers.</em></p>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">1 · Architecture as traced</span>
+  <h2>Every attendee opens one media connection and eight realtime channels</h2>
+<pre class="arch">Browser
+  └─ <b>LiveKitRoom</b>  video={false} audio={false}         <i>RoomPage.tsx:388</i>
+       ├─► <b>LiveKit Cloud</b>  wss://honeycom-bvu9hdr5.livekit.cloud
+       │     rooms auto-created on first join · no createRoom · no maxParticipants
+       │     adaptiveStream: <i>false</i>  dynacast: <i>false</i>  autoSubscribe: true   <i>(client defaults, not overridden)</i>
+       ├─► POST <b>/api/livekit/token</b>  Express, one Node process on Render
+       │     rooms.select → [gated: room_hosts.select + participants.insert | admission upsert] → JWT
+       │     every attendee: canPublish <i>true</i>, canSubscribe <i>true</i>  <i>(no audience role)</i>
+       └─► <b>Supabase</b>  Postgres 17, eu-west-1 — per client:
+             participants <i>postgres_changes</i> · chat <i>postgres_changes</i> · agenda
+             cursors <i>broadcast</i> · hands · moderation · reactions · room-coordination
+             + admission (hosts)</pre>
+  <dl class="facts">
+    <div><dt>Deployment</dt><dd>LiveKit Cloud, global mesh SFU. Plan/tier not derivable from code — <span class="chip unk">unknown</span></dd></div>
+    <div><dt>Room cap</dt><dd>None set anywhere. <code>rooms.max_participants int default 200</code> exists in the schema and is never read — a dead column, not a limit.</dd></div>
+    <div><dt>Who publishes</dt><dd><b>Nobody by default.</b> Attendees join muted with camera off and opt in. This is the single decision that makes audience mode possible.</dd></div>
+    <div><dt>AI Note Taker</dt><dd>One audio-only room-composite egress per room (<code>meetingIntelligence.js:80</code>), duplicate-guarded. O(1) in attendees — not a bottleneck.</dd></div>
+    <div><dt>Video grid</dt><dd>LiveKit <code>GridLayout</code> paginates at a maximum of 25 tiles per page (5×5), so the DOM never holds 300 tiles.</dd></div>
+  </dl>
+</section>
+
+<section>
+  <span class="eyebrow">2 · Hard limits</span>
+  <h2>Where 300 actually breaks</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Component</th><th>Current limit</th><th>300+</th><th>Risk</th></tr></thead>
+    <tbody>
+      <tr><td>LiveKit room</td><td>No per-room cap; plan quota unknown</td><td><span class="chip safe">likely</span></td><td>Needs LiveKit Cloud quota confirmation for 300 participant-hours</td></tr>
+      <tr><td>Token generation</td><td class="num"><b>Measured:</b> 350 simultaneous joins, 0 failures, 57 joins/s, p99 6.0 s</td><td><span class="chip safe">yes</span></td><td>None</td></tr>
+      <tr><td>Audio subscriptions</td><td>Every published audio subscribed; one <code>&lt;audio&gt;</code> element each; no server mixing</td><td><span class="chip deg">≤ 20 unmuted</span></td><td>300 unmuted = 300 decodes per client</td></tr>
+      <tr><td>Video subscriptions</td><td><code>adaptiveStream: false</code> — every client pulls full-res from every publisher, even off-page</td><td><span class="chip deg">≤ 6–8 cameras</span></td><td>25 cameras ≈ 35 Mbps per viewer; 300 cameras is physically impossible</td></tr>
+      <tr><td>Frontend grid</td><td>Paginated, 25 tiles max</td><td><span class="chip safe">yes</span></td><td>Placeholder array is O(300) per render — fine</td></tr>
+      <tr><td>Participants panel</td><td>Renders every row, no virtualization</td><td><span class="chip deg">marginal</span></td><td>300 rows re-render on every roster event</td></tr>
+      <tr><td><b>Presence</b></td><td><b>N² refetch</b> — every client refetches the whole roster + profiles on every join/leave</td><td><span class="chip no">no</span></td><td>300 joins ≈ 45k change fan-outs ≈ <b>90,000 DB queries</b> in the join window</td></tr>
+      <tr><td><b>Supabase Realtime</b></td><td>Peak connections: Free 200 · Pro 500 · plan unknown</td><td><span class="chip no">no on free</span></td><td>On Free, attendee #201 cannot connect at all</td></tr>
+      <tr><td>Cursor sharing</td><td class="num">30 fps × 300 recipients = <b>9,000 msg/s</b></td><td><span class="chip no">no</span></td><td>Exceeds every Supabase tier's messages-per-second quota; starves presence</td></tr>
+      <tr><td>Reactions / hands</td><td>Broadcast fan-out × 300</td><td><span class="chip deg">degrades</span></td><td>An applause wave → thousands of msg/s</td></tr>
+      <tr><td>Chat</td><td><code>postgres_changes</code> + a <code>__JOIN__</code>/<code>__LEAVE__</code> row per person</td><td><span class="chip deg">degrades</span></td><td>300 system inserts × 300 subscribers, RLS-checked each</td></tr>
+      <tr><td><b>Waiting room</b></td><td>Host admits one attendee at a time — no bulk admit</td><td><span class="chip no">no</span></td><td>300 clicks before a scheduled conference can start</td></tr>
+      <tr><td>AI Note Taker</td><td>One egress per room</td><td><span class="chip safe">yes</span></td><td>None</td></tr>
+      <tr><td>Backend (Render)</td><td>Single Node process</td><td><span class="chip safe">yes</span></td><td>Join burst proven above</td></tr>
+      <tr><td>Browser</td><td>25 tiles, few decodes in audience mode</td><td><span class="chip safe">audience mode</span></td><td>Fails only if many cameras are on</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">3 · Main bottleneck</span>
+  <h2>Presence scales quadratically</h2>
+  <div class="callout">
+    <span class="eyebrow">useParticipants(roomId) — livekit_react_hooks.tsx:491</span>
+    <p>Every client subscribes to <code>postgres_changes</code> on <code>room_participants</code> and, on <em>any</em> change, re-runs a full <code>select *</code> plus a <code>profiles</code> lookup. With N attendees joining, the k-th join is refetched by all k clients already present.</p>
+  </div>
+  <div class="formula">refetches  =  Σ k  for k = 1 … N   ≈  N² / 2
+N = 300   →   45,150 change deliveries  ×  2 queries each   ≈  90,000 Postgres queries
+                                                            +  45,150 per-subscriber RLS checks in Realtime</div>
+  <p>Invisible at ten people, catastrophic at three hundred — and it lands precisely during the mass-join burst you asked about. Either the Realtime layer throttles (stale rosters, hands, reactions) or Postgres does. It compounds with cursor sharing, which alone can emit 9,000 messages a second through the same quota.</p>
+</section>
+
+<section>
+  <span class="eyebrow">4 · Load test</span>
+  <h2>The join burst is not the problem</h2>
+  <figure>
+    <svg viewBox="0 0 800 300" role="img" aria-label="Bar chart: p99 join latency and joins per second at 50, 150, 300 and 350 fully simultaneous joins">
+      <line class="chart-axis" x1="70" y1="40" x2="70" y2="240"/>
+      <line class="chart-axis" x1="70" y1="240" x2="740" y2="240"/>
+      <g class="chart-text">
+        <text x="62" y="244" text-anchor="end">0</text>
+        <text x="62" y="194" text-anchor="end">2 s</text>
+        <text x="62" y="144" text-anchor="end">4 s</text>
+        <text x="62" y="94" text-anchor="end">6 s</text>
+        <text x="62" y="44" text-anchor="end">8 s</text>
+        <text x="16" y="140" transform="rotate(-90 16 140)" text-anchor="middle">p99 latency</text>
+      </g>
+      <g class="chart-axis" stroke-dasharray="2 4">
+        <line x1="70" y1="190" x2="740" y2="190"/><line x1="70" y1="140" x2="740" y2="140"/><line x1="70" y1="90" x2="740" y2="90"/><line x1="70" y1="40" x2="740" y2="40"/>
+      </g>
+      <rect class="chart-bar" x="130" y="187.9" width="80" height="52.1" rx="2"/>
+      <rect class="chart-bar" x="290" y="151.2" width="80" height="88.8" rx="2"/>
+      <rect class="chart-bar" x="450" y="76.2" width="80" height="163.8" rx="2"/>
+      <rect class="chart-bar" x="610" y="89.5" width="80" height="150.5" rx="2"/>
+      <g class="chart-val" text-anchor="middle">
+        <text x="170" y="181">2.1 s</text><text x="330" y="144">3.6 s</text><text x="490" y="69">6.6 s</text><text x="650" y="82">6.0 s</text>
+      </g>
+      <g class="chart-text" text-anchor="middle">
+        <text x="170" y="262">50 joins</text><text x="330" y="262">150 joins</text><text x="490" y="262">300 joins</text><text x="650" y="262">350 joins</text>
+        <text x="170" y="282">23 /s · 0 failed</text><text x="330" y="282">41 /s · 0 failed</text><text x="490" y="282">44 /s · 0 failed</text><text x="650" y="282">57 /s · 0 failed</text>
+      </g>
+    </svg>
+    <figcaption>Fully simultaneous token requests against the production-identical backend bundle. 100 % success at every tier; the last of 300 waited 6.8 s. Latency is dominated by the round trip to Postgres in eu-west-1. Authentication and token generation are not a concern.</figcaption>
+  </figure>
+  <p class="muted" style="font-size:15px">Not measured: the Supabase Realtime N² path and LiveKit media with 300 real WebRTC clients — neither is reachable from one machine. Those rows are arithmetic from the code and are marked as such.</p>
+</section>
+
+<section>
+  <span class="eyebrow">5 · Scenarios</span>
+  <h2>What 300 attendees can and cannot do</h2>
+  <dl class="facts">
+    <div><dt>Mostly muted, cameras off</dt><dd>Media path <span class="chip safe">yes</span>. The platform fails on the presence layer, not on LiveKit.</dd></div>
+    <div><dt>300 cameras on</dt><dd><span class="chip no">no</span> — and no configuration makes it yes. Every viewer would receive 300 full-res streams. Not a BeeHive limit; physics. BeeHive additionally lacks the adaptive streaming that would make even ~25 tolerable.</dd></div>
+    <div><dt>300 publishing audio + video</dt><dd><span class="chip no">no</span></dd></div>
+    <div><dt>AI Note Taker at 300</dt><dd><span class="chip safe">unaffected</span> — one egress, guarded.</dd></div>
+  </dl>
+  <p><b>On "unlimited users per room":</b> LiveKit Cloud's figure describes the SFU's fan-out, which was never the constraint. It means unlimited <em>subscribers</em>, not unlimited simultaneous <em>publishers</em> — the receiving browser still has to decode every published stream, so the cameras-on ceiling is set client-side on Cloud and self-hosted alike.</p>
+</section>
+
+<section>
+  <span class="eyebrow">6 · Required before a 300+ event</span>
+  <h2>P0 — blockers, in the order to fix them</h2>
+  <div class="prio">
+    <div class="item done">
+      <div class="n num">1</div>
+      <div>
+        <h3>Replace polled presence with LiveKit's roster</h3>
+        <p>Derive the in-room list from <code>useParticipants()</code> — already the source for the header count at <code>RoomPage.tsx:456</code> — and make <code>room_participants</code> write-only history.</p>
+        <div class="kv"><b>Root cause</b><span>N² refetch on every <code>postgres_changes</code> event</span><b>Files</b><span class="mono">livekit_react_hooks.tsx · RoomPage.tsx · ParticipantsWindow.tsx</span><b>Complexity</b><span>Medium</span><b>Normal meetings</b><span>No visible change</span></div>
+      </div>
+    </div>
+    <div class="item done">
+      <div class="n num">2</div>
+      <div>
+        <h3>Move high-frequency fan-out onto LiveKit data channels</h3>
+        <p>Cursors, reactions and hands currently ride rate-limited Supabase broadcast. <code>publishData</code> rides the unlimited SFU mesh you already pay for, with no per-message quota.</p>
+        <div class="kv"><b>Root cause</b><span>9,000 msg/s cursor fan-out through a quota'd channel</span><b>Files</b><span class="mono">RoomPage.tsx:1038–1152</span><b>Complexity</b><span>Medium</span><b>Normal meetings</b><span>No visible change</span></div>
+      </div>
+    </div>
+    <div class="item done">
+      <div class="n num">3</div>
+      <div>
+        <h3>Bulk admit / open-door mode for scheduled conferences</h3>
+        <p>Add <code>all: true</code> to <code>/admit</code>, mirroring the existing <code>/mute</code> pattern at <code>livekit_node_backend.js:459</code>, plus one button in the waiting-room panel.</p>
+        <div class="kv"><b>Root cause</b><span>Per-request admit only</span><b>Files</b><span class="mono">livekit_node_backend.js · AdmissionRequestsWindow.tsx</span><b>Complexity</b><span>Low</span><b>Normal meetings</b><span>Additive</span></div>
+      </div>
+    </div>
+    <div class="item">
+      <div class="n num">4</div>
+      <div>
+        <h3>Confirm plan tiers</h3>
+        <p>Supabase Realtime peak connections ≥ 300 (Pro or above) and the LiveKit Cloud quota for 300 participant-hours.</p>
+        <div class="kv"><b>Root cause</b><span>Free tier hard-stops at 200 connections</span><b>Files</b><span>None — infrastructure</span><b>Complexity</b><span>Low</span><b>Normal meetings</b><span>None</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:14px">P1 — strongly recommended</h2>
+  <div class="prio p1">
+    <div class="item done"><div><h3>Enable <code>adaptiveStream</code> and <code>dynacast</code></h3><p>One option at <code>RoomPage.tsx:401</code>. Off-page tiles stop pulling full-res video; publishers stop encoding unused layers. Low complexity, no behaviour change in small rooms.</p></div></div>
+    <div class="item done"><div><h3>A real audience role</h3><p>Issue <code>canPublish: false</code> tokens to attendees by default with host-granted promotion. A conference mode is technically necessary: today's uniform-publisher model is only safe because attendees <em>choose</em> not to unmute. Medium complexity.</p></div></div>
+    <div class="item done"><div><h3>Virtualize the participants panel</h3><p>300 rows re-rendering on every roster event is the one frontend cost that grows linearly and visibly.</p></div></div>
+  </div>
+
+  <h2 style="margin-top:14px">P2 — optimisation</h2>
+  <div class="prio p2">
+    <div class="item"><div><h3>Batch join/leave system chat rows</h3><p>Or move them to the data channel alongside reactions.</p></div></div>
+    <div class="item done"><div><h3>Cap <code>RoomAudioRenderer</code> to active speakers</h3><p>Bounds audio elements and decodes regardless of how many people unmute. Addressed by the 20-live-mic cap in v1.0.299.</p></div></div>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">7 · Answers</span>
+  <h2>The ten questions, directly</h2>
+  <ol class="answers">
+    <li><b>Architecture:</b> LiveKit Cloud mesh SFU for media; a single Express process for tokens; Supabase Realtime for presence, chat and every in-meeting signal.</li>
+    <li><b>Current participant limit:</b> none configured anywhere.</li>
+    <li><b>Practical capacity:</b> ~50 comfortable, ~100 at the edge.</li>
+    <li><b>Main bottleneck:</b> the N² presence refetch in <code>useParticipants</code>, compounded by Supabase Realtime quotas.</li>
+    <li><b>300 with cameras/mics mostly off:</b> media yes; blocked by the presence layer until P0 is done.</li>
+    <li><b>300 with cameras on:</b> no, and no configuration changes that.</li>
+    <li><b>300 publishing audio and video:</b> no.</li>
+    <li><b>AI Note Taker:</b> does not affect scalability.</li>
+    <li><b>Load testing:</b> 350 simultaneous joins, zero failures, p99 6 s — the backend is not the constraint.</li>
+    <li><b>Required before a production event:</b> P0 items 1–4. After P0 + P1, 300 in audience mode is realistic.</li>
+  </ol>
+</section>
+
+<footer>Original audit was read-only against 1.0.294; the status box at the top records what shipped afterwards. Two test scripts (SSR component check, token burst) were run from the session scratchpad; nothing in the repository was modified. Values marked <em>unknown</em> require infrastructure or load-test confirmation.</footer>
+
+</div>

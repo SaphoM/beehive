@@ -1,0 +1,17 @@
+-- ============================================================
+-- 013_allow_notetakers.sql
+-- Let AI note-taker bots into a meeting without waiting at the door.
+-- ============================================================
+-- Opt-in per room. Every commercial note-taker (Fathom, Otter, Fireflies,
+-- Read.ai, tl;dv, …) joins by driving a headless browser through the same
+-- ?room= lobby a human uses, identifying itself by display name. On an
+-- instant (Start Now) room there is no waiting room, so a bot already walks
+-- straight in. On a scheduled room it lands in the waiting room and needs a
+-- host to click Admit — but bots typically arrive BEFORE the host (so
+-- nobody is there to admit them) and give up after a few minutes in a
+-- lobby. When this flag is set, a joiner whose display name matches a known
+-- note-taker pattern (shared/notetakers.js — one list, used by client and
+-- server) bypasses the waiting room for THIS room only. Humans are
+-- unaffected; the default is false so every existing room behaves exactly
+-- as before.
+alter table rooms add column if not exists allow_notetakers boolean not null default false;

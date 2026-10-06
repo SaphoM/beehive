@@ -1,29 +1,28 @@
 {
-  "version": "1.0.400",
-  "releaseDate": "2026-10-06T17:18:28.864Z",
+  "version": "1.0.401",
+  "releaseDate": "2026-10-06T17:43:02.167Z",
   "critical": false,
   "minimumVersion": "1.0.200",
   "notes": [
-    "Remote control now only appears when sharing a screen into a window",
-    "disabled for full screen shares"
+    "Fix: update card buttons unclickable in Electron (drag-region swallow)"
   ],
   "mac": {
-    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.400/BeeHive-universal.zip",
-    "sha512": "EV455fidu01euifTkwMwciS/Rz437AwIhElv/DD/aGlbfoaRAEJ5PwgV2C0KAcHuC9dJgLK4zKwfjIi7TUnGnA==",
-    "size": 241902797,
-    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.400/BeeHive-universal.dmg",
-    "dmgSha512": "FqVeHOtEyDRUBiDjLff8KwNC9/gQCUhINhSWu3c2O+gEPm2UQyqm9JVPJK1NM5meBPl/Lm3HiSZa4yV3Mc1VtA==",
-    "dmgSize": 241959353
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.401/BeeHive-universal.zip",
+    "sha512": "DqIfpjTj9L2Q1CTztga8LvVSzEuVhlgsSDZ6F3uv58VO3RKy5gar6tJCtavMlX9OHpFq6QWQ2Fold0lKuipeQQ==",
+    "size": 241908993,
+    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.401/BeeHive-universal.dmg",
+    "dmgSha512": "JiCLp4a2vWu8V9Dvi7b+SZ6T1V7JPS/JdZtuCF2tTb7VtknDRjS9qLGK1qzLFG/flU1MWxhr2UMSHx5XDARclA==",
+    "dmgSize": 241960066
   },
   "win": {
-    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.400/BeeHive-Setup.exe",
-    "sha512": "EIKrry6oWCoTaKCfCweBp0Yu8dL7sZ0+ngy+A2hJiC80DF4WXQtovNBPRh/MxR87QOdy4NVR3aI8Fh3lnQQBLw==",
-    "size": 233553250,
-    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.400/BeeHive-Setup-x64.exe",
-    "x64Sha512": "Ajke5S/Xm0lStha6E/0gbqUKNy/r8ku7C0pM3nZBslRXFeE76rzQ5WDh/AN070y2iJ4NTjO1AaAx/BchWR9jsA==",
-    "x64Size": 120806898,
-    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.400/BeeHive-Setup-arm64.exe",
-    "arm64Sha512": "qjbUw12uZfv/XhXMYDWgO2A+2zZjxxI9kuzYQu3MxCC+ldEWs36DPqQkKxhKP47i8V2Drnm8vybI1+r4QBGAPQ==",
-    "arm64Size": 113297590
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.401/BeeHive-Setup.exe",
+    "sha512": "NLv/pWMCMV5ssc4mOP/7dF6oHo9GRbnz8i8AwwvGCqoS4E7HlYkm4xeiAMkxhS4POakoUYXwrQyMsVBZxw8f/A==",
+    "size": 233548583,
+    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.401/BeeHive-Setup-x64.exe",
+    "x64Sha512": "RT+KOdfWhbnS0HAgTxDu9RI1dLO25cqXdIBu5V5KDsQnqkQ9DplWyksd38upxjruHJpNOQ6bz3hrO5NxExHL4g==",
+    "x64Size": 120804465,
+    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.401/BeeHive-Setup-arm64.exe",
+    "arm64Sha512": "DWq8AO6MSjWF4Y8+nJuFMkomdLWWWIRETwYNEkXhVlJQSzeOP/yWUOwlmRYJadlHnsHIlXiXhZzNioMk91YLUw==",
+    "arm64Size": 113295362
   }
 }

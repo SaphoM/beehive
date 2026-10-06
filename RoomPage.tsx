@@ -315,6 +315,11 @@ export default function RoomPage() {
   // document.title effect below). joinRoom already returns it as roomName.
   const [activeMeetingName, setActiveMeetingName] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
+  // Shown once, right after we ourselves join — offers to also bring a
+  // Fathom notetaker into this room (opens the bot join URL in a new tab)
+  // instead of only recording from the outside. Skipped entirely when this
+  // tab is itself a notetaker bot (?notetaker=…).
+  const [notetakerPrompt, setNotetakerPrompt] = useState(false)
   const [displayName, setDisplayName] = useState(NOTETAKER_FROM_URL ? notetakerDisplayName(NOTETAKER_FROM_URL) : '')
   const [joinRoomId, setJoinRoomId] = useState<string | null>(INITIAL_ROOM_ID_FROM_URL)
   const [subtext, setSubtext] = useState<Subtext>('Meet')
@@ -459,6 +464,7 @@ export default function RoomPage() {
     setActiveMeetingName(result.roomName ?? null)
     setToken(result.token)
     setView('room')
+    setNotetakerPrompt(true)
   }
 
   // Join a specific room by id — shared core of both the invite-link "Join
@@ -492,6 +498,7 @@ export default function RoomPage() {
     setActiveMeetingName(result.roomName ?? null)
     setToken(result.token)
     setView('room')
+    setNotetakerPrompt(true)
   }
 
   const handleJoin = async () => {
@@ -529,6 +536,7 @@ export default function RoomPage() {
     setActiveMeetingName(result.roomName ?? null)
     setToken(result.token)
     setView('room')
+    setNotetakerPrompt(true)
   }
 
   const handleWaitingDenied = () => {
@@ -565,6 +573,7 @@ export default function RoomPage() {
 
   if (view === 'room' && token && activeRoomId && livekitRoomName) {
     return (
+      <>
       <LiveKitRoom
         token={token}
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
@@ -606,6 +615,29 @@ export default function RoomPage() {
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
+      {notetakerPrompt && (
+        <div style={{ position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 200, background: '#1a1a1a', border: '1px solid #333', borderRadius: 12, padding: '14px 18px', maxWidth: 360, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
+          <div style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Add an AI notetaker?</div>
+          <div style={{ color: '#999', fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+            Fathom Notetaker can join this meeting as a participant — not just record from the outside — and transcribe from within the call.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => { setNotetakerPrompt(false); window.open(`${window.location.origin}${window.location.pathname}?room=${activeRoomId}&notetaker=fathom`, '_blank') }}
+              style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, padding: '9px 0', cursor: 'pointer' }}
+            >
+              Yes, add Fathom
+            </button>
+            <button
+              onClick={() => setNotetakerPrompt(false)}
+              style={{ flex: 1, background: 'transparent', border: '1px solid #333', color: '#aaa', borderRadius: 8, fontSize: 13, padding: '9px 0', cursor: 'pointer' }}
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+      </>
     )
   }
 

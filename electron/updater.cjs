@@ -221,9 +221,15 @@ sleep 3
 TMP=$(mktemp -d)
 ditto -xk "${zip}" "$TMP" || exit 1
 xattr -dr com.apple.quarantine "$TMP/BeeHive.app" 2>/dev/null
-mv /Applications/BeeHive.app /tmp/BeeHive-old.app 2>/dev/null
-mv "$TMP/BeeHive.app" /Applications/
-open -a /Applications/BeeHive.app
+# Move-and-re-extract: never risk a half-swapped bundle if the mv target is
+# a directory that already exists (fail before we extract anything).
+rm -rf "/tmp/BeeHive-old.app"
+mv /Applications/BeeHive.app /tmp/BeeHive-old.app || exit 1
+if mv "$TMP/BeeHive.app" /Applications/BeeHive.app; then
+  open -a /Applications/BeeHive.app
+else
+  mv /tmp/BeeHive-old.app /Applications/BeeHive.app
+fi
 `
     const scriptPath = path.join(os.tmpdir(), 'beehive-apply-update.sh')
     fs.writeFileSync(scriptPath, script, { mode: 0o755 })

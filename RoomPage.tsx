@@ -136,6 +136,7 @@ import {
   canvasFilterBlurWorks,
   pyramidBlur,
   type PyramidBlurCache,
+  WEB_BASE,
 } from './components/roomUtils'
 import { createSegmentationEngine } from './components/segmentation/createSegmentationEngine'
 import type { SegmentationEngine } from './components/segmentation/types'
@@ -634,7 +635,7 @@ export default function RoomPage() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
-              onClick={() => { setNotetakerPrompt(false); window.open(`${window.location.origin}${window.location.pathname}?room=${activeRoomId}&notetaker=fathom`, '_blank') }}
+              onClick={() => { setNotetakerPrompt(false); window.open(`${WEB_BASE}/?room=${activeRoomId}&notetaker=fathom`, 'beehive-notetaker') }}
               style={{ flex: 1, background: '#f5a623', color: '#000', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, padding: '9px 0', cursor: 'pointer' }}
             >
               Yes, add Fathom

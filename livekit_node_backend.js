@@ -1264,6 +1264,10 @@ app.get('/api/me/meetings', async (req, res) => {
   const meetingMap = new Map()
 
   for (const room of (organizedRes.data ?? [])) {
+    // Hide scheduled meetings whose time has fully passed even before the
+    // periodic sweep flips is_active below — list views only ever show live
+    // meetings; rows stay in the DB for history.
+    if (room.scheduled_date && isScheduledMeetingExpired({ scheduledDate: room.scheduled_date, scheduledTime: room.scheduled_time, durationMinutes: room.duration_minutes })) continue
     meetingMap.set(room.id, {
       id: room.id,
       roomId: room.id,
@@ -1284,6 +1288,7 @@ app.get('/api/me/meetings', async (req, res) => {
     // Skip declined, ended, or already-in-map (org takes priority), or inactive rooms
     if (!room || !room.is_active || meetingMap.has(room.id)) continue
     if (inv.status === 'declined') continue
+    if (room.scheduled_date && isScheduledMeetingExpired({ scheduledDate: room.scheduled_date, scheduledTime: room.scheduled_time, durationMinutes: room.duration_minutes })) continue
     meetingMap.set(room.id, {
       id: inv.id,
       roomId: room.id,
@@ -2036,6 +2041,41 @@ if (existsSync(distPath)) {
 }
 
 const PORT = process.env.PORT || 3001
+
+// ============================================================
+// EXPIRED-ROOM SWEEP
+// Scheduled meetings whose date+time+duration+grace window has fully passed
+// are still rows in the DB with is_active=true / ended_at=null unless
+// someone actually joins and ends them — which most don't. This sweep closes
+// them: it sets ended_at and flips is_active=false, so every active view in
+// the app (which already filters is_active) drops them naturally. Rows are
+// never deleted, and the UI still filters expired meetings between sweeps.
+// Runs once at boot, then every 5 minutes.
+// ============================================================
+async function sweepExpiredScheduledRooms() {
+  try {
+    const { data: rooms, error } = await supabase
+      .from('rooms')
+      .select('id, scheduled_date, scheduled_time, duration_minutes')
+      .eq('is_active', true)
+      .is('ended_at', null)
+      .not('scheduled_date', 'is', null)
+    if (error) { console.error('[sweep-expired] query failed:', error.message); return }
+    for (const room of rooms ?? []) {
+      if (!isScheduledMeetingExpired({ scheduledDate: room.scheduled_date, scheduledTime: room.scheduled_time, durationMinutes: room.duration_minutes })) continue
+      const { error: upErr } = await supabase
+        .from('rooms')
+        .update({ is_active: false, ended_at: new Date().toISOString() })
+        .eq('id', room.id)
+        .is('ended_at', null)
+      if (upErr) console.error('[sweep-expired] update failed for', room.id, ':', upErr.message)
+      else console.log('[sweep-expired] closed scheduled room', room.id, `${room.scheduled_date} ${room.scheduled_time}`)
+    }
+  } catch (e) {
+    console.error('[sweep-expired] threw:', e?.message ?? e)
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`BeeHive backend running on port ${PORT}`)
   // Retries any Meeting Intelligence job stuck in a post-egress stage — see
@@ -2044,4 +2084,8 @@ app.listen(PORT, () => {
   // (server boot) rather than at import time so it can't fire before the
   // server is actually accepting the requests its own retries depend on.
   meetingIntelligence.startIntelligenceSweep()
+  // Close past scheduled meetings — immediate pass at boot, then every 5 min.
+  sweepExpiredScheduledRooms()
+  const expiredSweepTimer = setInterval(sweepExpiredScheduledRooms, 5 * 60 * 1000)
+  expiredSweepTimer.unref?.()
 })

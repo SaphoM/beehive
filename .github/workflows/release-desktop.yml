@@ -10,11 +10,15 @@
 # local connection from the critical path entirely.
 #
 # It also generates and commits update-config.json, which the backend serves
-# at /updates/latest{,-mac}.yml for electron-updater. That file previously
-# pointed at a v1.0.252 release that was never actually published, so every
-# auto-update check 404'd. Generating it here — from the same run that
+# at /updates/latest{,-mac,-linux}.yml for electron-updater. That file
+# previously pointed at a v1.0.252 release that was never actually published,
+# so every auto-update check 404'd. Generating it here — from the same run that
 # uploaded the assets — means the feed can only ever reference URLs that
 # genuinely exist.
+#
+# Linux (AppImage + .deb + .rpm, x86_64 + arm64) is built in its own job and
+# published on the same release, so the download panel's Linux option and the
+# /updates/latest-linux.yml feed always point at real, freshly-built files.
 #
 # Trigger manually from the Actions tab. The version is read from the
 # committed scripts/version-count.json (via scripts/appVersion.mjs), so bump
@@ -177,8 +181,61 @@ jobs:
             release/BeeHive-Setup-arm64.exe
             release/latest.yml
 
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Same public VITE_* values as the mac/windows jobs — the packaged app
+      # proxies to the hosted backend, so no privileged credentials belong here.
+      - name: Write build-time .env (public VITE_* values only)
+        shell: bash
+        run: |
+          if [ -z "${BUILD_ENV:-}" ]; then
+            echo "::error::Repository secret BEEHIVE_BUILD_ENV is not set. It needs only the four public VITE_* values listed in the mac/windows job comments — no admin credentials."
+            exit 1
+          fi
+          printf '%s\n' "$BUILD_ENV" > .env
+        env:
+          BUILD_ENV: ${{ secrets.BEEHIVE_BUILD_ENV }}
+
+      # rpmbuild, for the .rpm target. (The AppImage and .deb targets need no
+      # extra system packages; electron-builder downloads its own tooling.)
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - run: npm ci
+
+      - name: "Build Linux (x64 + arm64: AppImage, deb, rpm)"
+        run: npm run electron:build:linux
+
+      - name: Write SHA-256 checksums for manual verification
+        run: npm run checksums:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            release/BeeHive-x86_64.AppImage
+            release/BeeHive-arm64.AppImage
+            release/BeeHive-amd64.deb
+            release/BeeHive-arm64.deb
+            release/BeeHive-x86_64.rpm
+            release/BeeHive-aarch64.rpm
+            release/latest-linux.yml
+            release/latest-linux-arm64.yml
+            release/SHA256SUMS-linux.txt
+
   release:
-    needs: [version, build-mac, build-windows]
+    needs: [version, build-mac, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -195,12 +252,13 @@ jobs:
         with:
           path: artifacts
 
-      # publish-update.mjs reads release/latest-mac.yml and release/latest.yml
-      # from their conventional location, so reassemble that layout.
+      # publish-update.mjs reads release/latest-mac.yml, latest.yml and
+      # latest-linux*.yml from their conventional location, so reassemble that
+      # layout.
       - name: Reassemble release/
         run: |
           mkdir -p release
-          mv artifacts/mac/* artifacts/windows/* release/
+          mv artifacts/mac/* artifacts/windows/* artifacts/linux/* release/
           ls -la release/
 
       # Upload assets BEFORE the release stops being a draft. A release with
@@ -230,7 +288,14 @@ jobs:
             release/BeeHive-universal.zip \
             release/BeeHive-Setup.exe \
             release/BeeHive-Setup-x64.exe \
-            release/BeeHive-Setup-arm64.exe
+            release/BeeHive-Setup-arm64.exe \
+            release/BeeHive-x86_64.AppImage \
+            release/BeeHive-arm64.AppImage \
+            release/BeeHive-amd64.deb \
+            release/BeeHive-arm64.deb \
+            release/BeeHive-x86_64.rpm \
+            release/BeeHive-aarch64.rpm \
+            release/SHA256SUMS-linux.txt
 
       # Fail loudly if any expected asset is missing, rather than publishing a
       # release that silently breaks downloads or the update feed.
@@ -246,7 +311,14 @@ jobs:
             BeeHive-universal.zip \
             BeeHive-Setup.exe \
             BeeHive-Setup-x64.exe \
-            BeeHive-Setup-arm64.exe
+            BeeHive-Setup-arm64.exe \
+            BeeHive-x86_64.AppImage \
+            BeeHive-arm64.AppImage \
+            BeeHive-amd64.deb \
+            BeeHive-arm64.deb \
+            BeeHive-x86_64.rpm \
+            BeeHive-aarch64.rpm \
+            SHA256SUMS-linux.txt
           do
             echo "$uploaded" | grep -qx "$expected" || { echo "MISSING: $expected"; exit 1; }
           done
@@ -273,13 +345,18 @@ jobs:
           cat update-config.json
 
       # Verify the feed's own URLs resolve before committing it. A feed that
-      # 404s is exactly the failure this workflow exists to prevent.
+      # 404s is exactly the failure this workflow exists to prevent. Every
+      # artifact listed in the download manifest is checked, so the web
+      # download panel (which is driven by it) can never offer a dead link.
       - name: Verify update feed URLs resolve
         run: |
           for url in $(node -e "
             const c = require('./update-config.json');
-            const urls = [c.mac.url, c.mac.dmgUrl, c.win.url, c.win.x64Url, c.win.arm64Url];
-            console.log(urls.filter(Boolean).join('\n'));
+            const urls = [c.mac.url, c.mac.dmgUrl, c.win.url, c.win.x64Url, c.win.arm64Url,
+              c.linux && c.linux.url, c.linux && c.linux.debUrl, c.linux && c.linux.rpmUrl,
+              c.linux && c.linux.arm64Url, c.linux && c.linux.arm64DebUrl, c.linux && c.linux.arm64RpmUrl,
+              ...(c.downloads || []).map(d => d.url)];
+            console.log([...new Set(urls.filter(Boolean))].join('\n'));
           "); do
             code=$(curl -sIL -o /dev/null -w '%{http_code}' "$url")
             echo "$code  $url"
@@ -297,5 +374,5 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add update-config.json
-          git commit -m "chore(updates): publish $TAG feed for macOS + Windows"
+          git commit -m "chore(updates): publish $TAG feed for macOS + Windows + Linux"
           git push origin HEAD:${{ github.ref_name }}

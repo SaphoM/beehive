@@ -197,6 +197,10 @@ function scheduleChecks() {
 // consent), and relaunches. Squirrel's failure mode is a silent no-op, so
 // this is purely a safety net.
 function applyStagedUpdateManually() {
+  // macOS-only: this swaps /Applications/BeeHive.app using ditto/xattr. On
+  // Linux (AppImage) and Windows, electron-updater's own quitAndInstall is the
+  // supported path, so don't try this there.
+  if (process.platform !== 'darwin') return
   try {
     const { app } = require('electron')
     const { spawn } = require('child_process')

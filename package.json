@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "X Spark video conferencing platform",
   "main": "electron/main.cjs",
+  "desktopName": "beehive.desktop",
   "scripts": {
     "start": "node livekit_node_backend.js",
     "postinstall": "npm run build",
@@ -15,6 +16,8 @@
     "build:backend": "esbuild livekit_node_backend.js --bundle --platform=node --format=esm --outfile=electron/backend.bundle.mjs --banner:js='import{createRequire as __cr}from\"module\";const require=__cr(import.meta.url);'",
     "electron:build:mac": "npm run build:ctl && npm run build:backend && vite build && electron-builder --mac --universal -c.extraMetadata.version=$(node scripts/appVersion.mjs)",
     "electron:build:win": "npm run build:backend && vite build && electron-builder --win --x64 --arm64 -c.extraMetadata.version=$(node scripts/appVersion.mjs)",
+    "electron:build:linux": "npm run build:backend && vite build && electron-builder --linux --x64 --arm64 -c.extraMetadata.version=$(node scripts/appVersion.mjs)",
+    "checksums:linux": "node scripts/linux-checksums.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -90,6 +93,27 @@
       "icon": "assets/icon.ico",
       "target": "nsis",
       "artifactName": "${productName}-Setup-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "category": "Network",
+      "syncDesktopName": true,
+      "synopsis": "X Spark video conferencing platform",
+      "description": "BeeHive is X Spark's video conferencing platform: create or join meetings, share your screen, and collaborate in real time.",
+      "maintainer": "X Spark <support@xspark.co.za>",
+      "desktop": {
+        "entry": {
+          "Name": "BeeHive",
+          "Comment": "X Spark video conferencing platform",
+          "Categories": "Network;VideoConference;"
+        }
+      },
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb", "arch": ["x64", "arm64"] },
+        { "target": "rpm", "arch": ["x64", "arm64"] }
+      ],
+      "artifactName": "${productName}-${arch}.${ext}"
     },
     "directories": {
       "output": "release"

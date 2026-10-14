@@ -21,6 +21,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Monitor, Download, X, TriangleAlert } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { useAuth, API_BASE } from '../livekit_react_hooks'
+import { isLinuxBrowser } from './useDeviceReadiness'
 
 // Master switch. Set false to hide the handoff button everywhere.
 export const ENABLE_DESKTOP_HANDOFF = true
@@ -66,11 +67,28 @@ export function buildDesktopHandoffUrl(session: Session): string {
 
 // Launch the desktop app. With a session, the app opens signed in; without one
 // it opens to its own sign-in. Any ?room= invite in the current page's URL is
-// carried through either way. If the app isn't installed the OS simply ignores
-// the beehive:// navigation, so this is safe to call unconditionally.
+// carried through either way.
+//
+// On Linux a *top-level* navigation to an unregistered `beehive://` scheme is
+// handed to xdg-open, which pops GNOME's "No apps installed that can open …"
+// dialog — and Chromium can even save the URL as a bogus download (which is
+// what landed in the Downloads folder as a file ending
+// "…&expires_in=3600&expires_at=…"). Loading it in a hidden iframe instead
+// keeps a registered handler launching while turning an unregistered one into
+// a silent no-op, so the OS is never asked to open a scheme nothing handles.
+// The caller falls back to the download panel when the app takes no focus.
 export function openInDesktopApp(session: Session | null): void {
   if (!canOfferDesktopHandoff()) return
-  window.location.href = session ? buildDesktopHandoffUrl(session) : `beehive://${currentRoomQuery()}`
+  const url = session ? buildDesktopHandoffUrl(session) : `beehive://${currentRoomQuery()}`
+  if (isLinuxBrowser()) {
+    const frame = document.createElement('iframe')
+    frame.style.display = 'none'
+    frame.src = url
+    document.body.appendChild(frame)
+    setTimeout(() => frame.remove(), 2000)
+    return
+  }
+  window.location.href = url
 }
 
 // ============================================================
@@ -321,6 +339,18 @@ export function OpenDesktopAppButton({ style }: { style?: React.CSSProperties })
   function handleOpen() {
     setOpening(true)
     openInDesktopApp(session)
+    if (isLinuxBrowser()) {
+      // Best-effort iframe launch (see openInDesktopApp). If the desktop app
+      // actually opened, this browser tab loses visibility; if it didn't, the
+      // tab is still visible, so offer the download rather than leave the user
+      // with a button that did nothing.
+      const tabVisible = !document.hidden
+      setTimeout(() => {
+        setOpening(false)
+        if (tabVisible && !document.hidden) setShowDownload(true)
+      }, 2500)
+      return
+    }
     // The desktop app takes focus on success; if it isn't installed nothing
     // happens, so re-enable the button after a short delay either way.
     setTimeout(() => setOpening(false), 4000)

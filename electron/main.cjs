@@ -8,6 +8,17 @@ const updater = require('./updater.cjs')
 
 const isDev = !app.isPackaged
 
+// Linux/Wayland: Chromium serves cameras through PipeWire, but its PipeWire
+// camera backend is off by default, so enumerateDevices() reports no camera and
+// getUserMedia fails on machines whose webcam is only reachable that way (many
+// modern laptops). Enable it explicitly, before the app is ready. Screen
+// capture is deliberately left alone: this app shares via Electron's own
+// desktopCapturer (chromeMediaSource:'desktop'), which the PipeWire *capturer*
+// feature would bypass and break.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-features', 'WebRtcPipeWireCamera')
+}
+
 let mainWindow
 let dockWindow
 let apiProxyServer

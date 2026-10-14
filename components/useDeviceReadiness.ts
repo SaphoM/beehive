@@ -45,6 +45,15 @@ export const DEVICE_CHECK_CACHE_KEY = 'beehive:deviceCheck:v2'
 const CACHE_KEY = DEVICE_CHECK_CACHE_KEY
 const CACHE_TTL = 5 * 60 * 1000
 
+// True on Linux (Wayland/X11). Chromium there reaches cameras through
+// PipeWire/portal, which can legitimately withhold the camera list until the
+// device is accessible — unlike macOS/Windows browsers, which enumerate
+// cameras reliably. Callers use this to avoid asserting a fault they can't
+// actually detect; see runCheck's camera branch.
+export function isLinuxBrowser(): boolean {
+  return typeof navigator !== 'undefined' && /linux|x11/.test((navigator.userAgent || '').toLowerCase())
+}
+
 // Never prompts. Safari doesn't support querying 'microphone'/'camera' and
 // throws, which lands in the catch as 'unsupported'.
 async function queryPermission(name: 'microphone' | 'camera'): Promise<PermissionState | 'unsupported'> {
@@ -82,8 +91,17 @@ async function runCheck(): Promise<Omit<CachedCheck, 'ts'>> {
 
     if (result.mic !== 'blocked')
       result.mic = mics.length > 0 ? 'ok' : 'missing'
+
+    // Camera — an empty videoinput list on Linux is NOT proof of a missing
+    // camera: Chromium there enumerates through PipeWire/portal and only
+    // surfaces the device once it is accessible, so the list is routinely
+    // empty on machines that have a perfectly working webcam. Reporting
+    // "No camera found" from it (as this previously did) was a false alarm.
+    // Treat that case as 'unknown' — exactly how the audiooutput list below is
+    // already handled — and keep the true 'missing' warning on macOS/Windows,
+    // where enumeration is reliable. A denied permission is still 'blocked'.
     if (result.camera !== 'blocked')
-      result.camera = cams.length > 0 ? 'ok' : 'missing'
+      result.camera = cams.length > 0 ? 'ok' : (isLinuxBrowser() ? 'unknown' : 'missing')
 
     // An empty audiooutput list usually means "this browser won't tell us",
     // NOT "this machine has no speakers". Treating it as missing produced a

@@ -1,0 +1,539 @@
+import { useState, useEffect, useRef, useCallback, memo } from 'react'
+import { X, Mic, MicOff, VideoOff, MessageSquare, Crown, BellRing, Megaphone, Users } from 'lucide-react'
+import { ParticipantTile, useTracks, useLocalParticipant, useParticipants as useLiveKitParticipants } from '@livekit/components-react'
+import { Track } from 'livekit-client'
+import { s } from './roomStyles'
+import { MAX_LIVE_MICS } from './roomUtils'
+import { Avatar } from './Avatar'
+
+// Same API_BASE resolution used elsewhere for backend calls from the client.
+const API_BASE = typeof window !== 'undefined' && (window as any).electronAPI && window.location.protocol === 'file:'
+  ? 'http://localhost:3001'
+  : ''
+
+interface CoHostProps {
+  roomId?: string
+  isHost?: boolean
+  hostSecret?: string | null
+  onDirectChat?: (name: string) => void
+  // Microphone moderation — distinct from `isHost` above (which gates only
+  // co-host *delegation* and stays host-only by design). Mute/mute-all is
+  // available to host AND co-host, matching the existing waiting-room admit
+  // permission (RoomPage.tsx's `canAdmit`) — the same "moderator" concept
+  // already established for this room, reused here rather than inventing a
+  // second one.
+  canModerate?: boolean
+  actingDisplayName?: string
+  onRequestUnmute?: (identity: string) => void
+  // True only for the floating ParticipantsWindow — lets its (now taller,
+  // see roomStyles.ts's pwWindow) panel actually use that height by
+  // wrapping tiles onto additional rows. DockedParticipantsStrip omits this
+  // and stays exactly what it always was: a single horizontally-scrolling
+  // row under the header, where there's no spare vertical room to wrap into.
+  wrap?: boolean
+}
+
+// Above this many participants the tile list is windowed: only the tiles
+// inside (and just around) the scroll viewport are mounted. Below it the
+// layout is exactly what it always was — the auto-fill grid that stretches a
+// lone tile to fill the panel, the slim docked row — because windowing needs
+// fixed tile geometry and there is nothing to gain from it in a small room.
+// Matters for "Large session" rooms: every camera-on tile mounts a <video>,
+// so 300 attendees unwindowed is 300 videos in one side panel.
+const VIRTUALIZE_ABOVE = 60
+const TILE_W = 110, TILE_H = 105, TILE_GAP = 8, GRID_MIN_COL = 140, GRID_PAD = 12
+const OVERSCAN_ROWS = 2
+
+// Windowed range of a 1-D sequence of `total` items laid out at `stride`
+// pixels each, viewed through `viewport` pixels starting at `offset`.
+function windowRange(offset: number, viewport: number, stride: number, total: number, overscan: number) {
+  const first = Math.max(0, Math.floor(offset / stride) - overscan)
+  const last = Math.min(total - 1, Math.ceil((offset + viewport) / stride) + overscan)
+  return { first, last: Math.max(first, last) }
+}
+
+// Tracks scroll position + size of a scroll container so the list above can
+// decide which slice to mount. Scroll events already arrive at most once per
+// frame and the setter bails out when nothing moved, so this is read
+// synchronously in the handler — no rAF hop, which browsers throttle to 1 Hz
+// for occluded windows and would leave a scrolled panel blank for a second.
+function useScrollWindow(ref: React.RefObject<HTMLDivElement | null>, active: boolean) {
+  const [win, setWin] = useState({ top: 0, left: 0, width: 0, height: 0 })
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !active) return
+    const read = () => {
+      setWin(prev => {
+        const next = { top: el.scrollTop, left: el.scrollLeft, width: el.clientWidth, height: el.clientHeight }
+        return prev.top === next.top && prev.left === next.left && prev.width === next.width && prev.height === next.height ? prev : next
+      })
+    }
+    read()
+    el.addEventListener('scroll', read, { passive: true })
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', read); ro.disconnect() }
+  }, [ref, active])
+  return win
+}
+
+interface TileProps {
+  identity: string
+  name: string
+  role: string
+  avatarUrl: string | null
+  camTrack: ReturnType<typeof useTracks>[number] | undefined
+  isMuted: boolean
+  isCamOff: boolean
+  isSelf: boolean
+  fill: boolean
+  roomId?: string
+  isHost?: boolean
+  hasHostSecret: boolean
+  canModerate?: boolean
+  canRequestUnmute: boolean
+  micCapReached: boolean
+  asked: boolean
+  busy: 'cohost' | 'speaker' | 'mute' | null
+  onDirectChat?: (name: string) => void
+  onToggleCoHost: (name: string, grant: boolean) => void
+  onSetSpeaker: (name: string, grant: boolean) => void
+  onMute: (identity: string) => void
+  onAskUnmute: (identity: string) => void
+}
+
+// One attendee tile. Memoized on primitive props so a mute/camera flip on
+// one participant re-renders that tile alone — with hundreds of tiles the
+// roster's per-speaker-change re-render was otherwise the panel's main cost.
+const AttendeeTile = memo(function AttendeeTile({
+  identity, name, role, avatarUrl, camTrack, isMuted, isCamOff, isSelf, fill,
+  roomId, isHost, hasHostSecret, canModerate, canRequestUnmute, micCapReached, asked, busy,
+  onDirectChat, onToggleCoHost, onSetSpeaker, onMute, onAskUnmute,
+}: TileProps) {
+  const isCoHost = role === 'co-host'
+  return (
+    <div style={fill ? { ...s.dockedTile, width: '100%', height: '100%' } : s.dockedTile}>
+      {camTrack && !isCamOff ? (
+        <ParticipantTile trackRef={camTrack} style={{ width: '100%', height: '100%', borderRadius: 6 }} />
+      ) : (
+        <div style={s.dockedNoVideo}>
+          <Avatar name={name} avatarUrl={avatarUrl} size={52} />
+        </div>
+      )}
+      <div style={s.dockedTileBar}>
+        <span style={s.dockedName}>{name.split(' ')[0]}</span>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {isMuted ? <MicOff size={9} color="#e53e3e" /> : <Mic size={9} color="#48bb78" />}
+          {isCamOff && <VideoOff size={9} color="#e53e3e" />}
+          {onDirectChat && (
+            <button
+              onClick={() => onDirectChat(name)}
+              title={`Message ${name}`}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <MessageSquare size={10} />
+            </button>
+          )}
+          {/* Mic moderation — host/co-host only, never on the
+              moderator's own tile (self-mute already exists via the
+              normal mic button and must stay the participant's own
+              action, never routed through this force-mute path). Mute
+              while on; "request unmute" while off, since there's no
+              server-side force-unmute to offer instead. */}
+          {/* Audience-mode floor: an attendee has no publish rights,
+              so mic moderation is meaningless for them — offer "Let
+              speak" instead. A promoted speaker gets the normal mic
+              controls plus a way back to the audience. */}
+          {canModerate && !isSelf && roomId && role === 'attendee' && (
+            <button
+              onClick={() => onSetSpeaker(name, true)}
+              disabled={busy === 'speaker' || micCapReached}
+              title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : `Let ${name} speak`}
+              style={{ background: 'none', border: 'none', cursor: micCapReached ? 'not-allowed' : 'pointer', color: micCapReached ? '#555' : '#f5a623', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <Megaphone size={10} />
+            </button>
+          )}
+          {canModerate && !isSelf && roomId && role === 'speaker' && (
+            <button
+              onClick={() => onSetSpeaker(name, false)}
+              disabled={busy === 'speaker'}
+              title={`Move ${name} back to the audience`}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <Users size={10} />
+            </button>
+          )}
+          {canModerate && !isSelf && roomId && role !== 'attendee' && (
+            isMuted ? (
+              canRequestUnmute && (
+                <button
+                  onClick={() => onAskUnmute(identity)}
+                  disabled={micCapReached || asked}
+                  title={micCapReached ? `Mic limit reached (${MAX_LIVE_MICS}) — mute someone first` : asked ? `Asked ${name} — waiting for them` : `Ask ${name} to unmute`}
+                  style={{ background: 'none', border: 'none', cursor: micCapReached || asked ? 'not-allowed' : 'pointer', color: asked ? '#f5a623' : micCapReached ? '#555' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+                >
+                  <BellRing size={10} />
+                </button>
+              )
+            ) : (
+              <button
+                onClick={() => onMute(identity)}
+                disabled={busy === 'mute'}
+                title={`Mute ${name}`}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+              >
+                <MicOff size={10} />
+              </button>
+            )
+          )}
+          {/* Delegated admit rights — host-only, and never shown on
+              the host's own tile (role is 'host' there). */}
+          {isHost && roomId && hasHostSecret && role !== 'host' && (
+            <button
+              onClick={() => onToggleCoHost(name, !isCoHost)}
+              disabled={busy === 'cohost'}
+              title={isCoHost ? 'Remove co-host' : 'Make co-host'}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: isCoHost ? '#f5a623' : '#999', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              <Crown size={10} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// Shared row of compact attendee tiles. Used by both the floating (detached)
+// window and the docked strip below, so dragging between the two never
+// changes what the tiles look like, only the container around them and
+// (via `wrap`) whether they're allowed to reflow onto multiple rows.
+function AttendeeTiles({ roomId, isHost, hostSecret, onDirectChat, canModerate, actingDisplayName, onRequestUnmute, wrap }: CoHostProps) {
+  const lkParticipants = useLiveKitParticipants()
+  const { localParticipant } = useLocalParticipant()
+  const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: false })
+  const [busyName, setBusyName] = useState<string | null>(null)
+  const [muteBusyIdentity, setMuteBusyIdentity] = useState<string | null>(null)
+
+  // Role and avatar are LiveKit participant attributes (stamped by the
+  // backend at token time, pushed live by /grant-co-host) — read straight
+  // off the roster this component already subscribes to. Replaces a
+  // Supabase room_participants list that every client refetched in full on
+  // every join/leave. Keyed by name, matching the rest of this feature.
+  const toggleCoHost = useCallback(async (name: string, grant: boolean) => {
+    if (!roomId || !hostSecret) return
+    setBusyName(name)
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/grant-co-host`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: name, grant, hostSecret }),
+      })
+    } catch (e) {
+      console.error('[participants] grant-co-host failed:', e)
+    } finally {
+      setBusyName(null)
+    }
+  }, [roomId, hostSecret])
+
+  // Audience-mode floor control — host OR co-host, one person per click.
+  // Grants (or withdraws) publish rights live; the promoted speaker gets a
+  // prompt with a one-click Unmute on their side (RoomPage's floorGranted).
+  const [speakerBusy, setSpeakerBusy] = useState<string | null>(null)
+  const setSpeaker = useCallback(async (name: string, grant: boolean) => {
+    if (!roomId) return
+    setSpeakerBusy(name)
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/speaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: name, grant, actingDisplayName, hostSecret: hostSecret ?? undefined }),
+      })
+    } catch (e) {
+      console.error('[participants] speaker change failed:', e)
+    } finally {
+      setSpeakerBusy(null)
+    }
+  }, [roomId, actingDisplayName, hostSecret])
+
+  // Force-mute is server-only — LiveKit's browser SDK has no ability to
+  // affect a track it doesn't own, by design (see the backend endpoint's own
+  // comment for why). This is a thin client for that endpoint; the endpoint
+  // itself re-derives and enforces authorization independently, so this
+  // being reachable at all client-side is not itself a security boundary.
+  const muteOne = useCallback(async (identity: string) => {
+    if (!roomId || !canModerate) return
+    setMuteBusyIdentity(identity)
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/mute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetIdentity: identity, hostSecret, actingDisplayName }),
+      })
+    } catch (e) {
+      console.error('[participants] mute failed:', e)
+    } finally {
+      setMuteBusyIdentity(null)
+    }
+  }, [roomId, canModerate, hostSecret, actingDisplayName])
+
+  const muteAll = async () => {
+    if (!roomId || !canModerate) return
+    setMuteBusyIdentity('__all__')
+    try {
+      await fetch(`${API_BASE}/api/rooms/${roomId}/mute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, excludeIdentity: localParticipant.identity, hostSecret, actingDisplayName }),
+      })
+    } catch (e) {
+      console.error('[participants] mute-all failed:', e)
+    } finally {
+      setMuteBusyIdentity(null)
+    }
+  }
+
+  const unmutedOthersCount = lkParticipants.filter(p => p.identity !== localParticipant.identity && p.isMicrophoneEnabled).length
+  // Every live mic counts against the cap — the moderator's own included,
+  // since each attendee decodes it like any other.
+  const liveMicCount = lkParticipants.filter(p => p.isMicrophoneEnabled).length
+  const micCapReached = liveMicCount >= MAX_LIVE_MICS
+
+  // "Ask to unmute" is strictly one target per click, with a short per-target
+  // cooldown so a host can't machine-gun the same person with nudges; it is
+  // never offered as a bulk action (the opposite of Mute all, on purpose —
+  // there is no server-side force-unmute, so each request is a prompt the
+  // attendee answers, and the cap above is what keeps the answered count sane).
+  const [recentlyAsked, setRecentlyAsked] = useState<Set<string>>(new Set())
+  const askToUnmute = useCallback((identity: string) => {
+    if (!onRequestUnmute) return
+    onRequestUnmute(identity)
+    setRecentlyAsked(prev => new Set(prev).add(identity))
+    setTimeout(() => setRecentlyAsked(prev => { const n = new Set(prev); n.delete(identity); return n }), 8000)
+  }, [onRequestUnmute])
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const total = lkParticipants.length
+  const virtualize = total > VIRTUALIZE_ABOVE
+  const win = useScrollWindow(scrollRef, virtualize)
+
+  // Which slice of the roster to mount. Non-virtualized: everyone (exactly
+  // the old behaviour). Floating grid: fixed-height rows, column count from
+  // the panel's measured width. Docked strip: fixed-width columns.
+  let first = 0, last = total - 1, cols = 1
+  let leadSpace = 0, trailSpace = 0
+  if (virtualize) {
+    if (wrap) {
+      cols = Math.max(1, Math.floor((win.width - GRID_PAD * 2 + TILE_GAP) / (GRID_MIN_COL + TILE_GAP)))
+      const rows = Math.ceil(total / cols)
+      const r = windowRange(win.top, win.height, TILE_H + TILE_GAP, rows, OVERSCAN_ROWS)
+      first = r.first * cols
+      last = Math.min(total - 1, (r.last + 1) * cols - 1)
+      leadSpace = r.first * (TILE_H + TILE_GAP)
+      trailSpace = Math.max(0, (rows - 1 - r.last) * (TILE_H + TILE_GAP))
+    } else {
+      // The moderator buttons sit before the tiles in the same scroller;
+      // the extra overscan absorbs their width rather than measuring it.
+      const r = windowRange(win.left, win.width, TILE_W + TILE_GAP, total, OVERSCAN_ROWS + 2)
+      first = r.first; last = r.last
+      leadSpace = first * (TILE_W + TILE_GAP)
+      trailSpace = Math.max(0, (total - 1 - last) * (TILE_W + TILE_GAP))
+    }
+  }
+
+  const tiles = lkParticipants.slice(first, last + 1).map(participant => {
+    const name = participant.name || participant.identity
+    const busy = busyName === name ? 'cohost' : speakerBusy === name ? 'speaker' : muteBusyIdentity === participant.identity ? 'mute' : null
+    return (
+      <AttendeeTile
+        key={participant.identity}
+        identity={participant.identity}
+        name={name}
+        role={participant.attributes?.role ?? 'participant'}
+        avatarUrl={participant.attributes?.avatar_url ?? null}
+        camTrack={cameraTracks.find(t => t.participant.identity === participant.identity)}
+        isMuted={!participant.isMicrophoneEnabled}
+        isCamOff={!participant.isCameraEnabled}
+        isSelf={participant.identity === localParticipant.identity}
+        fill={!!wrap}
+        roomId={roomId}
+        isHost={isHost}
+        hasHostSecret={!!hostSecret}
+        canModerate={canModerate}
+        canRequestUnmute={!!onRequestUnmute}
+        micCapReached={micCapReached}
+        asked={recentlyAsked.has(participant.identity)}
+        busy={busy}
+        onDirectChat={onDirectChat}
+        onToggleCoHost={toggleCoHost}
+        onSetSpeaker={setSpeaker}
+        onMute={muteOne}
+        onAskUnmute={askToUnmute}
+      />
+    )
+  })
+
+  const moderatorButtons = (
+    <>
+      {/* Mute all — host/co-host only, and only meaningful once someone
+          other than the moderator actually has their mic on. */}
+      {canModerate && roomId && liveMicCount > 0 && (
+        <div
+          title={micCapReached ? `Mic limit reached — mute someone before asking another to unmute` : `${liveMicCount} of ${MAX_LIVE_MICS} microphones live`}
+          style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+            border: `1px solid ${micCapReached ? '#c53030' : '#333'}`, borderRadius: 6, color: micCapReached ? '#e57373' : '#888',
+            fontSize: 9, fontFamily: "'Roboto', sans-serif", flexShrink: 0, width: 56, height: 56,
+            alignSelf: 'center', justifySelf: 'center',
+          }}
+        >
+          <Mic size={14} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: micCapReached ? '#e57373' : '#ccc' }}>{liveMicCount}/{MAX_LIVE_MICS}</span>
+          mics live
+        </div>
+      )}
+      {canModerate && roomId && unmutedOthersCount > 0 && (
+        <button
+          onClick={muteAll}
+          disabled={muteBusyIdentity === '__all__'}
+          title="Mute all attendees"
+          style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+            background: 'none', border: '1px dashed #444', borderRadius: 6, color: '#999', fontSize: 9,
+            fontFamily: "'Roboto', sans-serif", cursor: 'pointer', flexShrink: 0, width: 56, height: 56,
+            // Grid mode (wrap, the floating ParticipantsWindow) gives every
+            // direct child of the container its own cell sized by the
+            // grid's row/column tracks — center this fixed-size button
+            // within whatever size that cell ends up being, rather than
+            // letting it default to the top-left corner of a much larger
+            // cell. No effect in the non-wrap (docked strip) flex layout.
+            alignSelf: 'center', justifySelf: 'center',
+          }}
+        >
+          <MicOff size={14} />
+          Mute all
+        </button>
+      )}
+    </>
+  )
+
+  if (!virtualize) {
+    return (
+      <div ref={scrollRef} style={wrap ? s.dockedInnerWrap : s.dockedInner}>
+        {moderatorButtons}
+        {tiles}
+      </div>
+    )
+  }
+
+  if (wrap) {
+    // Windowed grid: the moderator buttons get their own row above the
+    // tiles (they no longer share the grid's first cells, which would shift
+    // every row's arithmetic), then a spacer / visible rows / spacer so the
+    // scrollbar still reflects the full roster.
+    return (
+      <div ref={scrollRef} style={{ ...s.dockedInnerWrap, display: 'block' }}>
+        {(canModerate && roomId && liveMicCount > 0) && (
+          <div style={{ display: 'flex', gap: TILE_GAP, marginBottom: TILE_GAP }}>{moderatorButtons}</div>
+        )}
+        <div style={{ height: leadSpace }} />
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: TILE_H, gap: TILE_GAP }}>
+          {tiles}
+        </div>
+        <div style={{ height: trailSpace }} />
+      </div>
+    )
+  }
+
+  return (
+    <div ref={scrollRef} style={s.dockedInner}>
+      {moderatorButtons}
+      {/* The flex gap after/before each spacer supplies one of the
+          skipped tiles' gaps, so the spacer itself is one gap short. */}
+      {leadSpace > 0 && <div style={{ width: leadSpace - TILE_GAP, flexShrink: 0 }} />}
+      {tiles}
+      {trailSpace > 0 && <div style={{ width: trailSpace - TILE_GAP, flexShrink: 0 }} />}
+    </div>
+  )
+}
+
+// Draggable, detachable floating window — grab the ⠿ title bar to
+// reposition; drag toward the top to dock it into the header as the
+// horizontal strip below. The body is the same always-horizontal,
+// always-scrollable row as the docked strip (never a grid) — dragging
+// between docked and floating only changes the container, not the layout.
+export function ParticipantsWindow({ onClose, onDock, onDirectChat, roomId, isHost, hostSecret, canModerate, actingDisplayName, onRequestUnmute }: {
+  onClose: () => void
+  onDock: () => void
+} & CoHostProps) {
+  const lkParticipants = useLiveKitParticipants()
+  const [pos, setPos] = useState({ x: 24, y: 24 })
+  const [dragging, setDragging] = useState(false)
+  const [nearDock, setNearDock] = useState(false)
+  const dragStart = useRef({ mouseX: 0, mouseY: 0, winX: 0, winY: 0 })
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setDragging(true)
+    dragStart.current = { mouseX: e.clientX, mouseY: e.clientY, winX: pos.x, winY: pos.y }
+  }
+
+  useEffect(() => {
+    if (!dragging) return
+    const onMove = (e: MouseEvent) => {
+      const newX = dragStart.current.winX + e.clientX - dragStart.current.mouseX
+      const newY = dragStart.current.winY + e.clientY - dragStart.current.mouseY
+      setPos({ x: Math.max(0, newX), y: Math.max(0, newY) })
+      setNearDock(newY < 60)
+    }
+    const onUp = () => {
+      setDragging(false)
+      if (nearDock) onDock()
+      setNearDock(false)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [dragging, nearDock, onDock])
+
+  return (
+    <div style={{ position: 'absolute', left: pos.x, top: pos.y, zIndex: 30, width: 480 }}>
+      {nearDock && (
+        <div style={s.dockZone}>
+          ↑ Release to dock to header
+        </div>
+      )}
+      <div style={{ ...s.pwWindow, boxShadow: dragging ? '0 32px 80px rgba(0,0,0,0.8)' : '0 20px 60px rgba(0,0,0,0.6)', transform: dragging ? 'scale(1.01)' : 'scale(1)', transition: dragging ? 'none' : 'transform 0.15s' }}>
+        <div style={{ ...s.pwHeader, cursor: 'grab', userSelect: 'none' }} onMouseDown={handleDragStart}>
+          <span style={s.pwTitle}>
+            ⠿ &nbsp;PARTICIPANTS <span style={s.pwCount}>{lkParticipants.length}</span>
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={s.dockHint}>drag to header to dock</span>
+            <button style={s.pwClose} onClick={onClose}><X size={16} /></button>
+          </div>
+        </div>
+        <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} wrap />
+      </div>
+    </div>
+  )
+}
+
+export function DockedParticipantsStrip({ onUndock, onClose, onDirectChat, roomId, isHost, hostSecret, canModerate, actingDisplayName, onRequestUnmute }: {
+  onUndock: () => void
+  onClose: () => void
+} & CoHostProps) {
+  return (
+    <div style={s.dockedStrip}>
+      <AttendeeTiles roomId={roomId} isHost={isHost} hostSecret={hostSecret} onDirectChat={onDirectChat} canModerate={canModerate} actingDisplayName={actingDisplayName} onRequestUnmute={onRequestUnmute} />
+      <div style={s.dockedActions}>
+        <button style={s.dockedBtn} onClick={onUndock} title="Undock">↙</button>
+        <button style={s.dockedBtn} onClick={onClose} title="Close"><X size={12} /></button>
+      </div>
+    </div>
+  )
+}

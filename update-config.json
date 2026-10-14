@@ -1,0 +1,118 @@
+{
+  "version": "1.0.407",
+  "releaseDate": "2026-10-06T20:39:10.066Z",
+  "critical": false,
+  "minimumVersion": "1.0.200",
+  "notes": [
+    "Linux desktop app: AppImage",
+    ".deb and .rpm (x86_64 + arm64)",
+    "1.0.407 — Fathom notetaker auto-records + recordings surface in-room; macOS screen share permission auto-restart after grant"
+  ],
+  "mac": {
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-universal.zip",
+    "sha512": "tQZggtmxVtFv7NJlfkdZ/CuWTWaPauMlbqgR+061+3MpoL5LbC/OzSqRUFbzZS8Z3rHnDUHol7numc/jWuM/Kg==",
+    "size": 241907727,
+    "dmgUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-universal.dmg",
+    "dmgSha512": "miDn0qyEpZdqAicvpiWCdCzKjJ3VwGJ9dcHormAqYnWqyNAWeF08Fev1sgnLvJXfvisxaNurPUw+t6tzFyzSjQ==",
+    "dmgSize": 241953869
+  },
+  "win": {
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-Setup.exe",
+    "sha512": "0F+Gpk197OVmOIHDVXhLnlqoOpoT0ZLWP1FDlr74UkmROC/RipETC1ON0yb3yAxaEkgDCx26omHc6xo5BCdUnw==",
+    "size": 233556160,
+    "x64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-Setup-x64.exe",
+    "x64Sha512": "UXzlaLjLxomcBki4wl1qSpDqjLKNdrhuoSevLIuu6RvcDjQdMInhQrZOKXCx3Pz84yJjc4F/ZVqxZbzmxjhl1Q==",
+    "x64Size": 120808326,
+    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-Setup-arm64.exe",
+    "arm64Sha512": "L7HRV+n6qNSRxL2zQf50lxM8O4Y+5SLBgXWrVVZ+fz5Bd7+Uc06U6DfhvAgHQ4adTaAUVtGpy4gy7f2jZcUO4w==",
+    "arm64Size": 113299084
+  },
+  "linux": {
+    "version": "1.0.407",
+    "releaseDate": "2026-10-13T17:58:06.389Z",
+    "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-x86_64.AppImage",
+    "sha512": "zvashj0OkaKKPxAioxWa1j0zsei5bErW3CiVtk1kLHuxLAiD3OHRYacH1L0QSxy5lPy69WwDxqBD5Ro+XjuLIQ==",
+    "size": 154997543,
+    "debUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-amd64.deb",
+    "debSha512": "d/k1fHT+xf8awd+dsrjoOwpe8KBrfSJYq3atRmYJlay5jxnFVXbBt6JV/TAWUIjWXQKkUC+u4iB9kirz72GXzQ==",
+    "debSize": 118796488,
+    "rpmUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-x86_64.rpm",
+    "rpmSha512": "zX9bJ5gkJfvuAvCP50WrjKnTdJQnTDFxIvb969YFX9N1VbFv4qWzDE6Sa4U54IbM1V8ah8e2+oAdhyUHWYWCgw==",
+    "rpmSize": 97547935,
+    "arm64Url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-arm64.AppImage",
+    "arm64Sha512": "Qx3WnIS1EtSXdOgPJiDA4pUSeTmpvE/odC741foEPnn0xbSbX3oAuC4uXgaLMXaiKCFP0hEObcys1zLrg5FOww==",
+    "arm64Size": 153524958,
+    "arm64DebUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-arm64.deb",
+    "arm64DebSha512": "5ksAIS/CapzzlzYlsho2UVaMd263624T+8mQ2GGFA4QZxgtpFWEpmVTfFSG1dvvSKnqyRG186Wonyj4464npbg==",
+    "arm64DebSize": 112198860,
+    "arm64RpmUrl": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-aarch64.rpm",
+    "arm64RpmSha512": "QlCLnVylNlyQ8Szc2DVQnMy0xxYhdI+KdYkB5afil5zRH4ps4kBVFysl74dF9fc3hRQIKg0YhBVri7WNnF7AKA==",
+    "arm64RpmSize": 91116807
+  },
+  "downloads": [
+    {
+      "os": "mac",
+      "arch": "universal",
+      "format": "dmg",
+      "file": "BeeHive-universal.dmg",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-universal.dmg",
+      "size": 241953869
+    },
+    {
+      "os": "windows",
+      "arch": "universal",
+      "format": "exe",
+      "file": "BeeHive-Setup.exe",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-Setup.exe",
+      "size": 233556160
+    },
+    {
+      "os": "linux",
+      "arch": "x64",
+      "format": "AppImage",
+      "file": "BeeHive-x86_64.AppImage",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-x86_64.AppImage",
+      "size": 154997543
+    },
+    {
+      "os": "linux",
+      "arch": "x64",
+      "format": "deb",
+      "file": "BeeHive-amd64.deb",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-amd64.deb",
+      "size": 118796488
+    },
+    {
+      "os": "linux",
+      "arch": "x64",
+      "format": "rpm",
+      "file": "BeeHive-x86_64.rpm",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-x86_64.rpm",
+      "size": 97547935
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "format": "AppImage",
+      "file": "BeeHive-arm64.AppImage",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-arm64.AppImage",
+      "size": 153524958
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "format": "deb",
+      "file": "BeeHive-arm64.deb",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-arm64.deb",
+      "size": 112198860
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "format": "rpm",
+      "file": "BeeHive-aarch64.rpm",
+      "url": "https://github.com/SaphoM/beehive/releases/download/v1.0.407/BeeHive-aarch64.rpm",
+      "size": 91116807
+    }
+  ]
+}

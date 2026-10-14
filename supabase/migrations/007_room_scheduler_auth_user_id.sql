@@ -1,0 +1,18 @@
+-- Lets the backend recognize a scheduled meeting's organizer via their
+-- authenticated session as a fallback to the browser-local host_secret
+-- (localStorage), which only exists on the exact device/browser that
+-- scheduled the meeting -- an organizer opening their own invite link from
+-- a different browser/device previously landed in the waiting room with no
+-- way in and no one to admit them.
+--
+-- NOT the pre-existing `rooms.created_by` column: that one FKs to the
+-- legacy public.users table, not auth.users, so writing a real session's
+-- user.id there would violate its FK for any user without a matching
+-- public.users row -- the exact landmine room_participants.user_id already
+-- hit, fixed there via its own auth_user_id bridge column FK'd to
+-- auth.users. Same fix shape, new column, here.
+--
+-- Nullable: rooms scheduled anonymously (no signed-in user) keep this null
+-- and are entirely unaffected -- host_secret remains the only way in for
+-- them, exactly as before this migration.
+ALTER TABLE rooms ADD COLUMN scheduler_auth_user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL;
